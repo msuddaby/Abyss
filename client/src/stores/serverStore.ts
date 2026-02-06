@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api';
+import { ensureConnected } from '../services/signalr';
 import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji } from '../types';
 
 // channelId -> Map<userId, displayName>
@@ -138,6 +139,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const res = await api.post('/servers', { name });
     const server = res.data;
     set((s) => ({ servers: [...s.servers, server] }));
+    const conn = await ensureConnected();
+    await conn.invoke('JoinServerGroup', server.id);
     return server;
   },
 
@@ -152,6 +155,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const res = await api.post(`/invites/${code}/join`);
     const server = res.data;
     set((s) => ({ servers: [...s.servers, server] }));
+    const conn = await ensureConnected();
+    await conn.invoke('JoinServerGroup', server.id);
   },
 
   fetchMembers: async (serverId) => {

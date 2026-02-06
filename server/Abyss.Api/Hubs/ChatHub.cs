@@ -125,6 +125,15 @@ public class ChatHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
+    // Join a server's SignalR group (called after joining/creating a server)
+    public async Task JoinServerGroup(string serverId)
+    {
+        var serverGuid = Guid.Parse(serverId);
+        if (!await _perms.IsMemberAsync(serverGuid, UserId)) return;
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"server:{serverId}");
+        await Clients.Group($"server:{serverId}").SendAsync("UserOnline", UserId, DisplayName);
+    }
+
     // Text messaging
     public async Task JoinChannel(string channelId)
     {
