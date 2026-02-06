@@ -1,0 +1,43 @@
+# Secrets / environment
+.env
+.env.local
+.env.*.local
+
+# TURN server config (contains credentials + public IP)
+turnserver.conf
+
+# Tunnel docs (contains public IP)
+TUNNEL_SETUP.md
+
+# ASP.NET
+server/Abyss.Api/bin/
+server/Abyss.Api/obj/
+server/Abyss.Api/appsettings.Development.json
+
+# Node / Vite
+client/node_modules/
+client/dist/
+client/dist-ssr/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.kate-swp
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.user
+
+# Uploads (user-generated content)
+server/Abyss.Api/wwwroot/uploads/*
+!server/Abyss.Api/wwwroot/uploads/.gitkeep

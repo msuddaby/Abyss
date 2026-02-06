@@ -1,0 +1,6 @@
+@Abyss.Api_HostAddress = http://localhost:5084
+
+GET {{Abyss.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
