@@ -34,7 +34,6 @@ Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
-*.sln
 *.sw?
 *.user
 
