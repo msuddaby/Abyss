@@ -24,13 +24,22 @@ public class ChannelsController : ControllerBase
         var channel = await _db.Channels.FindAsync(channelId);
         if (channel == null) return NotFound();
 
-        var isMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == channel.ServerId && sm.UserId == UserId);
-        if (!isMember) return Forbid();
+        // DM channel: check participant
+        if (channel.Type == Abyss.Api.Models.ChannelType.DM)
+        {
+            if (channel.DmUser1Id != UserId && channel.DmUser2Id != UserId) return Forbid();
+        }
+        else
+        {
+            var isMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == channel.ServerId && sm.UserId == UserId);
+            if (!isMember) return Forbid();
+        }
 
         var query = _db.Messages
             .Include(m => m.Author)
             .Include(m => m.Attachments)
             .Include(m => m.Reactions)
+            .Include(m => m.ReplyToMessage).ThenInclude(r => r!.Author)
             .Where(m => m.ChannelId == channelId);
 
         if (before.HasValue)
@@ -54,7 +63,15 @@ public class ChannelsController : ControllerBase
                 m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
                 m.EditedAt,
                 m.IsDeleted,
-                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList()
+                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+                m.ReplyToMessageId,
+                m.ReplyToMessage == null ? null : new ReplyReferenceDto(
+                    m.ReplyToMessage.Id,
+                    m.ReplyToMessage.IsDeleted ? "" : m.ReplyToMessage.Content,
+                    m.ReplyToMessage.AuthorId,
+                    new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio),
+                    m.ReplyToMessage.IsDeleted
+                )
             ))
             .ToListAsync();
 

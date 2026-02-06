@@ -7,8 +7,8 @@ public class VoiceStateService
     // channelId -> set of userIds
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _voiceChannels = new();
 
-    // channelId -> (userId, displayName) of active screen sharer
-    private readonly ConcurrentDictionary<Guid, (string UserId, string DisplayName)> _activeSharers = new();
+    // channelId -> {userId -> displayName} of active screen sharers
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _activeSharers = new();
 
     public void JoinChannel(Guid channelId, string userId, string displayName)
     {
@@ -25,11 +25,8 @@ public class VoiceStateService
                 _voiceChannels.TryRemove(channelId, out _);
         }
 
-        // Clear screen share if this user was sharing
-        if (_activeSharers.TryGetValue(channelId, out var sharer) && sharer.UserId == userId)
-        {
-            _activeSharers.TryRemove(channelId, out _);
-        }
+        // Remove this user from screen sharers if they were sharing
+        RemoveScreenSharer(channelId, userId);
     }
 
     public void LeaveAll(string userId)
@@ -40,11 +37,8 @@ public class VoiceStateService
             if (users.IsEmpty)
                 _voiceChannels.TryRemove(channelId, out _);
 
-            // Clear screen share if this user was sharing
-            if (_activeSharers.TryGetValue(channelId, out var sharer) && sharer.UserId == userId)
-            {
-                _activeSharers.TryRemove(channelId, out _);
-            }
+            // Remove this user from screen sharers if they were sharing
+            RemoveScreenSharer(channelId, userId);
         }
     }
 
@@ -78,20 +72,48 @@ public class VoiceStateService
         return result;
     }
 
-    public void SetScreenSharer(Guid channelId, string userId, string displayName)
+    public void AddScreenSharer(Guid channelId, string userId, string displayName)
     {
-        _activeSharers[channelId] = (userId, displayName);
+        var sharers = _activeSharers.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, string>());
+        sharers[userId] = displayName;
     }
 
-    public void ClearScreenSharer(Guid channelId)
+    public bool RemoveScreenSharer(Guid channelId, string userId)
     {
-        _activeSharers.TryRemove(channelId, out _);
+        if (_activeSharers.TryGetValue(channelId, out var sharers))
+        {
+            var removed = sharers.TryRemove(userId, out _);
+            if (sharers.IsEmpty)
+                _activeSharers.TryRemove(channelId, out _);
+            return removed;
+        }
+        return false;
     }
 
-    public (string UserId, string DisplayName)? GetScreenSharer(Guid channelId)
+    public Dictionary<string, string> GetScreenSharers(Guid channelId)
     {
-        if (_activeSharers.TryGetValue(channelId, out var sharer))
-            return sharer;
-        return null;
+        if (_activeSharers.TryGetValue(channelId, out var sharers))
+            return new Dictionary<string, string>(sharers);
+        return new Dictionary<string, string>();
+    }
+
+    public bool IsScreenSharing(Guid channelId, string userId)
+    {
+        if (_activeSharers.TryGetValue(channelId, out var sharers))
+            return sharers.ContainsKey(userId);
+        return false;
+    }
+
+    public Dictionary<Guid, HashSet<string>> GetSharersForChannels(IEnumerable<Guid> channelIds)
+    {
+        var result = new Dictionary<Guid, HashSet<string>>();
+        foreach (var channelId in channelIds)
+        {
+            if (_activeSharers.TryGetValue(channelId, out var sharers) && !sharers.IsEmpty)
+            {
+                result[channelId] = new HashSet<string>(sharers.Keys);
+            }
+        }
+        return result;
     }
 }

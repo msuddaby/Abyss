@@ -55,6 +55,14 @@ export interface ServerBan {
   createdAt: string;
 }
 
+export interface ReplyReference {
+  id: string;
+  content: string;
+  authorId: string;
+  author: User;
+  isDeleted: boolean;
+}
+
 export interface Message {
   id: string;
   content: string;
@@ -66,6 +74,8 @@ export interface Message {
   editedAt?: string;
   isDeleted: boolean;
   reactions: Reaction[];
+  replyToMessageId?: string;
+  replyTo?: ReplyReference;
 }
 
 export interface Reaction {
@@ -105,6 +115,28 @@ export interface AuditLog {
   createdAt: string;
 }
 
+export interface CustomEmoji {
+  id: string;
+  serverId: string;
+  name: string;
+  imageUrl: string;
+  createdById: string;
+  createdAt: string;
+}
+
+export interface DmChannel {
+  id: string;
+  otherUser: User;
+  lastMessageAt?: string;
+  createdAt: string;
+}
+
+export interface DmUnread {
+  channelId: string;
+  hasUnread: boolean;
+  mentionCount: number;
+}
+
 export const Permission = {
   ManageChannels: 1 << 0,
   ManageMessages: 1 << 1,
@@ -114,6 +146,7 @@ export const Permission = {
   ViewAuditLog: 1 << 5,
   ManageServer: 1 << 6,
   ManageInvites: 1 << 7,
+  ManageEmojis: 1 << 8,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

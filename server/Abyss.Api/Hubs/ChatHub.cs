@@ -15,24 +15,38 @@ public class ChatHub : Hub
     private readonly AppDbContext _db;
     private readonly VoiceStateService _voiceState;
     private readonly PermissionService _perms;
+    private readonly NotificationService _notifications;
 
     // Track online users: connectionId -> userId
-    private static readonly Dictionary<string, string> _connections = new();
-    private static readonly object _lock = new();
+    internal static readonly Dictionary<string, string> _connections = new();
+    internal static readonly object _lock = new();
 
-    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms)
+    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications)
     {
         _db = db;
         _voiceState = voiceState;
         _perms = perms;
+        _notifications = notifications;
     }
 
     private string UserId => Context.User!.FindFirstValue(ClaimTypes.NameIdentifier)!;
     private string DisplayName => Context.User!.FindFirstValue("displayName") ?? "Unknown";
 
+    private async Task<bool> CanAccessChannel(Channel channel)
+    {
+        if (channel.Type == ChannelType.DM)
+            return channel.DmUser1Id == UserId || channel.DmUser2Id == UserId;
+        if (channel.ServerId.HasValue)
+            return await _perms.IsMemberAsync(channel.ServerId.Value, UserId);
+        return false;
+    }
+
     public override async Task OnConnectedAsync()
     {
         lock (_lock) { _connections[Context.ConnectionId] = UserId; }
+
+        // Join per-user group for targeted notifications
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{UserId}");
 
         // Notify all servers the user is in
         var serverIds = await _db.ServerMembers
@@ -44,6 +58,17 @@ public class ChatHub : Hub
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"server:{serverId}");
             await Clients.Group($"server:{serverId}").SendAsync("UserOnline", UserId, DisplayName);
+        }
+
+        // Join all DM channel groups
+        var dmChannelIds = await _db.Channels
+            .Where(c => c.Type == ChannelType.DM && (c.DmUser1Id == UserId || c.DmUser2Id == UserId))
+            .Select(c => c.Id)
+            .ToListAsync();
+
+        foreach (var dmId in dmChannelIds)
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{dmId}");
         }
 
         await base.OnConnectedAsync();
@@ -74,11 +99,11 @@ public class ChatHub : Hub
             if (voiceChannel.HasValue)
             {
                 // Check if user was screen sharing before leaving
-                var sharer = _voiceState.GetScreenSharer(voiceChannel.Value);
-                if (sharer.HasValue && sharer.Value.UserId == UserId)
+                var wasSharing = _voiceState.IsScreenSharing(voiceChannel.Value, UserId);
+                if (wasSharing)
                 {
-                    _voiceState.ClearScreenSharer(voiceChannel.Value);
-                    await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("ScreenShareChanged", UserId, false, "");
+                    _voiceState.RemoveScreenSharer(voiceChannel.Value, UserId);
+                    await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("ScreenShareStopped", UserId);
                 }
 
                 _voiceState.LeaveChannel(voiceChannel.Value, UserId);
@@ -86,8 +111,12 @@ public class ChatHub : Hub
 
                 // Notify server group so sidebar updates
                 var channel = await _db.Channels.FindAsync(voiceChannel.Value);
-                if (channel != null)
+                if (channel?.ServerId != null)
                 {
+                    if (wasSharing)
+                    {
+                        await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", voiceChannel.Value.ToString(), UserId);
+                    }
                     await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId);
                 }
             }
@@ -107,12 +136,20 @@ public class ChatHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
-    public async Task SendMessage(string channelId, string content, List<string> attachmentIds)
+    public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)
     {
         var channelGuid = Guid.Parse(channelId);
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
-        if (!await _perms.IsMemberAsync(channel.ServerId, UserId)) return;
+        if (!await CanAccessChannel(channel)) return;
+
+        // Validate reply target
+        Guid? replyToGuid = null;
+        if (!string.IsNullOrEmpty(replyToMessageId) && Guid.TryParse(replyToMessageId, out var parsedReplyId))
+        {
+            var replyTarget = await _db.Messages.FirstOrDefaultAsync(m => m.Id == parsedReplyId && m.ChannelId == channelGuid);
+            if (replyTarget != null) replyToGuid = parsedReplyId;
+        }
 
         var message = new Message
         {
@@ -121,8 +158,15 @@ public class ChatHub : Hub
             AuthorId = UserId,
             ChannelId = channelGuid,
             CreatedAt = DateTime.UtcNow,
+            ReplyToMessageId = replyToGuid,
         };
         _db.Messages.Add(message);
+
+        // Update LastMessageAt for DM channels
+        if (channel.Type == ChannelType.DM)
+        {
+            channel.LastMessageAt = message.CreatedAt;
+        }
 
         // Link attachments to message
         var attachments = new List<AttachmentDto>();
@@ -143,9 +187,83 @@ public class ChatHub : Hub
 
         var author = await _db.Users.FindAsync(UserId);
         var authorDto = new UserDto(author!.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio);
-        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, new List<ReactionDto>());
+
+        // Build reply reference DTO
+        ReplyReferenceDto? replyDto = null;
+        if (replyToGuid.HasValue)
+        {
+            var replyMsg = await _db.Messages.Include(m => m.Author).FirstOrDefaultAsync(m => m.Id == replyToGuid.Value);
+            if (replyMsg != null)
+            {
+                var replyAuthorDto = new UserDto(replyMsg.Author.Id, replyMsg.Author.UserName!, replyMsg.Author.DisplayName, replyMsg.Author.AvatarUrl, replyMsg.Author.Status, replyMsg.Author.Bio);
+                replyDto = new ReplyReferenceDto(replyMsg.Id, replyMsg.IsDeleted ? "" : replyMsg.Content, replyMsg.AuthorId, replyAuthorDto, replyMsg.IsDeleted);
+            }
+        }
+
+        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, new List<ReactionDto>(), replyToGuid, replyDto);
 
         await Clients.Group($"channel:{channelId}").SendAsync("ReceiveMessage", messageDto);
+
+        if (channel.Type == ChannelType.DM)
+        {
+            // DM: send unread notification to the other user
+            var recipientId = channel.DmUser1Id == UserId ? channel.DmUser2Id! : channel.DmUser1Id!;
+            await Clients.Group($"user:{recipientId}").SendAsync("NewUnreadMessage", channelId, (string?)null);
+
+            // Create DM notification for the recipient
+            var dmNotification = new Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = recipientId,
+                MessageId = message.Id,
+                ChannelId = channelGuid,
+                ServerId = null,
+                Type = NotificationType.UserMention,
+                CreatedAt = DateTime.UtcNow,
+            };
+            _db.Notifications.Add(dmNotification);
+            await _db.SaveChangesAsync();
+
+            var dmNotifDto = new NotificationDto(dmNotification.Id, dmNotification.MessageId, dmNotification.ChannelId, null, dmNotification.Type.ToString(), dmNotification.CreatedAt);
+            await Clients.Group($"user:{recipientId}").SendAsync("MentionReceived", dmNotifDto);
+        }
+        else if (channel.ServerId.HasValue)
+        {
+            // Server channel: broadcast unread indicator to all server members
+            await Clients.Group($"server:{channel.ServerId}").SendAsync("NewUnreadMessage", channelId, channel.ServerId.ToString());
+
+            // Process mentions and send targeted notifications
+            HashSet<string> onlineUserIds;
+            lock (_lock) { onlineUserIds = new HashSet<string>(_connections.Values); }
+
+            var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds);
+            var notifiedUserIds = new HashSet<string>(notifications.Select(n => n.UserId));
+            foreach (var notification in notifications)
+            {
+                var dto = new NotificationDto(notification.Id, notification.MessageId, notification.ChannelId, notification.ServerId, notification.Type.ToString(), notification.CreatedAt);
+                await Clients.Group($"user:{notification.UserId}").SendAsync("MentionReceived", dto);
+            }
+
+            // Reply notification: if replying to someone else who wasn't already notified
+            if (replyToGuid.HasValue && replyDto != null && replyDto.AuthorId != UserId && !notifiedUserIds.Contains(replyDto.AuthorId))
+            {
+                var replyNotification = new Notification
+                {
+                    Id = Guid.NewGuid(),
+                    UserId = replyDto.AuthorId,
+                    MessageId = message.Id,
+                    ChannelId = channelGuid,
+                    ServerId = channel.ServerId,
+                    Type = NotificationType.ReplyMention,
+                    CreatedAt = DateTime.UtcNow,
+                };
+                _db.Notifications.Add(replyNotification);
+                await _db.SaveChangesAsync();
+
+                var replyNotifDto = new NotificationDto(replyNotification.Id, replyNotification.MessageId, replyNotification.ChannelId, replyNotification.ServerId, replyNotification.Type.ToString(), replyNotification.CreatedAt);
+                await Clients.Group($"user:{replyDto.AuthorId}").SendAsync("MentionReceived", replyNotifDto);
+            }
+        }
     }
 
     public async Task EditMessage(string messageId, string newContent)
@@ -168,19 +286,28 @@ public class ChatHub : Hub
         if (message == null) return;
 
         var isAuthor = message.AuthorId == UserId;
-        var canManageMessages = await _perms.HasPermissionAsync(message.Channel.ServerId, UserId, Permission.ManageMessages);
-        if (!isAuthor && !canManageMessages) return;
+
+        if (message.Channel.Type == ChannelType.DM)
+        {
+            // In DMs, only the author can delete their own messages
+            if (!isAuthor) return;
+        }
+        else
+        {
+            var canManageMessages = message.Channel.ServerId.HasValue && await _perms.HasPermissionAsync(message.Channel.ServerId.Value, UserId, Permission.ManageMessages);
+            if (!isAuthor && !canManageMessages) return;
+
+            // Log when admin deletes another user's message
+            if (!isAuthor && canManageMessages && message.Channel.ServerId.HasValue)
+            {
+                var author = await _db.Users.FindAsync(message.AuthorId);
+                await _perms.LogAsync(message.Channel.ServerId.Value, AuditAction.MessageDeleted, UserId,
+                    targetId: message.AuthorId, targetName: author?.DisplayName);
+            }
+        }
 
         message.IsDeleted = true;
         await _db.SaveChangesAsync();
-
-        // Log when admin deletes another user's message
-        if (!isAuthor && canManageMessages)
-        {
-            var author = await _db.Users.FindAsync(message.AuthorId);
-            await _perms.LogAsync(message.Channel.ServerId, AuditAction.MessageDeleted, UserId,
-                targetId: message.AuthorId, targetName: author?.DisplayName);
-        }
 
         await Clients.Group($"channel:{message.ChannelId}").SendAsync("MessageDeleted", message.Id.ToString());
     }
@@ -191,7 +318,16 @@ public class ChatHub : Hub
         var msgGuid = Guid.Parse(messageId);
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
         if (message == null || message.IsDeleted) return;
-        if (!await _perms.IsMemberAsync(message.Channel.ServerId, UserId)) return;
+        if (!await CanAccessChannel(message.Channel)) return;
+
+        // Validate custom emoji exists in this server (only for server channels)
+        if (emoji.StartsWith("custom:") && message.Channel.ServerId.HasValue)
+        {
+            var emojiIdStr = emoji.Substring(7);
+            if (!Guid.TryParse(emojiIdStr, out var emojiGuid)) return;
+            var exists = await _db.CustomEmojis.AnyAsync(e => e.Id == emojiGuid && e.ServerId == message.Channel.ServerId.Value);
+            if (!exists) return;
+        }
 
         var existing = await _db.Reactions
             .FirstOrDefaultAsync(r => r.MessageId == msgGuid && r.UserId == UserId && r.Emoji == emoji);
@@ -225,7 +361,7 @@ public class ChatHub : Hub
         var channelGuid = Guid.Parse(channelId);
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
-        if (!await _perms.IsMemberAsync(channel.ServerId, UserId)) return;
+        if (!await CanAccessChannel(channel)) return;
 
         await Clients.OthersInGroup($"channel:{channelId}").SendAsync("UserIsTyping", UserId, DisplayName);
     }
@@ -266,19 +402,19 @@ public class ChatHub : Hub
 
         // Membership check
         var voiceChannel = await _db.Channels.FindAsync(channelGuid);
-        if (voiceChannel == null) return;
-        if (!await _perms.IsMemberAsync(voiceChannel.ServerId, UserId)) return;
+        if (voiceChannel == null || !voiceChannel.ServerId.HasValue) return;
+        if (!await _perms.IsMemberAsync(voiceChannel.ServerId.Value, UserId)) return;
 
         // Leave any existing voice channel
         var currentChannel = _voiceState.GetUserChannel(UserId);
         if (currentChannel.HasValue)
         {
             // Clear screen share if leaving while sharing
-            var sharer = _voiceState.GetScreenSharer(currentChannel.Value);
-            if (sharer.HasValue && sharer.Value.UserId == UserId)
+            var wasSharing = _voiceState.IsScreenSharing(currentChannel.Value, UserId);
+            if (wasSharing)
             {
-                _voiceState.ClearScreenSharer(currentChannel.Value);
-                await Clients.Group($"voice:{currentChannel.Value}").SendAsync("ScreenShareChanged", UserId, false, "");
+                _voiceState.RemoveScreenSharer(currentChannel.Value, UserId);
+                await Clients.Group($"voice:{currentChannel.Value}").SendAsync("ScreenShareStopped", UserId);
             }
 
             _voiceState.LeaveChannel(currentChannel.Value, UserId);
@@ -287,8 +423,12 @@ public class ChatHub : Hub
 
             // Notify the server group so sidebar updates for non-participants
             var prevChannel = await _db.Channels.FindAsync(currentChannel.Value);
-            if (prevChannel != null)
+            if (prevChannel?.ServerId != null)
             {
+                if (wasSharing)
+                {
+                    await Clients.Group($"server:{prevChannel.ServerId}").SendAsync("ScreenShareStoppedInChannel", currentChannel.Value.ToString(), UserId);
+                }
                 await Clients.Group($"server:{prevChannel.ServerId}").SendAsync("VoiceUserLeftChannel", currentChannel.Value.ToString(), UserId);
             }
         }
@@ -300,11 +440,11 @@ public class ChatHub : Hub
         var users = _voiceState.GetChannelUsers(channelGuid);
         await Clients.Caller.SendAsync("VoiceChannelUsers", users);
 
-        // Send current screen sharer info to the joining user
-        var currentSharer = _voiceState.GetScreenSharer(channelGuid);
-        if (currentSharer.HasValue)
+        // Send current screen sharers to the joining user
+        var currentSharers = _voiceState.GetScreenSharers(channelGuid);
+        if (currentSharers.Count > 0)
         {
-            await Clients.Caller.SendAsync("ScreenShareChanged", currentSharer.Value.UserId, true, currentSharer.Value.DisplayName);
+            await Clients.Caller.SendAsync("ActiveSharers", currentSharers);
         }
 
         // Notify voice group for WebRTC setup
@@ -312,7 +452,7 @@ public class ChatHub : Hub
 
         // Notify the server group so sidebar updates for non-participants
         var channel = await _db.Channels.FindAsync(channelGuid);
-        if (channel != null)
+        if (channel?.ServerId != null)
         {
             await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, DisplayName);
         }
@@ -323,11 +463,11 @@ public class ChatHub : Hub
         var channelGuid = Guid.Parse(channelId);
 
         // Clear screen share if leaving while sharing
-        var sharer = _voiceState.GetScreenSharer(channelGuid);
-        if (sharer.HasValue && sharer.Value.UserId == UserId)
+        var wasSharing = _voiceState.IsScreenSharing(channelGuid, UserId);
+        if (wasSharing)
         {
-            _voiceState.ClearScreenSharer(channelGuid);
-            await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareChanged", UserId, false, "");
+            _voiceState.RemoveScreenSharer(channelGuid, UserId);
+            await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
         }
 
         _voiceState.LeaveChannel(channelGuid, UserId);
@@ -336,8 +476,12 @@ public class ChatHub : Hub
 
         // Notify the server group so sidebar updates for non-participants
         var channel = await _db.Channels.FindAsync(channelGuid);
-        if (channel != null)
+        if (channel?.ServerId != null)
         {
+            if (wasSharing)
+            {
+                await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+            }
             await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserLeftChannel", channelId, UserId);
         }
     }
@@ -347,19 +491,61 @@ public class ChatHub : Hub
     {
         var channelGuid = Guid.Parse(channelId);
         var channel = await _db.Channels.FindAsync(channelGuid);
-        if (channel == null) return;
-        if (!await _perms.IsMemberAsync(channel.ServerId, UserId)) return;
+        if (channel == null || !channel.ServerId.HasValue) return;
+        if (!await _perms.IsMemberAsync(channel.ServerId.Value, UserId)) return;
 
         if (isSharing)
         {
-            _voiceState.SetScreenSharer(channelGuid, UserId, DisplayName);
+            _voiceState.AddScreenSharer(channelGuid, UserId, DisplayName);
+            await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStarted", UserId, DisplayName);
+            await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStartedInChannel", channelId, UserId);
         }
         else
         {
-            _voiceState.ClearScreenSharer(channelGuid);
+            _voiceState.RemoveScreenSharer(channelGuid, UserId);
+            await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
+            await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+        }
+    }
+
+    // Viewer requests to watch a sharer's stream
+    public async Task RequestWatchStream(string sharerUserId)
+    {
+        // Verify both users are in the same voice channel
+        var viewerChannel = _voiceState.GetUserChannel(UserId);
+        var sharerChannel = _voiceState.GetUserChannel(sharerUserId);
+        if (!viewerChannel.HasValue || !sharerChannel.HasValue || viewerChannel.Value != sharerChannel.Value) return;
+
+        // Verify the target is actually sharing
+        if (!_voiceState.IsScreenSharing(sharerChannel.Value, sharerUserId)) return;
+
+        // Relay watch request to the sharer's connections
+        List<string> sharerConnections;
+        lock (_lock)
+        {
+            sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
         }
 
-        await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareChanged", UserId, isSharing, isSharing ? DisplayName : "");
+        foreach (var connId in sharerConnections)
+        {
+            await Clients.Client(connId).SendAsync("WatchStreamRequested", UserId);
+        }
+    }
+
+    // Viewer stops watching a sharer's stream
+    public async Task StopWatchingStream(string sharerUserId)
+    {
+        // Relay stop request to the sharer's connections
+        List<string> sharerConnections;
+        lock (_lock)
+        {
+            sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
+        }
+
+        foreach (var connId in sharerConnections)
+        {
+            await Clients.Client(connId).SendAsync("StopWatchingRequested", UserId);
+        }
     }
 
     public async Task SendSignal(string targetUserId, string signal)
@@ -384,5 +570,72 @@ public class ChatHub : Hub
     public Dictionary<string, string> GetVoiceChannelUsers(string channelId)
     {
         return _voiceState.GetChannelUsers(Guid.Parse(channelId));
+    }
+
+    // Get screen sharers for all voice channels in a server (for sidebar LIVE indicators)
+    public async Task<Dictionary<Guid, HashSet<string>>> GetServerVoiceSharers(string serverId)
+    {
+        var serverGuid = Guid.Parse(serverId);
+        var channelIds = await _db.Channels
+            .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
+            .Select(c => c.Id)
+            .ToListAsync();
+        return _voiceState.GetSharersForChannels(channelIds);
+    }
+
+    // Mark a channel as read for the current user
+    public async Task MarkChannelRead(string channelId)
+    {
+        var channelGuid = Guid.Parse(channelId);
+        await _notifications.MarkChannelRead(UserId, channelGuid);
+    }
+
+    // Get unread state for all channels in a server
+    public async Task<List<ChannelUnreadDto>> GetUnreadState(string serverId)
+    {
+        var serverGuid = Guid.Parse(serverId);
+        return await _notifications.GetUnreadChannels(UserId, serverGuid);
+    }
+
+    // Get unread state for all user's servers (called on app init)
+    public async Task<List<ServerUnreadDto>> GetAllServerUnreads()
+    {
+        return await _notifications.GetAllServerUnreads(UserId);
+    }
+
+    // Get DM channels for the current user
+    public async Task<List<DmChannelDto>> GetDmChannels()
+    {
+        var channels = await _db.Channels
+            .Include(c => c.DmUser1)
+            .Include(c => c.DmUser2)
+            .Where(c => c.Type == ChannelType.DM && (c.DmUser1Id == UserId || c.DmUser2Id == UserId))
+            .ToListAsync();
+
+        // Sort by LastMessageAt descending, with nulls at end
+        channels = channels.OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue).ToList();
+
+        return channels.Select(c =>
+        {
+            var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
+            var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio);
+            // Use a derived CreatedAt from the channel Id (sequential GUIDs) — or just use LastMessageAt
+            return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
+        }).ToList();
+    }
+
+    // Get DM unread state
+    public async Task<List<DmUnreadDto>> GetDmUnreads()
+    {
+        return await _notifications.GetDmUnreads(UserId);
+    }
+
+    // Get online user IDs (for @here mention resolution)
+    public static HashSet<string> GetOnlineUserIds()
+    {
+        lock (_lock)
+        {
+            return new HashSet<string>(_connections.Values);
+        }
     }
 }

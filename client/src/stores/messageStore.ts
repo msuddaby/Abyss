@@ -8,6 +8,8 @@ interface MessageState {
   loading: boolean;
   hasMore: boolean;
   currentChannelId: string | null;
+  replyingTo: Message | null;
+  setReplyingTo: (message: Message | null) => void;
   fetchMessages: (channelId: string) => Promise<void>;
   loadMore: () => Promise<void>;
   addMessage: (message: Message) => void;
@@ -18,7 +20,7 @@ interface MessageState {
   toggleReaction: (messageId: string, emoji: string) => Promise<void>;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
-  sendMessage: (channelId: string, content: string, attachmentIds?: string[]) => Promise<void>;
+  sendMessage: (channelId: string, content: string, attachmentIds?: string[], replyToMessageId?: string) => Promise<void>;
   joinChannel: (channelId: string) => Promise<void>;
   leaveChannel: (channelId: string) => Promise<void>;
   clear: () => void;
@@ -29,6 +31,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   loading: false,
   hasMore: true,
   currentChannelId: null,
+  replyingTo: null,
+  setReplyingTo: (message) => set({ replyingTo: message }),
 
   fetchMessages: async (channelId) => {
     set({ loading: true, messages: [], hasMore: true, currentChannelId: channelId });
@@ -67,9 +71,11 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   markDeleted: (messageId) => {
     set((s) => ({
-      messages: s.messages.map((m) =>
-        m.id === messageId ? { ...m, isDeleted: true, content: '', attachments: [] } : m
-      ),
+      messages: s.messages.map((m) => {
+        if (m.id === messageId) return { ...m, isDeleted: true, content: '', attachments: [] };
+        if (m.replyTo && m.replyTo.id === messageId) return { ...m, replyTo: { ...m.replyTo, isDeleted: true, content: '' } };
+        return m;
+      }),
     }));
   },
 
@@ -108,9 +114,9 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     await conn.invoke('DeleteMessage', messageId);
   },
 
-  sendMessage: async (channelId, content, attachmentIds) => {
+  sendMessage: async (channelId, content, attachmentIds, replyToMessageId) => {
     const conn = await ensureConnected();
-    await conn.invoke('SendMessage', channelId, content, attachmentIds || []);
+    await conn.invoke('SendMessage', channelId, content, attachmentIds || [], replyToMessageId || null);
   },
 
   joinChannel: async (channelId) => {
@@ -123,5 +129,5 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     await conn.invoke('LeaveChannel', channelId);
   },
 
-  clear: () => set({ messages: [], currentChannelId: null }),
+  clear: () => set({ messages: [], currentChannelId: null, replyingTo: null }),
 }));

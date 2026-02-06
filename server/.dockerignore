@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/.env
+**/.env.*
+**/node_modules/
+**/.git
+**/.gitignore
+**/.vs
+**/.vscode
+**/.idea
+*.md
+*.swp

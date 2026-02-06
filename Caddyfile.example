@@ -1,0 +1,31 @@
+# Abyss Caddyfile — adjust your.domain.com to your actual domain
+#
+# Caddy auto-provisions HTTPS via Let's Encrypt.
+# Build the frontend first: cd client && npm ci && npm run build
+#
+# Install: https://caddyserver.com/docs/install
+# Run:     sudo caddy start --config /path/to/Caddyfile
+
+your.domain.com {
+	# API endpoints
+	handle /api/* {
+		reverse_proxy localhost:5000
+	}
+
+	# SignalR hub (WebSocket upgrade handled automatically)
+	handle /hubs/* {
+		reverse_proxy localhost:5000
+	}
+
+	# Uploaded files
+	handle /uploads/* {
+		reverse_proxy localhost:5000
+	}
+
+	# Frontend SPA — serve built files with fallback to index.html
+	handle {
+		root * /path/to/Abyss/client/dist
+		try_files {path} /index.html
+		file_server
+	}
+}

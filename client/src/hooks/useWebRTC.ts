@@ -26,6 +26,9 @@ let screenVideoStreams: Map<string, MediaStream> = new Map();
 let pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegistered = false;
 
+// Per-viewer screen track senders: viewerUserId -> RTCRtpSender
+let screenTrackSenders: Map<string, RTCRtpSender> = new Map();
+
 // Audio analysis state
 let audioContext: AudioContext | null = null;
 let analysers: Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode }> = new Map();
@@ -162,6 +165,7 @@ function closePeer(peerId: string) {
   removeAnalyser(peerId);
   screenVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
+  screenTrackSenders.delete(peerId);
 }
 
 function cleanupAll() {
@@ -176,6 +180,7 @@ function cleanupAll() {
   cleanupAnalysers();
   screenVideoStreams.clear();
   pendingCandidates.clear();
+  screenTrackSenders.clear();
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
@@ -215,21 +220,9 @@ async function startScreenShareInternal() {
     stopScreenShareInternal();
   };
 
-  // Add video track to all existing peer connections and manually renegotiate each
-  const conn = getConnection();
-  for (const [peerId, pc] of peers) {
-    pc.addTrack(videoTrack, screenStream!);
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
-    } catch (err) {
-      console.error(`Renegotiation (start share) failed for ${peerId}:`, err);
-    }
-  }
-
-  // Notify server
+  // Do NOT add track to any peer connections — viewers opt-in via RequestWatchStream
   voiceState.setScreenSharing(true);
+  const conn = getConnection();
   await conn.invoke('NotifyScreenShare', voiceState.currentChannelId, true);
 }
 
@@ -237,21 +230,21 @@ async function stopScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
   const conn = getConnection();
 
-  // Remove video track from all peer connections and renegotiate each
-  for (const [peerId, pc] of peers) {
-    const senders = pc.getSenders();
-    const videoSender = senders.find((s) => s.track?.kind === 'video');
-    if (videoSender) {
-      pc.removeTrack(videoSender);
+  // Remove video track from all viewers we're sending to and renegotiate
+  for (const [viewerId, sender] of screenTrackSenders) {
+    const pc = peers.get(viewerId);
+    if (pc) {
+      pc.removeTrack(sender);
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+        await conn.invoke('SendSignal', viewerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
       } catch (err) {
-        console.error(`Renegotiation (stop share) failed for ${peerId}:`, err);
+        console.error(`Renegotiation (stop share) failed for ${viewerId}:`, err);
       }
     }
   }
+  screenTrackSenders.clear();
 
   // Stop screen tracks
   if (screenStream) {
@@ -264,6 +257,68 @@ async function stopScreenShareInternal() {
   if (voiceState.currentChannelId) {
     await conn.invoke('NotifyScreenShare', voiceState.currentChannelId, false);
   }
+}
+
+// Called when a viewer requests to watch our stream
+async function addVideoTrackForViewer(viewerUserId: string) {
+  if (!screenStream) return;
+  const pc = peers.get(viewerUserId);
+  if (!pc) return;
+
+  const videoTrack = screenStream.getVideoTracks()[0];
+  if (!videoTrack) return;
+
+  const sender = pc.addTrack(videoTrack, screenStream);
+  screenTrackSenders.set(viewerUserId, sender);
+
+  // Renegotiate
+  const conn = getConnection();
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await conn.invoke('SendSignal', viewerUserId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+  } catch (err) {
+    console.error(`Renegotiation (add viewer track) failed for ${viewerUserId}:`, err);
+  }
+}
+
+// Called when a viewer stops watching our stream
+async function removeVideoTrackForViewer(viewerUserId: string) {
+  const sender = screenTrackSenders.get(viewerUserId);
+  const pc = peers.get(viewerUserId);
+  if (!sender || !pc) return;
+
+  pc.removeTrack(sender);
+  screenTrackSenders.delete(viewerUserId);
+
+  // Renegotiate
+  const conn = getConnection();
+  try {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await conn.invoke('SendSignal', viewerUserId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+  } catch (err) {
+    console.error(`Renegotiation (remove viewer track) failed for ${viewerUserId}:`, err);
+  }
+}
+
+// Exported for ScreenShareView to call
+export async function requestWatch(sharerUserId: string) {
+  const conn = getConnection();
+  useVoiceStore.getState().setWatching(sharerUserId);
+  await conn.invoke('RequestWatchStream', sharerUserId);
+}
+
+export async function stopWatching() {
+  const store = useVoiceStore.getState();
+  const sharerUserId = store.watchingUserId;
+  if (!sharerUserId) return;
+
+  const conn = getConnection();
+  await conn.invoke('StopWatchingStream', sharerUserId);
+  store.setWatching(null);
+  screenVideoStreams.delete(sharerUserId);
+  store.bumpScreenStreamVersion();
 }
 
 function setupSignalRListeners() {
@@ -282,16 +337,8 @@ function setupSignalRListeners() {
     // Existing user creates offer for the new peer
     const pc = createPeerConnection(userId);
 
-    // Add audio tracks
+    // Add audio tracks only — screen track is added lazily on WatchStreamRequested
     localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
-
-    // Also add screen video track if currently sharing
-    if (screenStream) {
-      const videoTrack = screenStream.getVideoTracks()[0];
-      if (videoTrack) {
-        pc.addTrack(videoTrack, screenStream);
-      }
-    }
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -322,17 +369,10 @@ function setupSignalRListeners() {
         console.log(`Sending renegotiation answer to ${fromUserId}`);
         await conn.invoke('SendSignal', fromUserId, JSON.stringify({ type: 'answer', sdp: answer.sdp }));
       } else {
-        // New connection
+        // New connection — audio only, screen track added lazily
         pc = createPeerConnection(fromUserId);
         if (localStream) {
           localStream.getTracks().forEach((track) => pc!.addTrack(track, localStream!));
-        }
-        // Also add screen video track if currently sharing
-        if (screenStream) {
-          const videoTrack = screenStream.getVideoTracks()[0];
-          if (videoTrack) {
-            pc.addTrack(videoTrack, screenStream);
-          }
         }
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
         await applyPendingCandidates(fromUserId);
@@ -366,18 +406,46 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setParticipants(new Map(Object.entries(users)));
   });
 
-  conn.on('ScreenShareChanged', (userId: string, isSharing: boolean, displayName: string) => {
+  // Screen share events (multi-sharer)
+  conn.on('ScreenShareStarted', (userId: string, displayName: string) => {
+    useVoiceStore.getState().addActiveSharer(userId, displayName);
+    // Update own isScreenSharing if it's our own event
+    const currentUser = useAuthStore.getState().user;
+    if (userId === currentUser?.id) {
+      useVoiceStore.getState().setScreenSharing(true);
+    }
+  });
+
+  conn.on('ScreenShareStopped', (userId: string) => {
     const store = useVoiceStore.getState();
-    if (isSharing) {
-      store.setScreenSharer(userId, displayName);
-    } else {
-      store.setScreenSharer(null, null);
+    store.removeActiveSharer(userId);
+    // If we were watching this sharer, clean up
+    if (store.watchingUserId === userId) {
+      store.setWatching(null);
+      screenVideoStreams.delete(userId);
+      store.bumpScreenStreamVersion();
     }
     // Update own isScreenSharing if it's our own event
     const currentUser = useAuthStore.getState().user;
     if (userId === currentUser?.id) {
-      store.setScreenSharing(isSharing);
+      store.setScreenSharing(false);
     }
+  });
+
+  conn.on('ActiveSharers', (sharers: Record<string, string>) => {
+    useVoiceStore.getState().setActiveSharers(new Map(Object.entries(sharers)));
+  });
+
+  // Sharer receives: viewer wants to watch
+  conn.on('WatchStreamRequested', (viewerUserId: string) => {
+    console.log(`WatchStreamRequested from ${viewerUserId}`);
+    addVideoTrackForViewer(viewerUserId);
+  });
+
+  // Sharer receives: viewer stopped watching
+  conn.on('StopWatchingRequested', (viewerUserId: string) => {
+    console.log(`StopWatchingRequested from ${viewerUserId}`);
+    removeVideoTrackForViewer(viewerUserId);
   });
 }
 
@@ -475,6 +543,13 @@ export function useWebRTC() {
       return;
     }
 
+    // Apply current mute state to the new stream immediately
+    const voiceState = useVoiceStore.getState();
+    const shouldEnable = !voiceState.isMuted && (voiceState.voiceMode === 'voice-activity' || voiceState.isPttActive);
+    localStream.getAudioTracks().forEach((track) => {
+      track.enabled = shouldEnable;
+    });
+
     // Set up audio analyser for local user's speaking indicator
     const currentUser = useAuthStore.getState().user;
     if (currentUser) {
@@ -495,7 +570,8 @@ export function useWebRTC() {
     setCurrentChannel(null);
     setParticipants(new Map());
     useVoiceStore.getState().setScreenSharing(false);
-    useVoiceStore.getState().setScreenSharer(null, null);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
   const startScreenShare = useCallback(async () => {

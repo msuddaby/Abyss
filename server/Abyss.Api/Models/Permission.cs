@@ -11,4 +11,5 @@ public enum Permission : long
     ViewAuditLog = 1 << 5,
     ManageServer = 1 << 6,
     ManageInvites = 1 << 7,
+    ManageEmojis = 1 << 8,
 }

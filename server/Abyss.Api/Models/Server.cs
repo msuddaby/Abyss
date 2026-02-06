@@ -11,4 +11,5 @@ public class Server
     public ICollection<Channel> Channels { get; set; } = new List<Channel>();
     public ICollection<ServerRole> Roles { get; set; } = new List<ServerRole>();
     public ICollection<ServerBan> Bans { get; set; } = new List<ServerBan>();
+    public ICollection<CustomEmoji> Emojis { get; set; } = new List<CustomEmoji>();
 }

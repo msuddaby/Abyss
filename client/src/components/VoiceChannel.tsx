@@ -13,9 +13,11 @@ interface Props {
 
 export default function VoiceChannel({ channel, isActive, isConnected, onSelect, onJoin, onLeave }: Props) {
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
+  const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
 
   const channelUsers = voiceChannelUsers.get(channel.id);
+  const channelSharers = voiceChannelSharers.get(channel.id);
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
 
   return (
@@ -39,6 +41,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
             <div key={userId} className="voice-participant">
               <span className={`participant-avatar${speakingUsers.has(userId) ? ' speaking' : ''}`}>{displayName.charAt(0).toUpperCase()}</span>
               <span className="participant-name">{displayName}</span>
+              {channelSharers?.has(userId) && <span className="live-badge">LIVE</span>}
             </div>
           ))}
         </div>

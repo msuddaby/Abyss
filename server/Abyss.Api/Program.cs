@@ -8,11 +8,15 @@ using Abyss.Api.Hubs;
 using Abyss.Api.Models;
 using Abyss.Api.Services;
 
-// Load .env from project root
-var envPath = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", "..", ".env"));
-if (File.Exists(envPath))
+// Load env file from project root (.env.dev takes priority for local dev, then .env)
+// In Docker containers, env vars come from docker-compose env_file directive instead.
+var projectRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "..", ".."));
+var envDevPath = Path.Combine(projectRoot, ".env.dev");
+var envPath = Path.Combine(projectRoot, ".env");
+var envFile = File.Exists(envDevPath) ? envDevPath : File.Exists(envPath) ? envPath : null;
+if (envFile is not null)
 {
-    foreach (var line in File.ReadAllLines(envPath))
+    foreach (var line in File.ReadAllLines(envFile))
     {
         var trimmed = line.Trim();
         if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#')) continue;
@@ -92,7 +96,9 @@ builder.Services.AddAuthorization();
 // Services
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<PermissionService>();
+builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<VoiceStateService>();
+builder.Services.AddSingleton<ImageService>();
 
 // SignalR
 builder.Services.AddSignalR();
@@ -132,5 +138,6 @@ app.UseStaticFiles();
 
 app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat");
+app.MapGet("/health", () => Results.Ok());
 
 app.Run();

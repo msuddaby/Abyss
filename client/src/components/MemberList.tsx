@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useServerStore } from '../stores/serverStore';
 import { useAuthStore } from '../stores/authStore';
 import { usePresenceStore } from '../stores/presenceStore';
+import { useDmStore } from '../stores/dmStore';
+import { useMessageStore } from '../stores/messageStore';
 import { API_BASE } from '../services/api';
 import UserProfileCard from './UserProfileCard';
 import type { ServerMember } from '../types';
@@ -44,10 +46,26 @@ export default function MemberList() {
   const handleContextMenu = (member: ServerMember, e: React.MouseEvent) => {
     e.preventDefault();
     if (!currentMember) return;
-    if (member.userId === currentUser?.id) return;
-    if (!canActOn(currentMember, member)) return;
-    if (!canKick && !canBan && !canManageRoles) return;
+    const isSelf = member.userId === currentUser?.id;
+    if (isSelf) return;
     setContextMenu({ member, x: e.clientX, y: e.clientY });
+  };
+
+  const handleMessage = async () => {
+    if (!contextMenu) return;
+    const { createOrGetDm, enterDmMode, setActiveDmChannel } = useDmStore.getState();
+    const { leaveChannel, joinChannel, fetchMessages } = useMessageStore.getState();
+    const currentChannelId = useMessageStore.getState().currentChannelId;
+    if (currentChannelId) {
+      await leaveChannel(currentChannelId).catch(console.error);
+    }
+    const dm = await createOrGetDm(contextMenu.member.userId);
+    enterDmMode();
+    useServerStore.getState().clearActiveServer();
+    setActiveDmChannel(dm);
+    await joinChannel(dm.id).catch(console.error);
+    fetchMessages(dm.id);
+    setContextMenu(null);
   };
 
   const handleKick = async () => {
@@ -78,7 +96,7 @@ export default function MemberList() {
     setRoleAssignTarget(null);
   };
 
-  const assignableRoles = roles.filter((r) => !r.isDefault);
+  const assignableRoles = [...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position);
 
   const renderMember = (m: ServerMember) => {
     const displayColor = getDisplayColor(m);
@@ -126,7 +144,8 @@ export default function MemberList() {
       )}
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          {canManageRoles && (
+          <button className="context-menu-item" onClick={handleMessage}>Message</button>
+          {canManageRoles && currentMember && canActOn(currentMember, contextMenu.member) && (
             <button className="context-menu-item" onClick={handleManageRoles}>Manage Roles</button>
           )}
           {canKick && currentMember && canActOn(currentMember, contextMenu.member) && (

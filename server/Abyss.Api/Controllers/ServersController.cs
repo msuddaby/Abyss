@@ -120,7 +120,9 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
             targetName: $"#{channel.Name}", details: channelType.ToString());
 
-        return Ok(new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position));
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position);
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelCreated", serverId.ToString(), dto);
+        return Ok(dto);
     }
 
     [HttpGet("{serverId}/members")]
@@ -173,7 +175,7 @@ public class ServersController : ControllerBase
         var actor = await _perms.GetMemberAsync(serverId, UserId);
         var target = await _perms.GetMemberAsync(serverId, userId);
         if (actor == null || target == null) return NotFound();
-        if (target.IsOwner) return BadRequest("Cannot change the owner's roles.");
+        if (target.IsOwner && UserId != userId) return BadRequest("Cannot change the owner's roles.");
 
         // Hierarchy check: can't assign roles at or above own position
         var actorPos = PermissionService.GetHighestPosition(actor);

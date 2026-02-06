@@ -8,8 +8,8 @@ interface VoiceState {
   isMuted: boolean;
   isDeafened: boolean;
   isScreenSharing: boolean;
-  screenSharerUserId: string | null;
-  screenSharerDisplayName: string | null;
+  activeSharers: Map<string, string>; // userId -> displayName of all sharers in channel
+  watchingUserId: string | null; // who we're currently watching
   screenStreamVersion: number;
   speakingUsers: Set<string>;
   voiceMode: VoiceMode;
@@ -22,7 +22,10 @@ interface VoiceState {
   toggleMute: () => void;
   toggleDeafen: () => void;
   setScreenSharing: (sharing: boolean) => void;
-  setScreenSharer: (userId: string | null, displayName: string | null) => void;
+  addActiveSharer: (userId: string, displayName: string) => void;
+  removeActiveSharer: (userId: string) => void;
+  setActiveSharers: (sharers: Map<string, string>) => void;
+  setWatching: (userId: string | null) => void;
   bumpScreenStreamVersion: () => void;
   setVoiceMode: (mode: VoiceMode) => void;
   setPttKey: (key: string) => void;
@@ -33,11 +36,11 @@ interface VoiceState {
 export const useVoiceStore = create<VoiceState>((set) => ({
   currentChannelId: null,
   participants: new Map(),
-  isMuted: false,
-  isDeafened: false,
+  isMuted: localStorage.getItem('isMuted') === 'true',
+  isDeafened: localStorage.getItem('isDeafened') === 'true',
   isScreenSharing: false,
-  screenSharerUserId: null,
-  screenSharerDisplayName: null,
+  activeSharers: new Map(),
+  watchingUserId: null,
   screenStreamVersion: 0,
   speakingUsers: new Set<string>(),
   voiceMode: (localStorage.getItem('voiceMode') as VoiceMode) || 'voice-activity',
@@ -59,18 +62,52 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((s) => {
       const next = new Map(s.participants);
       next.delete(userId);
-      // If the removed user was the screen sharer, clear sharer
-      const clearSharer = s.screenSharerUserId === userId
-        ? { screenSharerUserId: null, screenSharerDisplayName: null, isScreenSharing: false }
-        : {};
-      return { participants: next, ...clearSharer };
+      // If the removed user was a sharer, remove from activeSharers
+      let sharerUpdate: Partial<VoiceState> = {};
+      if (s.activeSharers.has(userId)) {
+        const nextSharers = new Map(s.activeSharers);
+        nextSharers.delete(userId);
+        sharerUpdate.activeSharers = nextSharers;
+      }
+      // If we were watching the removed user, clear watching
+      if (s.watchingUserId === userId) {
+        sharerUpdate.watchingUserId = null;
+      }
+      return { participants: next, ...sharerUpdate };
     }),
 
-  toggleMute: () => set((s) => ({ isMuted: !s.isMuted })),
-  toggleDeafen: () => set((s) => ({ isDeafened: !s.isDeafened })),
+  toggleMute: () => set((s) => {
+    const next = !s.isMuted;
+    localStorage.setItem('isMuted', String(next));
+    return { isMuted: next };
+  }),
+  toggleDeafen: () => set((s) => {
+    const next = !s.isDeafened;
+    localStorage.setItem('isDeafened', String(next));
+    return { isDeafened: next };
+  }),
   setScreenSharing: (sharing) => set({ isScreenSharing: sharing }),
-  setScreenSharer: (userId, displayName) =>
-    set({ screenSharerUserId: userId, screenSharerDisplayName: displayName }),
+
+  addActiveSharer: (userId, displayName) =>
+    set((s) => {
+      const next = new Map(s.activeSharers);
+      next.set(userId, displayName);
+      return { activeSharers: next };
+    }),
+
+  removeActiveSharer: (userId) =>
+    set((s) => {
+      const next = new Map(s.activeSharers);
+      next.delete(userId);
+      // If we were watching this user, clear watching
+      const clearWatch = s.watchingUserId === userId ? { watchingUserId: null } : {};
+      return { activeSharers: next, ...clearWatch };
+    }),
+
+  setActiveSharers: (sharers) => set({ activeSharers: sharers }),
+
+  setWatching: (userId) => set({ watchingUserId: userId }),
+
   bumpScreenStreamVersion: () =>
     set((s) => ({ screenStreamVersion: s.screenStreamVersion + 1 })),
   setVoiceMode: (mode) => {

@@ -40,7 +40,7 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
     left: Math.min(position.x, window.innerWidth - 300),
   };
 
-  const nonDefaultRoles = member?.roles.filter((r) => !r.isDefault) ?? [];
+  const nonDefaultRoles = [...(member?.roles ?? [])].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position);
 
   return (
     <div className="user-profile-card" style={style}>

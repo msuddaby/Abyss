@@ -14,7 +14,9 @@ public enum AuditAction
     RoleCreated,
     RoleUpdated,
     RoleDeleted,
-    MemberRolesUpdated
+    MemberRolesUpdated,
+    EmojiCreated,
+    EmojiDeleted
 }
 
 public class AuditLog

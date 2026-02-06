@@ -3,6 +3,7 @@ using System;
 using Abyss.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Abyss.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260206181155_AddNotificationsAndChannelReads")]
+    partial class AddNotificationsAndChannelReads
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -175,22 +178,14 @@ namespace Abyss.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<string>("DmUser1Id")
-                        .HasColumnType("text");
-
-                    b.Property<string>("DmUser2Id")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("LastMessageAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("Name")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<int>("Position")
                         .HasColumnType("integer");
 
-                    b.Property<Guid?>("ServerId")
+                    b.Property<Guid>("ServerId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("Type")
@@ -198,13 +193,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DmUser2Id");
-
                     b.HasIndex("ServerId");
-
-                    b.HasIndex("DmUser1Id", "DmUser2Id")
-                        .IsUnique()
-                        .HasFilter("\"DmUser1Id\" IS NOT NULL AND \"DmUser2Id\" IS NOT NULL");
 
                     b.ToTable("Channels");
                 });
@@ -225,40 +214,6 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("ChannelReads");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.CustomEmoji", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("CreatedById")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("ImageUrl")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<Guid>("ServerId")
-                        .HasColumnType("uuid");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CreatedById");
-
-                    b.HasIndex("ServerId", "Name")
-                        .IsUnique();
-
-                    b.ToTable("CustomEmojis");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Invite", b =>
@@ -325,16 +280,11 @@ namespace Abyss.Api.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
-                    b.Property<Guid?>("ReplyToMessageId")
-                        .HasColumnType("uuid");
-
                     b.HasKey("Id");
 
                     b.HasIndex("AuthorId");
 
                     b.HasIndex("ChannelId");
-
-                    b.HasIndex("ReplyToMessageId");
 
                     b.ToTable("Messages");
                 });
@@ -357,7 +307,7 @@ namespace Abyss.Api.Migrations
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid?>("ServerId")
+                    b.Property<Guid>("ServerId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("Type")
@@ -707,23 +657,11 @@ namespace Abyss.Api.Migrations
 
             modelBuilder.Entity("Abyss.Api.Models.Channel", b =>
                 {
-                    b.HasOne("Abyss.Api.Models.AppUser", "DmUser1")
-                        .WithMany()
-                        .HasForeignKey("DmUser1Id")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.HasOne("Abyss.Api.Models.AppUser", "DmUser2")
-                        .WithMany()
-                        .HasForeignKey("DmUser2Id")
-                        .OnDelete(DeleteBehavior.NoAction);
-
                     b.HasOne("Abyss.Api.Models.Server", "Server")
                         .WithMany("Channels")
-                        .HasForeignKey("ServerId");
-
-                    b.Navigation("DmUser1");
-
-                    b.Navigation("DmUser2");
+                        .HasForeignKey("ServerId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Server");
                 });
@@ -745,25 +683,6 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Channel");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.CustomEmoji", b =>
-                {
-                    b.HasOne("Abyss.Api.Models.AppUser", "CreatedBy")
-                        .WithMany()
-                        .HasForeignKey("CreatedById")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Abyss.Api.Models.Server", "Server")
-                        .WithMany("Emojis")
-                        .HasForeignKey("ServerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("CreatedBy");
-
-                    b.Navigation("Server");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Invite", b =>
@@ -799,16 +718,9 @@ namespace Abyss.Api.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Abyss.Api.Models.Message", "ReplyToMessage")
-                        .WithMany()
-                        .HasForeignKey("ReplyToMessageId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Author");
 
                     b.Navigation("Channel");
-
-                    b.Navigation("ReplyToMessage");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Notification", b =>
@@ -828,7 +740,8 @@ namespace Abyss.Api.Migrations
                     b.HasOne("Abyss.Api.Models.Server", "Server")
                         .WithMany()
                         .HasForeignKey("ServerId")
-                        .OnDelete(DeleteBehavior.NoAction);
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
 
                     b.HasOne("Abyss.Api.Models.AppUser", "User")
                         .WithMany()
@@ -1014,8 +927,6 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Bans");
 
                     b.Navigation("Channels");
-
-                    b.Navigation("Emojis");
 
                     b.Navigation("Members");
 

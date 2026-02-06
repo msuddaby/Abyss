@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useServerStore } from '../stores/serverStore';
 import { useAuthStore } from '../stores/authStore';
-import type { AuditLog, ServerRole } from '../types';
-import { hasPermission, Permission } from '../types';
+import { API_BASE } from '../services/api';
+import type { AuditLog, ServerRole, ServerMember } from '../types';
+import { hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '../types';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -18,6 +19,8 @@ const ACTION_LABELS: Record<string, string> = {
   RoleUpdated: 'Updated role',
   RoleDeleted: 'Deleted role',
   MemberRolesUpdated: 'Updated roles of',
+  EmojiCreated: 'Created emoji',
+  EmojiDeleted: 'Deleted emoji',
 };
 
 const ACTION_ICONS: Record<string, string> = {
@@ -34,6 +37,8 @@ const ACTION_ICONS: Record<string, string> = {
   RoleUpdated: '\u{270F}',
   RoleDeleted: '\u{274C}',
   MemberRolesUpdated: '\u{1F465}',
+  EmojiCreated: '\u{1F600}',
+  EmojiDeleted: '\u{274C}',
 };
 
 const PERMISSION_LABELS: { perm: number; label: string }[] = [
@@ -45,6 +50,7 @@ const PERMISSION_LABELS: { perm: number; label: string }[] = [
   { perm: Permission.ViewAuditLog, label: 'View Audit Log' },
   { perm: Permission.ManageServer, label: 'Manage Server' },
   { perm: Permission.ManageInvites, label: 'Manage Invites' },
+  { perm: Permission.ManageEmojis, label: 'Manage Emojis' },
 ];
 
 function formatTimestamp(dateStr: string) {
@@ -52,14 +58,13 @@ function formatTimestamp(dateStr: string) {
   return d.toLocaleString();
 }
 
-type Tab = 'roles' | 'bans' | 'audit' | 'danger';
+type Tab = 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
 
 export default function ServerSettingsModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>('roles');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const { fetchAuditLogs, deleteServer, activeServer, fetchBans, unbanMember } = useServerStore();
+  const { fetchAuditLogs, deleteServer, activeServer, fetchBans, unbanMember, kickMember, banMember } = useServerStore();
   const members = useServerStore((s) => s.members);
   const roles = useServerStore((s) => s.roles);
   const bans = useServerStore((s) => s.bans);
@@ -67,8 +72,18 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const isOwner = currentMember?.isOwner ?? false;
   const canManageRoles = currentMember ? hasPermission(currentMember, Permission.ManageRoles) : false;
+  const canKick = currentMember ? hasPermission(currentMember, Permission.KickMembers) : false;
   const canBan = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
   const canViewAuditLog = currentMember ? hasPermission(currentMember, Permission.ViewAuditLog) : false;
+  const canManageEmojis = currentMember ? hasPermission(currentMember, Permission.ManageEmojis) : false;
+  const canManageAnyMembers = canManageRoles || canKick || canBan;
+
+  const [tab, setTab] = useState<Tab>(canManageAnyMembers ? 'members' : 'roles');
+
+  // Members tab state
+  const [memberSearch, setMemberSearch] = useState('');
+  const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
+  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
 
   // Role editor state
   const [editingRole, setEditingRole] = useState<ServerRole | null>(null);
@@ -76,6 +91,14 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [roleColor, setRoleColor] = useState('#99aab5');
   const [rolePerms, setRolePerms] = useState(0);
   const [creating, setCreating] = useState(false);
+
+  // Emoji tab state
+  const emojis = useServerStore((s) => s.emojis);
+  const [emojiName, setEmojiName] = useState('');
+  const [emojiFile, setEmojiFile] = useState<File | null>(null);
+  const [emojiPreview, setEmojiPreview] = useState<string | null>(null);
+  const [emojiUploading, setEmojiUploading] = useState(false);
+  const [emojiError, setEmojiError] = useState('');
 
   useEffect(() => {
     if (tab === 'audit' && canViewAuditLog) {
@@ -135,6 +158,18 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     }
   };
 
+  const handleMoveRole = async (roleId: string, direction: 'up' | 'down') => {
+    const idx = nonDefaultRoles.findIndex((r) => r.id === roleId);
+    if (idx < 0) return;
+    const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= nonDefaultRoles.length) return;
+    const reordered = [...nonDefaultRoles];
+    [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
+    // Backend expects IDs in low-to-high position order (position 1 first)
+    const { reorderRoles } = useServerStore.getState();
+    await reorderRoles(serverId, [...reordered].reverse().map((r) => r.id));
+  };
+
   const togglePerm = (perm: number) => {
     setRolePerms((p) => (p & perm) ? (p & ~perm) : (p | perm));
   };
@@ -146,8 +181,14 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
       <div className="modal server-settings-modal" onClick={(e) => e.stopPropagation()}>
         <h2>Server Settings</h2>
         <div className="settings-tabs">
+          {canManageAnyMembers && (
+            <button className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
+          )}
           {canManageRoles && (
             <button className={`settings-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
+          )}
+          {canManageEmojis && (
+            <button className={`settings-tab ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
           )}
           {canBan && (
             <button className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
@@ -160,17 +201,119 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
           )}
         </div>
 
+        {tab === 'members' && canManageAnyMembers && (
+          <div className="members-tab">
+            <input
+              className="members-search"
+              placeholder="Search members..."
+              value={memberSearch}
+              onChange={(e) => setMemberSearch(e.target.value)}
+            />
+            <div className="members-manage-list">
+              {members
+                .filter((m) => m.user.displayName.toLowerCase().includes(memberSearch.toLowerCase()) || m.user.username.toLowerCase().includes(memberSearch.toLowerCase()))
+                .map((m) => {
+                  const displayColor = getDisplayColor(m);
+                  const highestRole = getHighestRole(m);
+                  const isSelf = m.userId === currentUser?.id;
+                  const canActOnMember = !isSelf && currentMember && canActOn(currentMember, m);
+                  const showManageRoles = canManageRoles && (canActOnMember || (isSelf && isOwner));
+                  const showKick = canKick && canActOnMember;
+                  const showBan = canBan && canActOnMember;
+
+                  return (
+                    <div key={m.userId} className="member-manage-row">
+                      <div className="member-manage-info">
+                        <div className="member-manage-avatar">
+                          {m.user.avatarUrl ? (
+                            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${API_BASE}${m.user.avatarUrl}`} alt={m.user.displayName} />
+                          ) : (
+                            <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="member-manage-details">
+                          <span className="member-manage-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
+                          <span className="member-manage-username">@{m.user.username}</span>
+                        </div>
+                        {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}
+                        {!m.isOwner && highestRole && (
+                          <span className="member-badge" style={{ background: highestRole.color, color: '#fff' }}>{highestRole.name}</span>
+                        )}
+                      </div>
+                      <div className="member-manage-actions">
+                        {showManageRoles && (
+                          <button className="btn-secondary" onClick={() => {
+                            setRoleAssignTarget(m);
+                            setSelectedRoleIds(m.roles.filter((r) => !r.isDefault).map((r) => r.id));
+                          }}>Roles</button>
+                        )}
+                        {showKick && (
+                          <button className="btn-danger-sm" onClick={() => kickMember(serverId, m.userId)}>Kick</button>
+                        )}
+                        {showBan && (
+                          <button className="btn-danger-sm" onClick={() => {
+                            const reason = prompt('Ban reason (optional):');
+                            banMember(serverId, m.userId, reason || undefined);
+                          }}>Ban</button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+            {roleAssignTarget && (
+              <div className="modal-overlay" onClick={() => setRoleAssignTarget(null)}>
+                <div className="modal" onClick={(e) => e.stopPropagation()}>
+                  <h2>Manage Roles — {roleAssignTarget.user.displayName}</h2>
+                  <div className="role-assign-list">
+                    {[...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position).map((role) => (
+                      <label key={role.id} className="role-assign-item">
+                        <input
+                          type="checkbox"
+                          checked={selectedRoleIds.includes(role.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedRoleIds([...selectedRoleIds, role.id]);
+                            } else {
+                              setSelectedRoleIds(selectedRoleIds.filter((id) => id !== role.id));
+                            }
+                          }}
+                        />
+                        <span className="role-color-dot" style={{ background: role.color }} />
+                        {role.name}
+                      </label>
+                    ))}
+                    {roles.filter((r) => !r.isDefault).length === 0 && <p style={{ color: 'var(--text-muted)' }}>No roles created yet.</p>}
+                  </div>
+                  <div className="modal-actions">
+                    <button className="btn-secondary" onClick={() => setRoleAssignTarget(null)}>Cancel</button>
+                    <button onClick={async () => {
+                      const { updateMemberRoles } = useServerStore.getState();
+                      await updateMemberRoles(serverId, roleAssignTarget.userId, selectedRoleIds);
+                      setRoleAssignTarget(null);
+                    }}>Save</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {tab === 'roles' && canManageRoles && (
           <div className="roles-tab">
             {!showEditor ? (
               <>
                 <button className="sidebar-action-btn" onClick={startCreateRole} style={{ marginBottom: 12, width: '100%' }}>+ Create Role</button>
                 <div className="role-list">
-                  {nonDefaultRoles.map((role) => (
+                  {nonDefaultRoles.map((role, i) => (
                     <div key={role.id} className="role-item" onClick={() => startEditRole(role)}>
                       <span className="role-color-dot" style={{ background: role.color }} />
                       <span className="role-item-name">{role.name}</span>
-                      <button className="role-delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.id); }} title="Delete Role">&times;</button>
+                      <div className="role-item-actions">
+                        <button className="role-move-btn" disabled={i === 0} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'up'); }} title="Move Up">&uarr;</button>
+                        <button className="role-move-btn" disabled={i === nonDefaultRoles.length - 1} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'down'); }} title="Move Down">&darr;</button>
+                        <button className="role-delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.id); }} title="Delete Role">&times;</button>
+                      </div>
                     </div>
                   ))}
                   {nonDefaultRoles.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '16px 0' }}>No custom roles yet.</p>}
@@ -209,6 +352,81 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {tab === 'emojis' && canManageEmojis && (
+          <div className="emojis-tab">
+            <div className="emoji-upload-form">
+              <h3>Upload Emoji ({emojis.length} / 50)</h3>
+              <div className="emoji-upload-row">
+                <input
+                  type="file"
+                  accept="image/png,image/gif,image/webp"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] ?? null;
+                    setEmojiFile(f);
+                    setEmojiError('');
+                    if (f) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => setEmojiPreview(ev.target?.result as string);
+                      reader.readAsDataURL(f);
+                      if (!emojiName) {
+                        const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 32);
+                        if (base.length >= 2) setEmojiName(base);
+                      }
+                    } else {
+                      setEmojiPreview(null);
+                    }
+                  }}
+                />
+                {emojiPreview && <img src={emojiPreview} alt="preview" className="emoji-upload-preview" />}
+              </div>
+              <div className="emoji-upload-row">
+                <input
+                  type="text"
+                  placeholder="emoji_name"
+                  value={emojiName}
+                  onChange={(e) => { setEmojiName(e.target.value); setEmojiError(''); }}
+                  maxLength={32}
+                />
+                <button
+                  disabled={!emojiFile || !emojiName || emojiUploading}
+                  onClick={async () => {
+                    if (!emojiFile || !emojiName) return;
+                    setEmojiUploading(true);
+                    setEmojiError('');
+                    try {
+                      const fd = new FormData();
+                      fd.append('file', emojiFile);
+                      fd.append('name', emojiName);
+                      await useServerStore.getState().uploadEmoji(serverId, fd);
+                      setEmojiName('');
+                      setEmojiFile(null);
+                      setEmojiPreview(null);
+                    } catch (err: unknown) {
+                      const msg = (err as { response?: { data?: string } })?.response?.data;
+                      setEmojiError(typeof msg === 'string' ? msg : 'Upload failed');
+                    } finally {
+                      setEmojiUploading(false);
+                    }
+                  }}
+                >
+                  {emojiUploading ? 'Uploading...' : 'Upload'}
+                </button>
+              </div>
+              {emojiError && <p className="emoji-error">{emojiError}</p>}
+            </div>
+            <div className="emoji-list">
+              {emojis.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No custom emojis yet.</p>}
+              {emojis.map((emoji) => (
+                <div key={emoji.id} className="emoji-item">
+                  <img src={`${API_BASE}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
+                  <span className="emoji-item-name">:{emoji.name}:</span>
+                  <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

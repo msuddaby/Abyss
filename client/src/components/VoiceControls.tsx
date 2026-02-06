@@ -3,12 +3,11 @@ import { useServerStore } from '../stores/serverStore';
 import { useWebRTC } from '../hooks/useWebRTC';
 
 export default function VoiceControls() {
-  const { currentChannelId, isMuted, isDeafened, isScreenSharing, screenSharerUserId, voiceMode, isPttActive, pttKey, toggleMute, toggleDeafen, setVoiceMode } = useVoiceStore();
+  const { currentChannelId, isScreenSharing, voiceMode, isPttActive, pttKey, setVoiceMode } = useVoiceStore();
   const channels = useServerStore((s) => s.channels);
   const { leaveVoice, startScreenShare, stopScreenShare } = useWebRTC();
 
   const channel = channels.find((c) => c.id === currentChannelId);
-  const someoneElseSharing = screenSharerUserId !== null && !isScreenSharing;
   const isPtt = voiceMode === 'push-to-talk';
 
   if (!currentChannelId) return null;
@@ -20,23 +19,6 @@ export default function VoiceControls() {
         {channel && <span className="voice-channel-name">🔊 {channel.name}</span>}
       </div>
       <div className="voice-controls-buttons">
-        {isPtt ? (
-          <button
-            className={`voice-ctrl-btn ${isPttActive && !isMuted ? 'ptt-active' : ''} ${isMuted ? 'active' : ''}`}
-            onClick={toggleMute}
-            title={isMuted ? 'Unmute' : `PTT: hold [${pttKey.startsWith('Mouse') ? `Mouse Button ${pttKey.slice(5)}` : pttKey}] to talk`}
-          >
-            {isMuted ? '🔇' : isPttActive ? '🎤' : '🎙️'}
-          </button>
-        ) : (
-          <button
-            className={`voice-ctrl-btn ${isMuted ? 'active' : ''}`}
-            onClick={toggleMute}
-            title={isMuted ? 'Unmute' : 'Mute'}
-          >
-            {isMuted ? '🔇' : '🎤'}
-          </button>
-        )}
         <button
           className={`voice-ctrl-btn voice-mode-toggle`}
           onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}
@@ -44,24 +26,15 @@ export default function VoiceControls() {
         >
           {isPtt ? 'PTT' : 'VA'}
         </button>
-        <button
-          className={`voice-ctrl-btn ${isDeafened ? 'active' : ''}`}
-          onClick={toggleDeafen}
-          title={isDeafened ? 'Undeafen' : 'Deafen'}
-        >
-          {isDeafened ? '🔇' : '🎧'}
-        </button>
+        {isPtt && (
+          <span className="ptt-hint">
+            {isPttActive ? '🎤' : `[${pttKey.startsWith('Mouse') ? `M${pttKey.slice(5)}` : pttKey}]`}
+          </span>
+        )}
         <button
           className={`voice-ctrl-btn ${isScreenSharing ? 'active' : ''}`}
           onClick={isScreenSharing ? stopScreenShare : startScreenShare}
-          disabled={someoneElseSharing}
-          title={
-            someoneElseSharing
-              ? 'Someone else is sharing'
-              : isScreenSharing
-                ? 'Stop Sharing'
-                : 'Share Screen'
-          }
+          title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
         >
           🖥️
         </button>

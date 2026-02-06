@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import api from '../services/api';
-import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog } from '../types';
+import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji } from '../types';
 
 // channelId -> Map<userId, displayName>
 type VoiceChannelUsersMap = Map<string, Map<string, string>>;
+// channelId -> Set<userId> of active screen sharers
+type VoiceChannelSharersMap = Map<string, Set<string>>;
 
 interface ServerState {
   servers: Server[];
@@ -13,7 +15,9 @@ interface ServerState {
   members: ServerMember[];
   roles: ServerRole[];
   bans: ServerBan[];
+  emojis: CustomEmoji[];
   voiceChannelUsers: VoiceChannelUsersMap;
+  voiceChannelSharers: VoiceChannelSharersMap;
   fetchServers: () => Promise<void>;
   setActiveServer: (server: Server) => Promise<void>;
   setActiveChannel: (channel: Channel | null) => void;
@@ -37,15 +41,27 @@ interface ServerState {
   setVoiceChannelUsers: (data: Record<string, Record<string, string>>) => void;
   voiceUserJoined: (channelId: string, userId: string, displayName: string) => void;
   voiceUserLeft: (channelId: string, userId: string) => void;
+  setVoiceChannelSharers: (data: Record<string, string[]>) => void;
+  voiceSharerStarted: (channelId: string, userId: string) => void;
+  voiceSharerStopped: (channelId: string, userId: string) => void;
   removeChannel: (channelId: string) => void;
   removeServer: (serverId: string) => void;
   removeMember: (userId: string) => void;
   // Local update actions for SignalR
+  addChannelLocal: (channel: Channel) => void;
   addRoleLocal: (role: ServerRole) => void;
   updateRoleLocal: (role: ServerRole) => void;
   removeRoleLocal: (roleId: string) => void;
   updateMemberRolesLocal: (userId: string, roles: ServerRole[]) => void;
   removeBanLocal: (userId: string) => void;
+  fetchEmojis: (serverId: string) => Promise<void>;
+  uploadEmoji: (serverId: string, formData: FormData) => Promise<CustomEmoji>;
+  renameEmoji: (serverId: string, emojiId: string, name: string) => Promise<void>;
+  deleteEmoji: (serverId: string, emojiId: string) => Promise<void>;
+  addEmojiLocal: (emoji: CustomEmoji) => void;
+  updateEmojiLocal: (emoji: CustomEmoji) => void;
+  removeEmojiLocal: (emojiId: string) => void;
+  clearActiveServer: () => void;
 }
 
 function getLastChannelMap(): Record<string, string> {
@@ -70,7 +86,9 @@ export const useServerStore = create<ServerState>((set, get) => ({
   members: [],
   roles: [],
   bans: [],
+  emojis: [],
   voiceChannelUsers: new Map(),
+  voiceChannelSharers: new Map(),
 
   fetchServers: async () => {
     const res = await api.get('/servers');
@@ -88,7 +106,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   },
 
   setActiveServer: async (server) => {
-    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map() });
+    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map() });
     localStorage.setItem('activeServerId', server.id);
     const res = await api.get(`/servers/${server.id}/channels`);
     const channels: Channel[] = res.data;
@@ -105,6 +123,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
     get().fetchMembers(server.id);
     get().fetchRoles(server.id);
+    get().fetchEmojis(server.id);
   },
 
   setActiveChannel: (channel) => {
@@ -125,7 +144,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   createChannel: async (serverId, name, type) => {
     const res = await api.post(`/servers/${serverId}/channels`, { name, type });
     const channel = res.data;
-    set((s) => ({ channels: [...s.channels, channel] }));
+    set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] });
     return channel;
   },
 
@@ -156,7 +175,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   createRole: async (serverId, name, color, permissions) => {
     const res = await api.post(`/servers/${serverId}/roles`, { name, color, permissions });
     const role: ServerRole = res.data;
-    set((s) => ({ roles: [...s.roles, role] }));
+    set((s) => s.roles.some((r) => r.id === role.id) ? s : { roles: [...s.roles, role] });
     return role;
   },
 
@@ -248,6 +267,39 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return { voiceChannelUsers: next };
     }),
 
+  setVoiceChannelSharers: (data) => {
+    const map: VoiceChannelSharersMap = new Map();
+    for (const [channelId, userIds] of Object.entries(data)) {
+      map.set(channelId, new Set(userIds));
+    }
+    set({ voiceChannelSharers: map });
+  },
+
+  voiceSharerStarted: (channelId, userId) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelSharers);
+      const sharers = new Set(next.get(channelId) || []);
+      sharers.add(userId);
+      next.set(channelId, sharers);
+      return { voiceChannelSharers: next };
+    }),
+
+  voiceSharerStopped: (channelId, userId) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelSharers);
+      const sharers = next.get(channelId);
+      if (sharers) {
+        const updated = new Set(sharers);
+        updated.delete(userId);
+        if (updated.size === 0) {
+          next.delete(channelId);
+        } else {
+          next.set(channelId, updated);
+        }
+      }
+      return { voiceChannelSharers: next };
+    }),
+
   removeChannel: (channelId) =>
     set((s) => {
       const channels = s.channels.filter((c) => c.id !== channelId);
@@ -259,7 +311,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set((s) => {
       const servers = s.servers.filter((sv) => sv.id !== serverId);
       if (s.activeServer?.id === serverId) {
-        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], voiceChannelUsers: new Map() };
+        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map() };
       }
       return { servers };
     }),
@@ -267,8 +319,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
   removeMember: (userId) =>
     set((s) => ({ members: s.members.filter((m) => m.userId !== userId) })),
 
+  addChannelLocal: (channel) =>
+    set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] }),
+
   addRoleLocal: (role) =>
-    set((s) => ({ roles: [...s.roles, role] })),
+    set((s) => s.roles.some((r) => r.id === role.id) ? s : { roles: [...s.roles, role] }),
 
   updateRoleLocal: (role) =>
     set((s) => ({
@@ -296,4 +351,43 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   removeBanLocal: (userId) =>
     set((s) => ({ bans: s.bans.filter((b) => b.userId !== userId) })),
+
+  fetchEmojis: async (serverId) => {
+    try {
+      const res = await api.get(`/servers/${serverId}/emojis`);
+      set({ emojis: res.data });
+    } catch {
+      set({ emojis: [] });
+    }
+  },
+
+  uploadEmoji: async (serverId, formData) => {
+    const res = await api.post(`/servers/${serverId}/emojis`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const emoji: CustomEmoji = res.data;
+    set((s) => s.emojis.some((e) => e.id === emoji.id) ? s : { emojis: [...s.emojis, emoji] });
+    return emoji;
+  },
+
+  renameEmoji: async (serverId, emojiId, name) => {
+    await api.patch(`/servers/${serverId}/emojis/${emojiId}`, { name });
+  },
+
+  deleteEmoji: async (serverId, emojiId) => {
+    await api.delete(`/servers/${serverId}/emojis/${emojiId}`);
+    set((s) => ({ emojis: s.emojis.filter((e) => e.id !== emojiId) }));
+  },
+
+  addEmojiLocal: (emoji) =>
+    set((s) => s.emojis.some((e) => e.id === emoji.id) ? s : { emojis: [...s.emojis, emoji] }),
+
+  updateEmojiLocal: (emoji) =>
+    set((s) => ({ emojis: s.emojis.map((e) => (e.id === emoji.id ? emoji : e)) })),
+
+  removeEmojiLocal: (emojiId) =>
+    set((s) => ({ emojis: s.emojis.filter((e) => e.id !== emojiId) })),
+
+  clearActiveServer: () =>
+    set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map() }),
 }));

@@ -21,7 +21,7 @@ public class AuthController : ControllerBase
     private readonly TokenService _tokenService;
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly AppDbContext _db;
-    private readonly IWebHostEnvironment _env;
+    private readonly ImageService _imageService;
 
     public AuthController(
         UserManager<AppUser> userManager,
@@ -29,14 +29,14 @@ public class AuthController : ControllerBase
         TokenService tokenService,
         IHubContext<ChatHub> hubContext,
         AppDbContext db,
-        IWebHostEnvironment env)
+        ImageService imageService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _tokenService = tokenService;
         _hubContext = hubContext;
         _db = db;
-        _env = env;
+        _imageService = imageService;
     }
 
     [HttpPost("register")]
@@ -102,18 +102,7 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();
 
-        var uploadsDir = Path.Combine(_env.WebRootPath ?? Path.Combine(_env.ContentRootPath, "wwwroot"), "uploads");
-        Directory.CreateDirectory(uploadsDir);
-
-        var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
-        var filePath = Path.Combine(uploadsDir, fileName);
-
-        using (var stream = new FileStream(filePath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream);
-        }
-
-        user.AvatarUrl = $"/uploads/{fileName}";
+        user.AvatarUrl = await _imageService.ProcessAvatarAsync(file);
         await _userManager.UpdateAsync(user);
 
         var dto = ToUserDto(user);

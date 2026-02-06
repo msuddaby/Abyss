@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
 
 export default api;
 
-export async function uploadFile(file: File): Promise<{ url: string; fileName: string; contentType: string; size: number }> {
+export async function uploadFile(file: File): Promise<{ id: string; url: string; fileName: string; contentType: string; size: number }> {
   const formData = new FormData();
   formData.append('file', file);
   const res = await api.post('/upload', formData, {
