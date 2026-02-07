@@ -7,8 +7,10 @@ import MessageInput from '../components/MessageInput';
 import ScreenShareView from '../components/ScreenShareView';
 import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
+import SearchPanel from '../components/SearchPanel';
 import { useServerStore } from '../stores/serverStore';
 import { useAuthStore } from '../stores/authStore';
+import { useSearchStore } from '../stores/searchStore';
 
 import { usePresenceStore } from '../stores/presenceStore';
 import { useUnreadStore } from '../stores/unreadStore';
@@ -40,6 +42,9 @@ export default function MainLayout() {
   const activeServer = useServerStore((s) => s.activeServer);
   const isDmMode = useDmStore((s) => s.isDmMode);
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const openSearch = useSearchStore((s) => s.openSearch);
+  const closeSearch = useSearchStore((s) => s.closeSearch);
 
   useEffect(() => {
     startConnection().then(() => {
@@ -232,9 +237,10 @@ export default function MainLayout() {
     }).catch(console.error);
   }, []);
 
-  // Fetch voice channel users when switching servers
+  // Fetch voice channel users when switching servers, close search panel
   useEffect(() => {
     if (!activeServer) return;
+    useSearchStore.getState().closeSearch();
     const conn = getConnection();
     if (conn.state === 'Connected') {
       fetchServerState(conn, activeServer.id);
@@ -295,6 +301,13 @@ export default function MainLayout() {
               <div className="channel-header">
                 <span className="channel-hash">#</span>
                 <span className="channel-name">{activeChannel.name}</span>
+                <button
+                  className={`search-header-btn${searchIsOpen ? ' active' : ''}`}
+                  onClick={() => searchIsOpen ? closeSearch() : openSearch()}
+                  title="Search messages"
+                >
+                  🔍
+                </button>
               </div>
               <MessageList />
               <TypingIndicator />
@@ -318,7 +331,7 @@ export default function MainLayout() {
           </div>
         )}
       </div>
-      {activeServer && !isDmMode && <MemberList />}
+      {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : <MemberList />)}
     </div>
   );
 }

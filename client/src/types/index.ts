@@ -137,6 +137,16 @@ export interface DmUnread {
   mentionCount: number;
 }
 
+export interface SearchResult {
+  message: Message;
+  channelName: string;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  totalCount: number;
+}
+
 export const Permission = {
   ManageChannels: 1 << 0,
   ManageMessages: 1 << 1,

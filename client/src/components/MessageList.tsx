@@ -152,7 +152,7 @@ export default function MessageList() {
             new Date(prev.createdAt).getTime() <
             5 * 60 * 1000;
         return (
-          <div key={msg.id} ref={(el) => { if (el) messageRefs.current.set(msg.id, el); else messageRefs.current.delete(msg.id); }}>
+          <div key={msg.id} data-message-id={msg.id} ref={(el) => { if (el) messageRefs.current.set(msg.id, el); else messageRefs.current.delete(msg.id); }}>
             <MessageItem
               message={msg}
               grouped={grouped}

@@ -25,3 +25,5 @@ public record CustomEmojiDto(Guid Id, Guid ServerId, string Name, string ImageUr
 public record RenameEmojiRequest(string Name);
 public record DmChannelDto(Guid Id, UserDto OtherUser, DateTime? LastMessageAt, DateTime CreatedAt);
 public record DmUnreadDto(Guid ChannelId, bool HasUnread, int MentionCount);
+public record SearchResultDto(MessageDto Message, string ChannelName);
+public record SearchResponseDto(List<SearchResultDto> Results, int TotalCount);

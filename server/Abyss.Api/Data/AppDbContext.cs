@@ -64,6 +64,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .HasFilter("\"DmUser1Id\" IS NOT NULL AND \"DmUser2Id\" IS NOT NULL");
 
         builder.Entity<Message>()
+            .HasIndex(m => new { m.ChannelId, m.CreatedAt });
+
+        builder.Entity<Message>()
             .HasOne(m => m.Author)
             .WithMany()
             .HasForeignKey(m => m.AuthorId);

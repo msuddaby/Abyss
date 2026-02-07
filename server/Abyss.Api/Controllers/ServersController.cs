@@ -294,6 +294,70 @@ public class ServersController : ControllerBase
         return Ok();
     }
 
+    [HttpGet("{serverId}/search")]
+    public async Task<ActionResult<SearchResponseDto>> SearchMessages(
+        Guid serverId,
+        [FromQuery] string q,
+        [FromQuery] Guid? channelId = null,
+        [FromQuery] string? authorId = null,
+        [FromQuery] bool? hasAttachment = null,
+        [FromQuery] DateTime? before = null,
+        [FromQuery] DateTime? after = null,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 25)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return BadRequest("Query is required.");
+        limit = Math.Clamp(limit, 1, 50);
+
+        var isMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == serverId && sm.UserId == UserId);
+        if (!isMember) return Forbid();
+
+        var textChannelIds = await _db.Channels
+            .Where(c => c.ServerId == serverId && c.Type == ChannelType.Text)
+            .Select(c => c.Id)
+            .ToListAsync();
+
+        if (channelId.HasValue && !textChannelIds.Contains(channelId.Value))
+            return BadRequest("Channel not in this server.");
+
+        var targetChannels = channelId.HasValue ? new List<Guid> { channelId.Value } : textChannelIds;
+
+        var query = _db.Messages
+            .Where(m => targetChannels.Contains(m.ChannelId) && !m.IsDeleted)
+            .Where(m => EF.Functions.ILike(m.Content, $"%{q}%"));
+
+        if (!string.IsNullOrEmpty(authorId))
+            query = query.Where(m => m.AuthorId == authorId);
+        if (hasAttachment == true)
+            query = query.Where(m => m.Attachments.Any());
+        if (before.HasValue)
+            query = query.Where(m => m.CreatedAt < before.Value);
+        if (after.HasValue)
+            query = query.Where(m => m.CreatedAt > after.Value);
+
+        var totalCount = await query.CountAsync();
+
+        var messages = await query
+            .OrderByDescending(m => m.CreatedAt)
+            .Skip(offset)
+            .Take(limit)
+            .Include(m => m.Author)
+            .Include(m => m.Channel)
+            .Include(m => m.Attachments)
+            .Select(m => new SearchResultDto(
+                new MessageDto(
+                    m.Id, m.Content, m.AuthorId,
+                    new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
+                    m.ChannelId, m.CreatedAt,
+                    m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
+                    m.EditedAt, m.IsDeleted,
+                    new List<ReactionDto>(), null, null),
+                m.Channel.Name ?? ""))
+            .ToListAsync();
+
+        return Ok(new SearchResponseDto(messages, totalCount));
+    }
+
     [HttpGet("{serverId}/audit-logs")]
     public async Task<ActionResult<List<AuditLogDto>>> GetAuditLogs(Guid serverId, [FromQuery] int limit = 50)
     {

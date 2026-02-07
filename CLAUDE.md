@@ -168,8 +168,16 @@ REST controllers for CRUD:
 
 ## Not Yet Implemented
 
-- Direct messages
-- User avatars (profile pictures)
 - Message search
 - Server rename
 - Mobile responsiveness
+- Message pinning
+- Server icons
+- Channel reordering
+- Custom user status
+- Link embeds/previews
+- Notification settings (per-channel/server mute, suppress @everyone)
+- Friend system
+- Markdown rendering (bold, italic, code blocks, syntax highlighting)
+- Role name effects (wavy, rainbow, gradient, glow, bounce, etc. — predefined CSS animations on per-letter spans)
+- System admin panel (instance-wide settings, manage predefined role effects/themes, user management for self-hosters)
