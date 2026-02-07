@@ -55,6 +55,14 @@ export interface ServerBan {
   createdAt: string;
 }
 
+export interface VoiceUserState {
+  displayName: string;
+  isMuted: boolean;
+  isDeafened: boolean;
+  isServerMuted: boolean;
+  isServerDeafened: boolean;
+}
+
 export interface ReplyReference {
   id: string;
   content: string;
@@ -157,6 +165,7 @@ export const Permission = {
   ManageServer: 1 << 6,
   ManageInvites: 1 << 7,
   ManageEmojis: 1 << 8,
+  MuteMembers: 1 << 9,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

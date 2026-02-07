@@ -239,7 +239,7 @@ Build the 3-column Discord layout that adapts to mobile.
   - Plain `TextInput multiline` (replaces web `contentEditable` — major simplification)
   - Mention autocomplete: `@` trigger detection via `onSelectionChange` cursor tracking, overlay list of members + @everyone/@here, tap to insert raw `<@userId>` format
   - Custom emoji autocomplete: `:` trigger, tap to insert `<:name:id>` format
-  - `rn-emoji-keyboard` modal picker with dark theme (replaces web `emoji-mart`)
+  - Custom EmojiPicker bottom sheet (replaces interim `rn-emoji-keyboard`)
   - `expo-image-picker` for image attachments with horizontal preview strip + remove buttons
   - Reply bar: "Replying to {name}" with close button
   - Typing indicator: `UserTyping` SignalR call on text change
@@ -256,7 +256,7 @@ Build the 3-column Discord layout that adapts to mobile.
   - Voice channels: header + "Voice view coming in Phase 6" placeholder
   - No channel: "Welcome to Abyss" / "Select a channel"
 
-- [x] **Dependencies:** `rn-emoji-keyboard@^1.7.0`, `expo-image-picker@~17.0.10`
+- [x] **Dependencies:** `expo-image-picker@~17.0.10`
 
 **Checkpoint:** Full text chat working — send/receive messages, mentions, reactions, attachments.
 
@@ -366,27 +366,37 @@ Mobile users can watch screen shares from web (or other) clients. Sharing from m
 
 ---
 
-### Phase 9: Push Notifications
-> Estimated: 3-4 days | Risk: Medium
+### Phase 9: Push Notifications ✅
+> Completed
 
-- [ ] Install and configure `expo-notifications`
-- [ ] Backend changes:
+- [x] Install and configure `expo-notifications`
+- [x] Backend changes:
   - New endpoint: `POST /api/notifications/register-device` (saves push token per user)
   - New model: `DevicePushToken` (UserId, Token, Platform, CreatedAt)
-  - Modify `NotificationService` to send push via APNs/FCM when user is offline
-  - Options for push delivery:
-    a. Direct APNs/FCM from backend (add `FirebaseAdmin` or `dotnet-apns` NuGet)
-    b. Use Expo Push Service (simplest — send to `https://exp.host/--/api/v2/push/send`)
-  - Recommendation: Expo Push Service — it abstracts APNs/FCM, works with expo-notifications tokens
-- [ ] Client:
-  - Request notification permission on first launch
-  - Register push token with backend on login
+  - Modified `NotificationService` to send push via Expo Push Service when user is offline
+  - Uses Expo Push Service — sends to `https://exp.host/--/api/v2/push/send`
+  - Added `HttpClientFactory` for making push API calls
+- [x] Client:
+  - Request notification permission on app start (if logged in)
+  - Register push token with backend after login
   - Handle notification tap → navigate to relevant channel
-  - Badge count on app icon (unread mentions)
-- [ ] Notification types:
+  - Badge count on app icon (total unread mentions from all servers + DMs)
+- [x] Notification types:
   - Direct message received
   - @mention in a channel
-  - @everyone / @here (respect future mute settings)
+  - @everyone / @here
+
+**Implementation details:**
+- Created `packages/app/src/utils/notifications.ts` — push token registration, badge management, notification listeners
+- Updated `packages/app/app/_layout.tsx` — auto-register on login, handle notification taps, update badge count
+- Backend sends push only to offline users (checked against SignalR online set)
+- Push notification payload includes channelId, serverId, messageId for navigation
+- EAS project required for production — run `eas build` to create builds with push notification support
+
+**Setup for production:**
+1. Create EAS project: `cd packages/app && npx eas init`
+2. Add project ID to `app.json` → `expo.extra.eas.projectId`
+3. Build: `npx eas build --platform ios` / `npx eas build --platform android`
 
 **Checkpoint:** Receive push notifications when app is backgrounded/closed.
 
@@ -395,22 +405,37 @@ Mobile users can watch screen shares from web (or other) clients. Sharing from m
 ### Phase 10: Search & DMs
 > Estimated: 2-3 days | Risk: Low
 
-- [ ] **SearchPanel** (198 lines):
-  - `<TextInput>` with search icon
-  - Filter chips (channel, author, date, has attachment)
-  - Results in `<FlatList>` with highlighted matches
-  - Tap result → navigate to channel + scroll to message
+- [x] **SearchPanel** — Full message search functionality:
+  - Created `SearchPanel.tsx` component (~500 lines) with full-screen modal presentation
+  - Search input with 300ms debounce
+  - Filter chips: channel filter (horizontal scroll), author filter, has attachment checkbox
+  - Results in `FlatList` with pagination (load more on scroll)
+  - Tap result → navigates to channel + fetches messages around target + scrolls to message with highlight animation (1.5s yellow tint)
+  - Search button (🔍) in ChannelSidebar header
+  - Updated `messageStore` with `highlightedMessageId` field for scroll-to-message functionality
+  - Updated `MessageList` to respond to `highlightedMessageId` changes
+  - Backend endpoint already existed: `GET /api/servers/{serverId}/search`
 - [ ] **DM conversations:**
-  - DM list in home/sidebar view
-  - Reuse MessageList + MessageInput components
-  - DM search (find users to message)
+  - DM list in home/sidebar view (already implemented in Phase 3)
+  - Reuse MessageList + MessageInput components (already working)
+  - DM search (find users to message) — TODO
 
-**Checkpoint:** Feature parity with web client.
+**Checkpoint:** Message search complete. DM search (find users) remaining.
 
 ---
 
 ### Phase 11: Polish & Mobile UX
 > Estimated: 5-7 days | Risk: Medium
+
+#### Drawer-Based Layout ✅
+Replaced the bottom nav with left/right drawers for a cleaner, less janky mobile layout.
+- [x] **Removed bottom bar** — no more tab-style navigation
+- [x] **Left drawer** — ServerSidebar + ChannelSidebar in a slide-in drawer
+- [x] **Right drawer** — MemberList in a slide-in drawer (server mode only)
+- [x] **Tap outside** closes drawers
+- [x] **Header buttons** — `☰` opens left drawer, `👥` opens right drawer (only when applicable)
+- [x] **Behavior tweaks** — selecting a server or DM mode keeps left drawer open; selecting a channel closes it
+- [x] **Animations** — slide + fade scrim on open/close
 
 #### Custom Context Menus
 Replace native `Alert.alert` action sheets with themed context menus:
@@ -422,9 +447,9 @@ Replace native `Alert.alert` action sheets with themed context menus:
 - [ ] **MessageItem integration** — replace `Alert.alert` long-press with custom ContextMenu
 - [ ] **MemberList context menu** — role management, kick/ban actions via themed bottom sheet
 
-#### Custom Emoji Picker
-`rn-emoji-keyboard` doesn't support custom server emojis. Build a custom picker:
-- [ ] **EmojiPicker component** — full replacement:
+#### Custom Emoji Picker ✅
+Custom picker implemented to support native + server emojis.
+- [x] **EmojiPicker component** — full replacement:
   - Grid of native emojis organized by category
   - Custom server emoji section at the top (fetched from serverStore.emojis)
   - Search bar with filtering
@@ -432,8 +457,8 @@ Replace native `Alert.alert` action sheets with themed context menus:
   - Dark themed to match app
   - Bottom sheet presentation
   - Frequently used / recent emojis section
-- [ ] **MessageInput integration** — replace `rn-emoji-keyboard` with custom picker
-- [ ] **MessageItem reactions** — use custom picker for "Add Reaction" action
+- [x] **MessageInput integration** — replace `rn-emoji-keyboard` with custom picker
+- [x] **MessageItem reactions** — use custom picker for "Add Reaction" action
 
 #### Other Polish
 - [ ] **Keyboard handling:** Dismiss keyboard on scroll / tap outside
@@ -445,7 +470,8 @@ Replace native `Alert.alert` action sheets with themed context menus:
   - Swipe to reveal server/channel panels
 - [ ] **App icon + splash screen** via `app.json` config
 - [ ] **Deep linking:** `abyss://invite/CODE` to join servers from links
-- [ ] **Offline state:** Show banner when disconnected, auto-reconnect
+- [ ] **Offline state:** Show banner when disconnected
+- [x] **Auto-reconnect on resume:** stop SignalR on background, reconnect + rejoin channel + refresh state on foreground
 - [ ] **Accessibility:** Screen reader labels, font scaling
 
 ---
@@ -455,7 +481,7 @@ Replace native `Alert.alert` action sheets with themed context menus:
 | Web (React client) | Mobile (Expo app) | Notes |
 |---|---|---|
 | `react-router-dom` | `expo-router` | File-based routing |
-| `emoji-mart` / `@emoji-mart/react` | Custom emoji picker (Phase 11) | `rn-emoji-keyboard` used as interim |
+| `emoji-mart` / `@emoji-mart/react` | Custom emoji picker (Phase 11) | `rn-emoji-keyboard` removed |
 | `localStorage` | `AsyncStorage` + `expo-secure-store` | Async API, SecureStore for JWT |
 | `contentEditable` | `<TextInput multiline>` | Simpler on mobile |
 | `navigator.mediaDevices` | `react-native-webrtc` | Same API, different import |
@@ -491,7 +517,7 @@ For the fastest path to a usable mobile app:
 **Sprint 5 (Week 9):** Phase 6 — Voice chat ✓
 **Sprint 6 (Done):** Phase 7 — Mobile-only cleanup (strip web code/layout) ✓
 **Sprint 7 (Done):** Phase 8a — Screen share viewing ✓
-**Sprint 8:** Phase 9 — Push notifications
+**Sprint 8 (Done):** Phase 9 — Push notifications ✓
 **Sprint 9:** Phase 10 — Search & DMs
 **Sprint 10:** Phase 11 — Polish (context menus, emoji picker, haptics)
 

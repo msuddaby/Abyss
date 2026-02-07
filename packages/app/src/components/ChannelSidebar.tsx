@@ -36,7 +36,7 @@ export default function ChannelSidebar() {
   const setActiveDmChannel = useDmStore((s) => s.setActiveDmChannel);
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
   const { joinVoice, leaveVoice } = useWebRTC();
-  const setPanel = useUiStore((s) => s.setPanel);
+  const closeLeftDrawer = useUiStore((s) => s.closeLeftDrawer);
   const openModal = useUiStore((s) => s.openModal);
 
   const currentMember = members.find((m) => m.userId === user?.id);
@@ -70,7 +70,7 @@ export default function ChannelSidebar() {
       setActiveDmChannel(dm);
       await joinChannel(dm.id).catch(console.error);
       fetchMessages(dm.id);
-      setPanel('content');
+      closeLeftDrawer();
     };
 
     return (
@@ -137,14 +137,14 @@ export default function ChannelSidebar() {
 
   const handleChannelPress = (channel: typeof channels[0]) => {
     setActiveChannel(channel);
-    setPanel('content');
+    closeLeftDrawer();
   };
 
   const handleVoiceJoin = async (channelId: string) => {
     await joinVoice(channelId);
     const voiceChannel = channels.find((c) => c.id === channelId);
     if (voiceChannel) setActiveChannel(voiceChannel);
-    setPanel('content');
+    closeLeftDrawer();
   };
 
   const handleVoiceLeave = async () => {
@@ -155,11 +155,16 @@ export default function ChannelSidebar() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.serverName} numberOfLines={1}>{activeServer.name}</Text>
-        {showServerSettingsBtn && (
-          <Pressable onPress={() => openModal('serverSettings')}>
-            <Text style={styles.headerBtn}>{'⚙'}</Text>
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => openModal('search')}>
+            <Text style={styles.headerBtn}>{'🔍'}</Text>
           </Pressable>
-        )}
+          {showServerSettingsBtn && (
+            <Pressable onPress={() => openModal('serverSettings')}>
+              <Text style={styles.headerBtn}>{'⚙'}</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
 
       <View style={styles.actionRow}>
@@ -249,6 +254,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     paddingLeft: spacing.sm,
   } as TextStyle,
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  } as ViewStyle,
   actionRow: {
     flexDirection: 'row',
     paddingHorizontal: spacing.sm,

@@ -7,6 +7,47 @@
   background-color: var(--bg-tertiary);
 }
 
+/* App Loading */
+.app-loading {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 50% 20%, #2d2f34, var(--bg-tertiary) 60%);
+}
+
+.app-loading-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-radius: 10px;
+  background: var(--bg-primary);
+  border: 1px solid #1f2124;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.app-loading-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--brand-color);
+  animation: app-loading-spin 0.9s linear infinite;
+}
+
+.app-loading-text {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+@keyframes app-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .auth-form {
   background: var(--bg-primary);
   padding: 32px;
@@ -344,6 +385,60 @@
   color: var(--text-secondary);
 }
 
+.voice-participant-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-participant-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.voice-participant:hover .voice-participant-actions {
+  opacity: 1;
+}
+
+.voice-participant-action-btn {
+  background: var(--bg-modifier-hover);
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.voice-participant-action-btn.active {
+  color: var(--text-primary);
+}
+
+.voice-participant-action-btn:hover {
+  color: var(--text-primary);
+}
+
+.voice-status-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.voice-status-icon {
+  line-height: 1;
+}
+
+.voice-status-icon.locked {
+  color: var(--danger);
+}
+
 .participant-avatar {
   width: 20px;
   height: 20px;
@@ -370,7 +465,6 @@
   padding: 1px 4px;
   border-radius: 3px;
   line-height: 1;
-  margin-left: auto;
   letter-spacing: 0.5px;
 }
 
@@ -1784,6 +1878,16 @@
 .user-bar-btn:hover {
   background: var(--bg-modifier-hover);
   color: var(--text-primary);
+}
+
+.user-bar-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.user-bar-btn:disabled:hover {
+  background: none;
+  color: var(--text-muted);
 }
 
 .user-bar-btn.active {

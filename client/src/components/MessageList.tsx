@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useMessageStore, getConnection } from "@abyss/shared";
+import { useAuthStore, useMessageStore, getConnection } from "@abyss/shared";
 import type { Message, Reaction } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
@@ -15,16 +15,27 @@ export default function MessageList() {
   const prevChannelRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
+  const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
   const addReaction = useMessageStore((s) => s.addReaction);
   const removeReaction = useMessageStore((s) => s.removeReaction);
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
+    incomingSoundRef.current = new Audio('/sounds/message-sent.mp3');
+    incomingSoundRef.current.preload = 'auto';
     const conn = getConnection();
     const handler = (message: Message) => {
       addMessage(message);
+      const isFromOtherUser = message.authorId && message.authorId !== currentUserId;
+      const isDifferentChannel = message.channelId !== currentChannelId;
+      const isTabHidden = document.hidden;
+      if (isFromOtherUser && (isDifferentChannel || isTabHidden) && incomingSoundRef.current) {
+        incomingSoundRef.current.currentTime = 0;
+        incomingSoundRef.current.play().catch((err) => console.error('Incoming message sound failed:', err));
+      }
     };
     const editHandler = (
       messageId: string,
@@ -52,13 +63,14 @@ export default function MessageList() {
     conn.on("ReactionAdded", reactionAddedHandler);
     conn.on("ReactionRemoved", reactionRemovedHandler);
     return () => {
+      incomingSoundRef.current = null;
       conn.off("ReceiveMessage", handler);
       conn.off("MessageEdited", editHandler);
       conn.off("MessageDeleted", deleteHandler);
       conn.off("ReactionAdded", reactionAddedHandler);
       conn.off("ReactionRemoved", reactionRemovedHandler);
     };
-  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction]);
+  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction, currentUserId, currentChannelId]);
 
   // Scroll to bottom on channel switch (after messages load)
   const prevLoadingRef = useRef(false);
@@ -91,17 +103,27 @@ export default function MessageList() {
       return;
     }
 
-    if (newCount > prevCount && prevCount > 0) {
-      // New message arrived — scroll to bottom only if user is near the bottom
-      const distanceFromBottom =
-        list.scrollHeight - list.scrollTop - list.clientHeight;
-      if (distanceFromBottom < 150) {
+    if (newCount > prevCount) {
+      const lastMessage = messages[newCount - 1];
+      const isOwnMessage = !!currentUserId && lastMessage?.authorId === currentUserId;
+      if (isOwnMessage) {
         requestAnimationFrame(() => {
           bottomRef.current?.scrollIntoView({ behavior: "smooth" });
         });
+        return;
+      }
+      if (prevCount > 0) {
+        // New message arrived — scroll to bottom only if user is near the bottom
+        const distanceFromBottom =
+          list.scrollHeight - list.scrollTop - list.clientHeight;
+        if (distanceFromBottom < 150) {
+          requestAnimationFrame(() => {
+            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+          });
+        }
       }
     }
-  }, [messages]);
+  }, [messages, currentUserId]);
 
   const scrollToMessage = useCallback((id: string) => {
     const el = messageRefs.current.get(id);

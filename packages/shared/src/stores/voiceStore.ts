@@ -22,6 +22,7 @@ interface VoiceState {
   removeParticipant: (userId: string) => void;
   toggleMute: () => void;
   toggleDeafen: () => void;
+  setMuteDeafen: (isMuted: boolean, isDeafened: boolean) => void;
   setScreenSharing: (sharing: boolean) => void;
   addActiveSharer: (userId: string, displayName: string) => void;
   removeActiveSharer: (userId: string) => void;
@@ -88,6 +89,11 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     getStorage().setItem('isDeafened', String(next));
     return { isDeafened: next };
   }),
+  setMuteDeafen: (isMuted, isDeafened) => {
+    getStorage().setItem('isMuted', String(isMuted));
+    getStorage().setItem('isDeafened', String(isDeafened));
+    set({ isMuted, isDeafened });
+  },
   setScreenSharing: (sharing) => set({ isScreenSharing: sharing }),
 
   addActiveSharer: (userId, displayName) =>

@@ -7,6 +7,7 @@ import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
 
 export default function VoiceView() {
   const participants = useVoiceStore((s) => s.participants);
+  const currentChannelId = useVoiceStore((s) => s.currentChannelId);
   const isMuted = useVoiceStore((s) => s.isMuted);
   const isDeafened = useVoiceStore((s) => s.isDeafened);
   const voiceMode = useVoiceStore((s) => s.voiceMode);
@@ -21,12 +22,23 @@ export default function VoiceView() {
   const watchingUserId = useVoiceStore((s) => s.watchingUserId);
   const user = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
-  const { leaveVoice } = useWebRTC();
+  const activeChannel = useServerStore((s) => s.activeChannel);
+  const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
+  const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
+  const { joinVoice, leaveVoice } = useWebRTC();
 
-  const isWatching = watchingUserId !== null;
+  const isConnected = !!activeChannel && currentChannelId === activeChannel.id;
+  const isWatching = isConnected && watchingUserId !== null;
 
   const isPtt = voiceMode === 'push-to-talk';
-  const participantEntries = Array.from(participants.entries());
+  const channelUsers = activeChannel ? voiceChannelUsers.get(activeChannel.id) : undefined;
+  const channelSharers = activeChannel ? voiceChannelSharers.get(activeChannel.id) : undefined;
+  const participantEntries = isConnected
+    ? Array.from(participants.entries()).map(([userId, displayName]) => {
+        const state = channelUsers?.get(userId) ?? { displayName, isMuted: false, isDeafened: false };
+        return [userId, state] as const;
+      })
+    : Array.from((channelUsers || new Map()).entries());
 
   const getMemberAvatar = (userId: string): string | undefined => {
     const member = members.find((m) => m.userId === userId);
@@ -40,24 +52,39 @@ export default function VoiceView() {
         <ScreenShareView />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
-          {activeSharers.size > 0 && <ScreenShareView />}
+          {isConnected && activeSharers.size > 0 && <ScreenShareView />}
+          {!isConnected && (
+            <View style={styles.notConnectedRow}>
+              <Text style={styles.notConnectedText}>Not connected</Text>
+            </View>
+          )}
           <View style={styles.grid}>
-            {participantEntries.map(([userId, displayName]) => {
-              const isSpeaking = speakingUsers.has(userId);
+            {participantEntries.map(([userId, state]) => {
+              const isSpeaking = isConnected && speakingUsers.has(userId);
               const isSelf = userId === user?.id;
-              const memberIsMuted = isSelf && isMuted;
+              const memberIsMuted = isSelf ? isMuted : state.isMuted;
+              const memberIsDeafened = isSelf ? isDeafened : state.isDeafened;
+              const isSharer = isConnected
+                ? activeSharers.has(userId)
+                : !!channelSharers?.has(userId);
 
               return (
                 <View key={userId} style={styles.card}>
                   <View style={[styles.avatarRing, isSpeaking && styles.avatarRingSpeaking]}>
-                    <Avatar uri={getMemberAvatar(userId)} name={displayName} size={64} />
+                    <Avatar uri={getMemberAvatar(userId)} name={state.displayName} size={64} />
                   </View>
-                  {memberIsMuted && (
+                  {(memberIsMuted || memberIsDeafened) && (
                     <View style={styles.muteOverlay}>
-                      <Text style={styles.muteIcon}>🔇</Text>
+                      {memberIsMuted && <Text style={styles.muteIcon}>🔇</Text>}
+                      {memberIsDeafened && <Text style={styles.muteIcon}>🎧</Text>}
                     </View>
                   )}
-                  <Text style={styles.participantName} numberOfLines={1}>{displayName}</Text>
+                  {isSharer && (
+                    <View style={styles.liveBadge}>
+                      <Text style={styles.liveBadgeText}>LIVE</Text>
+                    </View>
+                  )}
+                  <Text style={styles.participantName} numberOfLines={1}>{state.displayName}</Text>
                 </View>
               );
             })}
@@ -68,7 +95,7 @@ export default function VoiceView() {
         </ScrollView>
       )}
 
-      {isPtt && (
+      {isConnected && isPtt && (
         <View style={styles.pttContainer}>
           <Pressable
             style={[styles.pttButton, isPttActive && styles.pttButtonActive]}
@@ -82,39 +109,50 @@ export default function VoiceView() {
         </View>
       )}
 
-      <View style={styles.actionBar}>
-        <Pressable
-          style={[styles.actionBtn, isMuted && styles.actionBtnActive]}
-          onPress={toggleMute}
-        >
-          <Text style={styles.actionBtnText}>{isMuted ? '🔇' : '🎤'}</Text>
-          <Text style={styles.actionLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-        </Pressable>
+      {isConnected ? (
+        <View style={styles.actionBar}>
+          <Pressable
+            style={[styles.actionBtn, isMuted && styles.actionBtnActive]}
+            onPress={toggleMute}
+          >
+            <Text style={styles.actionBtnText}>{isMuted ? '🔇' : '🎤'}</Text>
+            <Text style={styles.actionLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+          </Pressable>
 
-        <Pressable
-          style={[styles.actionBtn, isDeafened && styles.actionBtnActive]}
-          onPress={toggleDeafen}
-        >
-          <Text style={styles.actionBtnText}>{isDeafened ? '🔈' : '🔊'}</Text>
-          <Text style={styles.actionLabel}>{isDeafened ? 'Undeafen' : 'Deafen'}</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.actionBtn, isDeafened && styles.actionBtnActive]}
+            onPress={toggleDeafen}
+          >
+            <Text style={styles.actionBtnText}>{isDeafened ? '🔈' : '🔊'}</Text>
+            <Text style={styles.actionLabel}>{isDeafened ? 'Undeafen' : 'Deafen'}</Text>
+          </Pressable>
 
-        <Pressable
-          style={[styles.actionBtn, speakerOn && styles.actionBtnActive]}
-          onPress={toggleSpeaker}
-        >
-          <Text style={styles.actionBtnText}>{speakerOn ? '📢' : '📱'}</Text>
-          <Text style={styles.actionLabel}>{speakerOn ? 'Speaker' : 'Earpiece'}</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.actionBtn, speakerOn && styles.actionBtnActive]}
+            onPress={toggleSpeaker}
+          >
+            <Text style={styles.actionBtnText}>{speakerOn ? '📢' : '📱'}</Text>
+            <Text style={styles.actionLabel}>{speakerOn ? 'Speaker' : 'Earpiece'}</Text>
+          </Pressable>
 
-        <Pressable
-          style={[styles.actionBtn, styles.disconnectBtn]}
-          onPress={leaveVoice}
-        >
-          <Text style={styles.actionBtnText}>📞</Text>
-          <Text style={styles.actionLabel}>Leave</Text>
-        </Pressable>
-      </View>
+          <Pressable
+            style={[styles.actionBtn, styles.disconnectBtn]}
+            onPress={leaveVoice}
+          >
+            <Text style={styles.actionBtnText}>📞</Text>
+            <Text style={styles.actionLabel}>Leave</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.connectBar}>
+          <Pressable
+            style={styles.connectButton}
+            onPress={() => activeChannel && joinVoice(activeChannel.id)}
+          >
+            <Text style={styles.connectButtonText}>Connect</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -152,13 +190,16 @@ const styles = StyleSheet.create({
     right: 10,
     backgroundColor: colors.bgTertiary,
     borderRadius: 10,
-    width: 20,
+    width: 28,
     height: 20,
+    flexDirection: 'row',
+    gap: 2,
+    paddingHorizontal: 2,
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
   muteIcon: {
-    fontSize: 12,
+    fontSize: 10,
   } as TextStyle,
   participantName: {
     color: colors.headerPrimary,
@@ -171,6 +212,30 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     textAlign: 'center',
     marginTop: spacing.xxl,
+  } as TextStyle,
+  notConnectedRow: {
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+  } as ViewStyle,
+  notConnectedText: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  } as TextStyle,
+  liveBadge: {
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.danger,
+  } as ViewStyle,
+  liveBadgeText: {
+    color: colors.headerPrimary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
   } as TextStyle,
   pttContainer: {
     paddingHorizontal: spacing.xl,
@@ -226,5 +291,24 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '500',
+  } as TextStyle,
+  connectBar: {
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.bgTertiary,
+    backgroundColor: colors.bgSecondary,
+  } as ViewStyle,
+  connectButton: {
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  connectButtonText: {
+    color: colors.headerPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '700',
   } as TextStyle,
 });

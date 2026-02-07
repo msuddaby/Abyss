@@ -1,10 +1,10 @@
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import {
   FlatList, View, Text, ActivityIndicator, StyleSheet,
-  type ViewStyle, type TextStyle, type NativeSyntheticEvent, type NativeScrollEvent,
+  type ViewStyle, type TextStyle,
 } from 'react-native';
 import {
-  useMessageStore, getConnection, shouldGroupMessage,
+  useAuthStore, useMessageStore, getConnection, shouldGroupMessage,
 } from '@abyss/shared';
 import type { Message, Reaction } from '@abyss/shared';
 import MessageItem from './MessageItem';
@@ -20,20 +20,24 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
   const hasMore = useMessageStore((s) => s.hasMore);
   const loadMore = useMessageStore((s) => s.loadMore);
   const currentChannelId = useMessageStore((s) => s.currentChannelId);
+  const highlightedMessageId = useMessageStore((s) => s.highlightedMessageId);
+  const setHighlightedMessageId = useMessageStore((s) => s.setHighlightedMessageId);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
   const addReaction = useMessageStore((s) => s.addReaction);
   const removeReaction = useMessageStore((s) => s.removeReaction);
+  const currentUserId = useAuthStore((s) => s.user?.id);
 
   const flatListRef = useRef<FlatList<Message>>(null);
-  const prevChannelRef = useRef<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
-  const contentHeightRef = useRef(0);
-  const scrollOffsetRef = useRef(0);
-  const listHeightRef = useRef(0);
-  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  const displayMessages = useMemo(() => {
+    // Reverse so newest is first in data; inverted list flips it back visually
+    return [...messages].reverse();
+  }, [messages]);
 
   // SignalR listeners
   useEffect(() => {
@@ -58,64 +62,47 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
     };
   }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction]);
 
-  // Scroll to bottom on channel switch
+  // Scroll to highlighted message from search
   useEffect(() => {
-    if (currentChannelId !== prevChannelRef.current) {
-      prevChannelRef.current = currentChannelId;
-      prevMessageCountRef.current = 0;
-    }
-  }, [currentChannelId]);
-
-  // Scroll to bottom when messages load or new message arrives near bottom
-  useEffect(() => {
-    const prevCount = prevMessageCountRef.current;
-    const newCount = messages.length;
-    prevMessageCountRef.current = newCount;
-
-    if (isLoadingMoreRef.current) {
-      isLoadingMoreRef.current = false;
-      return;
-    }
-
-    // Channel switch: initial load
-    if (prevCount === 0 && newCount > 0) {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 100);
-      return;
-    }
-
-    // New message: scroll only if near bottom
-    if (newCount > prevCount && prevCount > 0) {
-      const distFromBottom = contentHeightRef.current - scrollOffsetRef.current - listHeightRef.current;
-      if (distFromBottom < 150) {
-        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 50);
+    if (highlightedMessageId && displayMessages.length > 0) {
+      const idx = displayMessages.findIndex((m) => m.id === highlightedMessageId);
+      if (idx !== -1) {
+        // Wait for messages to render before scrolling
+        setTimeout(() => {
+          flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
+          setHighlightId(highlightedMessageId);
+          setTimeout(() => {
+            setHighlightId(null);
+            setHighlightedMessageId(null);
+          }, 1500);
+        }, 300);
       }
     }
-  }, [messages]);
+  }, [highlightedMessageId, messages]);
 
-  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    scrollOffsetRef.current = contentOffset.y;
-    contentHeightRef.current = contentSize.height;
-    listHeightRef.current = layoutMeasurement.height;
-
-    // Load more when near top
-    if (contentOffset.y < 100 && hasMore && !loading) {
+  const handleEndReached = useCallback(async () => {
+    if (hasMore && !loading) {
       isLoadingMoreRef.current = true;
-      loadMore();
+      try {
+        await loadMore();
+      } finally {
+        isLoadingMoreRef.current = false;
+      }
     }
   }, [hasMore, loading, loadMore]);
 
   const scrollToMessage = useCallback((id: string) => {
-    const idx = messages.findIndex((m) => m.id === id);
+    const idx = displayMessages.findIndex((m) => m.id === id);
     if (idx === -1) return;
     flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
     setHighlightId(id);
     setTimeout(() => setHighlightId(null), 1500);
-  }, [messages]);
+  }, [displayMessages]);
 
   const renderItem = useCallback(({ item, index }: { item: Message; index: number }) => {
-    const prev = index > 0 ? messages[index - 1] : undefined;
-    const grouped = shouldGroupMessage(item, prev);
+    // Inverted list: visual previous message is next item in data array
+    const prevVisual = index + 1 < displayMessages.length ? displayMessages[index + 1] : undefined;
+    const grouped = shouldGroupMessage(item, prevVisual);
     return (
       <View style={highlightId === item.id ? styles.highlighted : undefined}>
         <MessageItem
@@ -126,18 +113,38 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
         />
       </View>
     );
-  }, [messages, highlightId, scrollToMessage, onPickReactionEmoji]);
+  }, [displayMessages, highlightId, scrollToMessage, onPickReactionEmoji]);
 
   const keyExtractor = useCallback((m: Message) => m.id, []);
+
+  useEffect(() => {
+    const prevCount = prevMessageCountRef.current;
+    const newCount = messages.length;
+    prevMessageCountRef.current = newCount;
+
+    if (isLoadingMoreRef.current) return;
+
+    if (newCount > prevCount) {
+      const lastMessage = messages[newCount - 1];
+      const isOwnMessage = !!currentUserId && lastMessage?.authorId === currentUserId;
+      if (isOwnMessage) {
+        setTimeout(() => {
+          flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+        }, 0);
+      }
+    }
+  }, [messages, currentUserId]);
 
   return (
     <FlatList
       ref={flatListRef}
-      data={messages}
+      data={displayMessages}
       renderItem={renderItem}
       keyExtractor={keyExtractor}
-      onScroll={handleScroll}
-      scrollEventThrottle={16}
+      inverted
+      onEndReached={handleEndReached}
+      onEndReachedThreshold={0.2}
+      maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
       style={styles.list}
       contentContainerStyle={messages.length === 0 && !loading ? styles.emptyContainer : undefined}
       ListHeaderComponent={loading ? (

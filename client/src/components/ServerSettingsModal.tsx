@@ -43,6 +43,7 @@ const PERMISSION_LABELS: { perm: number; label: string }[] = [
   { perm: Permission.ManageMessages, label: 'Manage Messages' },
   { perm: Permission.KickMembers, label: 'Kick Members' },
   { perm: Permission.BanMembers, label: 'Ban Members' },
+  { perm: Permission.MuteMembers, label: 'Mute Members (Voice)' },
   { perm: Permission.ManageRoles, label: 'Manage Roles' },
   { perm: Permission.ViewAuditLog, label: 'View Audit Log' },
   { perm: Permission.ManageServer, label: 'Manage Server' },

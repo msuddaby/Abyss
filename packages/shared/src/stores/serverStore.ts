@@ -2,10 +2,10 @@ import { create } from 'zustand';
 import api from '../services/api.js';
 import { ensureConnected } from '../services/signalr.js';
 import { getStorage } from '../storage.js';
-import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji } from '../types/index.js';
+import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji, VoiceUserState } from '../types/index.js';
 
-// channelId -> Map<userId, displayName>
-type VoiceChannelUsersMap = Map<string, Map<string, string>>;
+// channelId -> Map<userId, VoiceUserState>
+type VoiceChannelUsersMap = Map<string, Map<string, VoiceUserState>>;
 // channelId -> Set<userId> of active screen sharers
 type VoiceChannelSharersMap = Map<string, Set<string>>;
 
@@ -40,9 +40,10 @@ interface ServerState {
   deleteChannel: (serverId: string, channelId: string) => Promise<void>;
   deleteServer: (serverId: string) => Promise<void>;
   fetchAuditLogs: (serverId: string) => Promise<AuditLog[]>;
-  setVoiceChannelUsers: (data: Record<string, Record<string, string>>) => void;
-  voiceUserJoined: (channelId: string, userId: string, displayName: string) => void;
+  setVoiceChannelUsers: (data: Record<string, Record<string, VoiceUserState>>) => void;
+  voiceUserJoined: (channelId: string, userId: string, state: VoiceUserState) => void;
   voiceUserLeft: (channelId: string, userId: string) => void;
+  voiceUserStateUpdated: (channelId: string, userId: string, state: VoiceUserState) => void;
   setVoiceChannelSharers: (data: Record<string, string[]>) => void;
   voiceSharerStarted: (channelId: string, userId: string) => void;
   voiceSharerStopped: (channelId: string, userId: string) => void;
@@ -245,11 +246,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set({ voiceChannelUsers: map });
   },
 
-  voiceUserJoined: (channelId, userId, displayName) =>
+  voiceUserJoined: (channelId, userId, state) =>
     set((s) => {
       const next = new Map(s.voiceChannelUsers);
       const channelUsers = new Map(next.get(channelId) || []);
-      channelUsers.set(userId, displayName);
+      channelUsers.set(userId, state);
       next.set(channelId, channelUsers);
       return { voiceChannelUsers: next };
     }),
@@ -267,6 +268,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
           next.set(channelId, updated);
         }
       }
+      return { voiceChannelUsers: next };
+    }),
+
+  voiceUserStateUpdated: (channelId, userId, state) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelUsers);
+      const channelUsers = new Map(next.get(channelId) || []);
+      channelUsers.set(userId, state);
+      next.set(channelId, channelUsers);
       return { voiceChannelUsers: next };
     }),
 

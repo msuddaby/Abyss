@@ -20,7 +20,7 @@ export { useDmStore } from './stores/dmStore.js';
 export { useSearchStore } from './stores/searchStore.js';
 
 // Hooks
-export { useSignalRListeners, fetchServerState } from './hooks/useSignalRListeners.js';
+export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';
 
 // Utils
 export { formatTime, formatDate } from './utils/formatting.js';

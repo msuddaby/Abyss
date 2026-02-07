@@ -296,8 +296,13 @@ export default function ChannelSidebar() {
 function UserBar({ user, onSettings }: { user: { id: string; displayName: string; username: string; avatarUrl?: string | null }; onSettings: () => void }) {
   const isMuted = useVoiceStore((s) => s.isMuted);
   const isDeafened = useVoiceStore((s) => s.isDeafened);
+  const currentChannelId = useVoiceStore((s) => s.currentChannelId);
+  const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const toggleMute = useVoiceStore((s) => s.toggleMute);
   const toggleDeafen = useVoiceStore((s) => s.toggleDeafen);
+  const voiceState = currentChannelId ? voiceChannelUsers.get(currentChannelId)?.get(user.id) : null;
+  const isServerMuted = !!voiceState?.isServerMuted;
+  const isServerDeafened = !!voiceState?.isServerDeafened;
 
   return (
     <div className="user-bar">
@@ -315,14 +320,16 @@ function UserBar({ user, onSettings }: { user: { id: string; displayName: string
       <button
         className={`user-bar-btn ${isMuted ? 'active' : ''}`}
         onClick={toggleMute}
-        title={isMuted ? 'Unmute' : 'Mute'}
+        title={isServerMuted ? 'Server muted' : (isMuted ? 'Unmute' : 'Mute')}
+        disabled={isServerMuted}
       >
         {isMuted ? '🔇' : '🎤'}
       </button>
       <button
         className={`user-bar-btn ${isDeafened ? 'active' : ''}`}
         onClick={toggleDeafen}
-        title={isDeafened ? 'Undeafen' : 'Deafen'}
+        title={isServerDeafened ? 'Server deafened' : (isDeafened ? 'Undeafen' : 'Deafen')}
+        disabled={isServerDeafened}
       >
         {isDeafened ? '🔇' : '🎧'}
       </button>

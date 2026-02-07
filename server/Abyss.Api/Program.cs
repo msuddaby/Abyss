@@ -100,6 +100,9 @@ builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<VoiceStateService>();
 builder.Services.AddSingleton<ImageService>();
 
+// HTTP Client for push notifications
+builder.Services.AddHttpClient();
+
 // SignalR
 builder.Services.AddSignalR();
 
@@ -115,7 +118,7 @@ builder.Services.AddCors(opt =>
 {
     opt.AddDefaultPolicy(policy =>
     {
-        policy.SetIsOriginAllowed(_ => true)
+        policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();

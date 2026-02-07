@@ -7,10 +7,9 @@ let connection: signalR.HubConnection | null = null;
 export function getConnection(): signalR.HubConnection {
   if (connection) return connection;
 
-  const token = getStorage().getItem('token');
   connection = new signalR.HubConnectionBuilder()
     .withUrl(`${getApiBase()}/hubs/chat`, {
-      accessTokenFactory: () => token || '',
+      accessTokenFactory: () => getStorage().getItem('token') || '',
     })
     .withAutomaticReconnect()
     .build();

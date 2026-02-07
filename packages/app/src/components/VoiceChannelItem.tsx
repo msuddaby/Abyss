@@ -40,15 +40,21 @@ export default function VoiceChannelItem({ channel, isActive, isConnected, onSel
       </View>
       {participants.length > 0 && (
         <View style={styles.participants}>
-          {participants.map(([userId, displayName]) => {
+          {participants.map(([userId, state]) => {
             const isSpeaking = speakingUsers.has(userId);
             const isSharing = channelSharers?.has(userId);
             return (
               <View key={userId} style={styles.participant}>
                 <View style={[styles.avatar, isSpeaking && styles.avatarSpeaking]}>
-                  <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
+                  <Text style={styles.avatarText}>{state.displayName.charAt(0).toUpperCase()}</Text>
                 </View>
-                <Text style={styles.participantName} numberOfLines={1}>{displayName}</Text>
+                <Text style={styles.participantName} numberOfLines={1}>{state.displayName}</Text>
+                {(state.isMuted || state.isDeafened) && (
+                  <View style={styles.statusIcons}>
+                    {state.isMuted && <Text style={styles.statusIcon}>🔇</Text>}
+                    {state.isDeafened && <Text style={styles.statusIcon}>🎧</Text>}
+                  </View>
+                )}
                 {isSharing && (
                   <View style={styles.liveBadge}>
                     <Text style={styles.liveBadgeText}>LIVE</Text>
@@ -139,6 +145,15 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.sm,
     flex: 1,
+  } as TextStyle,
+  statusIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  } as ViewStyle,
+  statusIcon: {
+    fontSize: 12,
+    color: colors.textMuted,
   } as TextStyle,
   liveBadge: {
     backgroundColor: colors.danger,

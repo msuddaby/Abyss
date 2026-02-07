@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { getConnection, useVoiceStore, useAuthStore } from '@abyss/shared';
+import { ensureConnected, getConnection, useVoiceStore, useAuthStore } from '@abyss/shared';
 
 const turnUrls = import.meta.env.VITE_TURN_URLS?.split(',') ?? [];
 const ICE_SERVERS: RTCConfiguration = {
@@ -24,8 +24,8 @@ let screenVideoStreams: Map<string, MediaStream> = new Map();
 let pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegistered = false;
 
-// Per-viewer screen track senders: viewerUserId -> RTCRtpSender
-let screenTrackSenders: Map<string, RTCRtpSender> = new Map();
+// Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
+let screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 
 // Audio analysis state
 let audioContext: AudioContext | null = null;
@@ -205,7 +205,7 @@ async function startScreenShareInternal() {
   if (!voiceState.currentChannelId) return;
 
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
   } catch (err) {
     console.error('Could not get display media:', err);
     return;
@@ -228,11 +228,11 @@ async function stopScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
   const conn = getConnection();
 
-  // Remove video track from all viewers we're sending to and renegotiate
-  for (const [viewerId, sender] of screenTrackSenders) {
+  // Remove all screen tracks from all viewers we're sending to and renegotiate
+  for (const [viewerId, senders] of screenTrackSenders) {
     const pc = peers.get(viewerId);
     if (pc) {
-      pc.removeTrack(sender);
+      senders.forEach((sender) => pc.removeTrack(sender));
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -263,11 +263,16 @@ async function addVideoTrackForViewer(viewerUserId: string) {
   const pc = peers.get(viewerUserId);
   if (!pc) return;
 
-  const videoTrack = screenStream.getVideoTracks()[0];
-  if (!videoTrack) return;
+  // Add all tracks from screen stream (video + audio if available)
+  const senders: RTCRtpSender[] = [];
+  screenStream.getTracks().forEach((track) => {
+    console.log(`Adding screen ${track.kind} track for viewer ${viewerUserId}`);
+    const sender = pc.addTrack(track, screenStream);
+    senders.push(sender);
+  });
 
-  const sender = pc.addTrack(videoTrack, screenStream);
-  screenTrackSenders.set(viewerUserId, sender);
+  if (senders.length === 0) return;
+  screenTrackSenders.set(viewerUserId, senders);
 
   // Renegotiate
   const conn = getConnection();
@@ -282,11 +287,12 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
 // Called when a viewer stops watching our stream
 async function removeVideoTrackForViewer(viewerUserId: string) {
-  const sender = screenTrackSenders.get(viewerUserId);
+  const senders = screenTrackSenders.get(viewerUserId);
   const pc = peers.get(viewerUserId);
-  if (!sender || !pc) return;
+  if (!senders || !pc) return;
 
-  pc.removeTrack(sender);
+  // Remove all screen tracks (video + audio)
+  senders.forEach((sender) => pc.removeTrack(sender));
   screenTrackSenders.delete(viewerUserId);
 
   // Renegotiate
@@ -445,6 +451,18 @@ function setupSignalRListeners() {
     console.log(`StopWatchingRequested from ${viewerUserId}`);
     removeVideoTrackForViewer(viewerUserId);
   });
+
+  // Voice session replaced (joined voice from another device)
+  conn.on('VoiceSessionReplaced', (message: string) => {
+    console.warn('Voice session replaced:', message);
+    // Force leave voice - clean up all WebRTC state
+    cleanupAll();
+    useVoiceStore.getState().setCurrentChannel(null);
+    useVoiceStore.getState().setParticipants(new Map());
+    useVoiceStore.getState().setScreenSharing(false);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
+  });
 }
 
 export function useWebRTC() {
@@ -520,6 +538,24 @@ export function useWebRTC() {
     });
   }, [isDeafened]);
 
+  // Broadcast mute/deafen state to everyone in the server
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const conn = await ensureConnected();
+        if (cancelled) return;
+        await conn.invoke('UpdateVoiceState', isMuted, isDeafened);
+      } catch (err) {
+        console.warn('Failed to update voice state', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentChannelId, isMuted, isDeafened]);
+
   // Register SignalR listeners once (module-level flag, not per-instance)
   useEffect(() => {
     setupSignalRListeners();
@@ -556,7 +592,7 @@ export function useWebRTC() {
 
     setCurrentChannel(channelId);
     const conn = getConnection();
-    await conn.invoke('JoinVoiceChannel', channelId);
+    await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
   }, [currentChannelId, setCurrentChannel]);
 
   const leaveVoice = useCallback(async () => {

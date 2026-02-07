@@ -292,6 +292,19 @@ function setupSignalRListeners() {
   conn.on('StopWatchingRequested', (viewerUserId: string) => {
     console.log(`[WebRTC] StopWatchingRequested from ${viewerUserId} — mobile sharing not supported`);
   });
+
+  // Voice session replaced (joined voice from another device)
+  conn.on('VoiceSessionReplaced', (message: string) => {
+    console.warn('[WebRTC] Voice session replaced:', message);
+    // Force leave voice - clean up all WebRTC state
+    cleanupAll();
+    InCallManager.stop();
+    useVoiceStore.getState().setCurrentChannel(null);
+    useVoiceStore.getState().setParticipants(new Map());
+    useVoiceStore.getState().setScreenSharing(false);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
+  });
 }
 
 export function useWebRTC() {
@@ -313,6 +326,24 @@ export function useWebRTC() {
       });
     }
   }, [isMuted, voiceMode, isPttActive]);
+
+  // Broadcast mute/deafen state to everyone in the server
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const conn = await ensureConnected();
+        if (cancelled) return;
+        await conn.invoke('UpdateVoiceState', isMuted, isDeafened);
+      } catch (err) {
+        console.warn('[WebRTC] Failed to update voice state', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentChannelId, isMuted, isDeafened]);
 
   // Deafen — disable all remote audio tracks via receivers
   useEffect(() => {
@@ -382,7 +413,7 @@ export function useWebRTC() {
 
     setCurrentChannel(channelId);
     const conn = getConnection();
-    await conn.invoke('JoinVoiceChannel', channelId);
+    await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
     console.log('[WebRTC] JoinVoiceChannel invoked');
   }, [currentChannelId, setCurrentChannel]);
 

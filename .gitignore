@@ -42,3 +42,4 @@ Thumbs.db
 # Uploads (user-generated content)
 server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep
+server/Abyss.Api/uploads/*

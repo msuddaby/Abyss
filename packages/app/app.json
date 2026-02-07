@@ -23,7 +23,7 @@
         ]
       },
       "bitcode": false,
-      "bundleIdentifier": "com.msuddaby.abyss",
+      "bundleIdentifier": "net.hexagonsun.abyss",
       "appleTeamId": "M854WQZ3F8"
     },
     "android": {
@@ -43,11 +43,19 @@
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WAKE_LOCK",
         "android.permission.BLUETOOTH"
-      ]
+      ],
+      "package": "net.hexagonsun.abyss"
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#5865f2"
+        }
+      ],
       [
         "@config-plugins/react-native-webrtc",
         {
@@ -65,7 +73,12 @@
       "stunUrl": "stun:stun.l.google.com:19302",
       "turnUrls": "",
       "turnUsername": "",
-      "turnCredential": ""
-    }
+      "turnCredential": "",
+      "router": {},
+      "eas": {
+        "projectId": "2eb416fa-84f1-433a-a3fd-9c44cc93b27c"
+      }
+    },
+    "owner": "msuddaby"
   }
 }

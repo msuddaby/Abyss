@@ -9,7 +9,9 @@ interface MessageState {
   hasMore: boolean;
   currentChannelId: string | null;
   replyingTo: Message | null;
+  highlightedMessageId: string | null;
   setReplyingTo: (message: Message | null) => void;
+  setHighlightedMessageId: (messageId: string | null) => void;
   fetchMessages: (channelId: string) => Promise<void>;
   loadMore: () => Promise<void>;
   addMessage: (message: Message) => void;
@@ -32,7 +34,9 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   hasMore: true,
   currentChannelId: null,
   replyingTo: null,
+  highlightedMessageId: null,
   setReplyingTo: (message) => set({ replyingTo: message }),
+  setHighlightedMessageId: (messageId) => set({ highlightedMessageId: messageId }),
 
   fetchMessages: async (channelId) => {
     set({ loading: true, messages: [], hasMore: true, currentChannelId: channelId });
@@ -129,5 +133,5 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     await conn.invoke('LeaveChannel', channelId);
   },
 
-  clear: () => set({ messages: [], currentChannelId: null, replyingTo: null }),
+  clear: () => set({ messages: [], currentChannelId: null, replyingTo: null, highlightedMessageId: null }),
 }));

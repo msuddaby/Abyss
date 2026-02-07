@@ -17,7 +17,7 @@ export default function ServerSidebar() {
   const fetchDmChannels = useDmStore((s) => s.fetchDmChannels);
   const serverUnreads = useUnreadStore((s) => s.serverUnreads);
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
-  const setPanel = useUiStore((s) => s.setPanel);
+  const closeLeftDrawer = useUiStore((s) => s.closeLeftDrawer);
   const openModal = useUiStore((s) => s.openModal);
 
   useEffect(() => {
@@ -38,13 +38,11 @@ export default function ServerSidebar() {
     enterDmMode();
     useServerStore.getState().clearActiveServer();
     fetchDmChannels();
-    setPanel('channels');
   };
 
   const handleServerPress = (server: typeof servers[0]) => {
     exitDmMode();
     setActiveServer(server);
-    setPanel('channels');
   };
 
   return (

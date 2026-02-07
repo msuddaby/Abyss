@@ -6,11 +6,12 @@ import { usePresenceStore } from '../stores/presenceStore.js';
 import { useUnreadStore } from '../stores/unreadStore.js';
 import { useDmStore } from '../stores/dmStore.js';
 import { useSearchStore } from '../stores/searchStore.js';
+import { useVoiceStore } from '../stores/voiceStore.js';
 import type { HubConnection } from '@microsoft/signalr';
 import type { ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
-  conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, string>>) => {
+  conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
     useServerStore.getState().setVoiceChannelUsers(data);
   }).catch(console.error);
 
@@ -27,6 +28,37 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
   }).catch(console.error);
 }
 
+export function refreshSignalRState(conn: HubConnection) {
+  conn.invoke('GetAllServerUnreads').then((unreads: { serverId: string; hasUnread: boolean; mentionCount: number }[]) => {
+    useUnreadStore.getState().setServerUnreads(unreads);
+  }).catch(console.error);
+
+  conn.invoke('GetDmChannels').then((dms: DmChannel[]) => {
+    useDmStore.setState({ dmChannels: dms });
+  }).catch(console.error);
+
+  conn.invoke('GetDmUnreads').then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
+    useUnreadStore.getState().setDmUnreads(unreads);
+  }).catch(console.error);
+
+  const server = useServerStore.getState().activeServer;
+  if (server) {
+    fetchServerState(conn, server.id);
+  }
+}
+
+export async function rejoinActiveChannel(conn: HubConnection) {
+  const { isDmMode, activeDmChannel } = useDmStore.getState();
+  const { activeChannel } = useServerStore.getState();
+  const channelId = isDmMode ? activeDmChannel?.id : (activeChannel?.type === 'Text' ? activeChannel.id : null);
+  if (!channelId) return;
+  try {
+    await conn.invoke('JoinChannel', channelId);
+  } catch (err) {
+    console.error('Failed to rejoin channel:', err);
+  }
+}
+
 export function useSignalRListeners() {
   const activeChannel = useServerStore((s) => s.activeChannel);
   const activeServer = useServerStore((s) => s.activeServer);
@@ -38,9 +70,14 @@ export function useSignalRListeners() {
     startConnection().then(() => {
       const conn = getConnection();
 
+      conn.onreconnected(() => {
+        rejoinActiveChannel(conn);
+        refreshSignalRState(conn);
+      });
+
       const events = [
         'UserOnline', 'UserOffline', 'UserIsTyping',
-        'VoiceUserJoinedChannel', 'VoiceUserLeftChannel',
+        'VoiceUserJoinedChannel', 'VoiceUserLeftChannel', 'VoiceUserStateUpdated',
         'ScreenShareStartedInChannel', 'ScreenShareStoppedInChannel',
         'UserProfileUpdated', 'MemberRolesUpdated', 'MemberKicked', 'MemberBanned', 'MemberUnbanned',
         'RoleCreated', 'RoleUpdated', 'RoleDeleted',
@@ -66,12 +103,20 @@ export function useSignalRListeners() {
         }
       });
 
-      conn.on('VoiceUserJoinedChannel', (channelId: string, userId: string, displayName: string) => {
-        useServerStore.getState().voiceUserJoined(channelId, userId, displayName);
+      conn.on('VoiceUserJoinedChannel', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }) => {
+        useServerStore.getState().voiceUserJoined(channelId, userId, state);
       });
 
       conn.on('VoiceUserLeftChannel', (channelId: string, userId: string) => {
         useServerStore.getState().voiceUserLeft(channelId, userId);
+      });
+
+      conn.on('VoiceUserStateUpdated', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }) => {
+        useServerStore.getState().voiceUserStateUpdated(channelId, userId, state);
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser?.id === userId) {
+          useVoiceStore.getState().setMuteDeafen(state.isMuted, state.isDeafened);
+        }
       });
 
       conn.on('ScreenShareStartedInChannel', (channelId: string, userId: string) => {
@@ -198,22 +243,7 @@ export function useSignalRListeners() {
         }
       });
 
-      conn.invoke('GetAllServerUnreads').then((unreads: { serverId: string; hasUnread: boolean; mentionCount: number }[]) => {
-        useUnreadStore.getState().setServerUnreads(unreads);
-      }).catch(console.error);
-
-      conn.invoke('GetDmChannels').then((dms: DmChannel[]) => {
-        useDmStore.setState({ dmChannels: dms });
-      }).catch(console.error);
-
-      conn.invoke('GetDmUnreads').then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
-        useUnreadStore.getState().setDmUnreads(unreads);
-      }).catch(console.error);
-
-      const server = useServerStore.getState().activeServer;
-      if (server) {
-        fetchServerState(conn, server.id);
-      }
+      refreshSignalRState(conn);
     }).catch(console.error);
   }, []);
 

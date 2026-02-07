@@ -1,16 +1,15 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-  View, Text, TextInput, Pressable, Image, FlatList, ScrollView,
+  View, Text, TextInput, Pressable, Image, ScrollView, Keyboard,
   StyleSheet, type ViewStyle, type TextStyle, type ImageStyle,
   type NativeSyntheticEvent, type TextInputSelectionChangeEventData,
 } from 'react-native';
-import EmojiPicker from 'rn-emoji-keyboard';
 import * as ImagePicker from 'expo-image-picker';
 import {
   useMessageStore, useServerStore, useDmStore,
   api, getApiBase, getConnection,
 } from '@abyss/shared';
-import Avatar from './Avatar';
+import EmojiPicker, { type EmojiSelection } from './EmojiPicker';
 import { colors, spacing, fontSize, borderRadius } from '../theme/tokens';
 
 interface MentionOption {
@@ -33,6 +32,7 @@ export default function MessageInput() {
   const [emojiQuery, setEmojiQuery] = useState<string | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [cursorPos, setCursorPos] = useState(0);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   const inputRef = useRef<TextInput>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -52,6 +52,15 @@ export default function MessageInput() {
   useEffect(() => {
     if (replyingTo) inputRef.current?.focus();
   }, [replyingTo]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Mention autocomplete
   const mentionOptions = useMemo<MentionOption[]>(() => {
@@ -171,14 +180,15 @@ export default function MessageInput() {
     setCursorPos(newCursor);
   }, [text, cursorPos]);
 
-  const handleEmojiSelected = useCallback((emoji: { emoji: string }) => {
-    // Insert native emoji at cursor
+  const handleEmojiSelected = useCallback((emoji: EmojiSelection) => {
     const before = text.slice(0, cursorPos);
     const after = text.slice(cursorPos);
-    const newText = before + emoji.emoji + after;
+    const insert = emoji.type === 'custom'
+      ? `<:${emoji.name}:${emoji.id}> `
+      : emoji.emoji;
+    const newText = before + insert + after;
     setText(newText);
-    setCursorPos(cursorPos + emoji.emoji.length);
-    setShowEmojiPicker(false);
+    setCursorPos(cursorPos + insert.length);
   }, [text, cursorPos]);
 
   const handlePickImage = useCallback(async () => {
@@ -324,6 +334,11 @@ export default function MessageInput() {
         <Pressable style={styles.emojiBtn} onPress={() => setShowEmojiPicker(true)}>
           <Text style={styles.emojiBtnText}>😊</Text>
         </Pressable>
+        {keyboardVisible && (
+          <Pressable style={styles.keyboardBtn} onPress={() => Keyboard.dismiss()}>
+            <Text style={styles.keyboardBtnText}>Hide</Text>
+          </Pressable>
+        )}
         <Pressable
           style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
           onPress={handleSubmit}
@@ -337,29 +352,8 @@ export default function MessageInput() {
       <EmojiPicker
         open={showEmojiPicker}
         onClose={() => setShowEmojiPicker(false)}
-        onEmojiSelected={handleEmojiSelected}
-        theme={{
-          backdrop: '#00000080',
-          knob: colors.textMuted,
-          container: colors.bgSecondary,
-          header: colors.headerPrimary,
-          skinTonesContainer: colors.bgTertiary,
-          category: {
-            icon: colors.textMuted,
-            iconActive: colors.brandColor,
-            container: colors.bgSecondary,
-            containerActive: colors.bgTertiary,
-          },
-          search: {
-            text: colors.textPrimary,
-            placeholder: colors.textMuted,
-            icon: colors.textMuted,
-            background: colors.channelTextArea,
-          },
-          emoji: {
-            selected: colors.bgModifierActive,
-          },
-        }}
+        onSelect={handleEmojiSelected}
+        title="Emoji"
       />
     </View>
   );
@@ -485,6 +479,19 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   emojiBtnText: {
     fontSize: 20,
+  } as TextStyle,
+  keyboardBtn: {
+    height: 36,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.bgModifierHover,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  keyboardBtnText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
   } as TextStyle,
   sendBtn: {
     height: 36,

@@ -8,6 +8,7 @@ interface AuthState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  initialized: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, displayName: string) => Promise<void>;
   logout: () => void;
@@ -20,18 +21,36 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   user: (() => { try { const u = getStorage().getItem('user'); return u ? JSON.parse(u) : null; } catch { return null; } })(),
   token: (() => { try { return getStorage().getItem('token'); } catch { return null; } })(),
   isAuthenticated: (() => { try { const s = getStorage(); return !!(s.getItem('token') && s.getItem('user')); } catch { return false; } })(),
+  initialized: false,
 
   initialize: async () => {
-    const { token, user: savedUser } = get();
-    if (!token || !savedUser) return;
+    const storage = getStorage();
+    const storedToken = storage.getItem('token');
+    const storedUser = storage.getItem('user');
+    if (!storedToken || !storedUser) {
+      set({ initialized: true });
+      return;
+    }
+
+    let savedUser: User;
+    try {
+      savedUser = JSON.parse(storedUser) as User;
+    } catch {
+      get().logout();
+      set({ initialized: true });
+      return;
+    }
+
+    set({ token: storedToken, user: savedUser, isAuthenticated: true });
     try {
       const res = await api.get(`/auth/profile/${savedUser.id}`);
       const user = res.data;
-      getStorage().setItem('user', JSON.stringify(user));
+      storage.setItem('user', JSON.stringify(user));
       set({ user });
     } catch {
       get().logout();
     }
+    set({ initialized: true });
   },
 
   login: async (username, password) => {
@@ -57,7 +76,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     s.removeItem('token');
     s.removeItem('user');
     resetConnection();
-    set({ token: null, user: null, isAuthenticated: false });
+    set({ token: null, user: null, isAuthenticated: false, initialized: true });
   },
 
   updateProfile: async (data) => {
