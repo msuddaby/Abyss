@@ -313,6 +313,9 @@ export function useWebRTC() {
   const isDeafened = useVoiceStore((s) => s.isDeafened);
   const voiceMode = useVoiceStore((s) => s.voiceMode);
   const isPttActive = useVoiceStore((s) => s.isPttActive);
+  const noiseSuppression = useVoiceStore((s) => s.noiseSuppression);
+  const echoCancellation = useVoiceStore((s) => s.echoCancellation);
+  const autoGainControl = useVoiceStore((s) => s.autoGainControl);
   const speakerOn = useVoiceStore((s) => s.speakerOn);
   const setCurrentChannel = useVoiceStore((s) => s.setCurrentChannel);
   const setParticipants = useVoiceStore((s) => s.setParticipants);
@@ -396,7 +399,13 @@ export function useWebRTC() {
     InCallManager.setForceSpeakerphoneOn(useVoiceStore.getState().speakerOn);
 
     try {
-      localStream = await mediaDevices.getUserMedia({ audio: true }) as MediaStream;
+      localStream = await mediaDevices.getUserMedia({
+        audio: {
+          noiseSuppression,
+          echoCancellation,
+          autoGainControl,
+        },
+      }) as MediaStream;
       console.log('[WebRTC] Got local audio stream, tracks:', localStream.getAudioTracks().length);
     } catch (err) {
       console.error('[WebRTC] Could not access microphone:', err);

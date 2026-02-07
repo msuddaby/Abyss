@@ -8,6 +8,7 @@ import VoiceChannel from './VoiceChannel';
 import VoiceControls from './VoiceControls';
 import UserSettingsModal from './UserSettingsModal';
 import ServerSettingsModal from './ServerSettingsModal';
+import AdminPanelModal from './AdminPanelModal';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel } = useServerStore();
@@ -15,6 +16,7 @@ export default function ChannelSidebar() {
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const { joinVoice, leaveVoice } = useWebRTC();
   const user = useAuthStore((s) => s.user);
+  const isSysadmin = useAuthStore((s) => s.isSysadmin);
   const channelUnreads = useUnreadStore((s) => s.channelUnreads);
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
   const { isDmMode, dmChannels, activeDmChannel, setActiveDmChannel } = useDmStore();
@@ -23,6 +25,7 @@ export default function ChannelSidebar() {
   const [showInvite, setShowInvite] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [dmSearchQuery, setDmSearchQuery] = useState('');
   const [dmSearchResults, setDmSearchResults] = useState<User[]>([]);
@@ -176,9 +179,14 @@ export default function ChannelSidebar() {
         </div>
         <VoiceControls />
         {user && (
-          <UserBar user={user} onSettings={() => setShowSettings(true)} />
+          <UserBar
+            user={user}
+            onSettings={() => setShowSettings(true)}
+            onAdmin={isSysadmin ? () => setShowAdminPanel(true) : undefined}
+          />
         )}
         {showSettings && <UserSettingsModal onClose={() => setShowSettings(false)} />}
+        {showAdminPanel && <AdminPanelModal onClose={() => setShowAdminPanel(false)} />}
       </div>
     );
   }
@@ -280,9 +288,14 @@ export default function ChannelSidebar() {
       {showInvite && <InviteModal serverId={activeServer.id} onClose={() => setShowInvite(false)} />}
       <VoiceControls />
       {user && (
-        <UserBar user={user} onSettings={() => setShowSettings(true)} />
+        <UserBar
+          user={user}
+          onSettings={() => setShowSettings(true)}
+          onAdmin={isSysadmin ? () => setShowAdminPanel(true) : undefined}
+        />
       )}
       {showSettings && <UserSettingsModal onClose={() => setShowSettings(false)} />}
+      {showAdminPanel && <AdminPanelModal onClose={() => setShowAdminPanel(false)} />}
       {showServerSettings && activeServer && (
         <ServerSettingsModal
           serverId={activeServer.id}
@@ -293,7 +306,15 @@ export default function ChannelSidebar() {
   );
 }
 
-function UserBar({ user, onSettings }: { user: { id: string; displayName: string; username: string; avatarUrl?: string | null }; onSettings: () => void }) {
+function UserBar({
+  user,
+  onSettings,
+  onAdmin,
+}: {
+  user: { id: string; displayName: string; username: string; avatarUrl?: string | null };
+  onSettings: () => void;
+  onAdmin?: () => void;
+}) {
   const isMuted = useVoiceStore((s) => s.isMuted);
   const isDeafened = useVoiceStore((s) => s.isDeafened);
   const currentChannelId = useVoiceStore((s) => s.currentChannelId);
@@ -338,6 +359,13 @@ function UserBar({ user, onSettings }: { user: { id: string; displayName: string
           <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
         </svg>
       </button>
+      {onAdmin && (
+        <button className="user-bar-settings admin-shield" onClick={onAdmin} title="Admin Control Panel">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l7 3v6c0 5-3.5 9.7-7 11-3.5-1.3-7-6-7-11V5l7-3zm0 2.2L7 5.5v5.4c0 4.2 2.8 7.9 5 8.8 2.2-.9 5-4.6 5-8.8V5.5l-5-1.3z" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

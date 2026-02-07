@@ -22,6 +22,7 @@ public class AuthController : ControllerBase
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly AppDbContext _db;
     private readonly ImageService _imageService;
+    private const string InviteOnlyKey = "InviteOnly";
 
     public AuthController(
         UserManager<AppUser> userManager,
@@ -42,6 +43,20 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
     {
+        Models.InviteCode? invite = null;
+        if (await IsInviteOnlyAsync())
+        {
+            if (string.IsNullOrWhiteSpace(request.InviteCode))
+                return BadRequest("Invite code required.");
+
+            invite = await _db.InviteCodes.FirstOrDefaultAsync(i => i.Code == request.InviteCode);
+            if (invite == null) return BadRequest("Invalid invite code.");
+            if (invite.ExpiresAt.HasValue && invite.ExpiresAt.Value < DateTime.UtcNow)
+                return BadRequest("Invite code expired.");
+            if (invite.MaxUses.HasValue && invite.Uses >= invite.MaxUses.Value)
+                return BadRequest("Invite code already used.");
+        }
+
         var user = new AppUser
         {
             UserName = request.Username,
@@ -52,6 +67,13 @@ public class AuthController : ControllerBase
         var result = await _userManager.CreateAsync(user, request.Password);
         if (!result.Succeeded)
             return BadRequest(result.Errors);
+
+        if (invite != null)
+        {
+            invite.Uses += 1;
+            invite.LastUsedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+        }
 
         var token = _tokenService.CreateToken(user);
         return Ok(new AuthResponse(token, ToUserDto(user)));
@@ -134,4 +156,11 @@ public class AuthController : ControllerBase
 
     private static UserDto ToUserDto(AppUser user) =>
         new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio);
+
+    private async Task<bool> IsInviteOnlyAsync()
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == InviteOnlyKey);
+        if (row == null) return false;
+        return bool.TryParse(row.Value, out var value) && value;
+    }
 }

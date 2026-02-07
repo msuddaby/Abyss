@@ -16,6 +16,13 @@ interface VoiceState {
   voiceMode: VoiceMode;
   pttKey: string;
   isPttActive: boolean;
+  inputDeviceId: string;
+  outputDeviceId: string;
+  noiseSuppression: boolean;
+  echoCancellation: boolean;
+  autoGainControl: boolean;
+  inputSensitivity: number;
+  localInputLevel: number;
   setCurrentChannel: (channelId: string | null) => void;
   setParticipants: (participants: Map<string, string>) => void;
   addParticipant: (userId: string, displayName: string) => void;
@@ -32,6 +39,13 @@ interface VoiceState {
   setVoiceMode: (mode: VoiceMode) => void;
   setPttKey: (key: string) => void;
   setPttActive: (active: boolean) => void;
+  setInputDeviceId: (deviceId: string) => void;
+  setOutputDeviceId: (deviceId: string) => void;
+  setNoiseSuppression: (enabled: boolean) => void;
+  setEchoCancellation: (enabled: boolean) => void;
+  setAutoGainControl: (enabled: boolean) => void;
+  setInputSensitivity: (value: number) => void;
+  setLocalInputLevel: (value: number) => void;
   speakerOn: boolean;
   toggleSpeaker: () => void;
   setSpeaking: (userId: string, speaking: boolean) => void;
@@ -51,6 +65,13 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   pttKey: (() => { try { return getStorage().getItem('pttKey') || '`'; } catch { return '`'; } })(),
   speakerOn: (() => { try { const v = getStorage().getItem('speakerOn'); return v === null ? true : v === 'true'; } catch { return true; } })(),
   isPttActive: false,
+  inputDeviceId: (() => { try { return getStorage().getItem('inputDeviceId') || 'default'; } catch { return 'default'; } })(),
+  outputDeviceId: (() => { try { return getStorage().getItem('outputDeviceId') || 'default'; } catch { return 'default'; } })(),
+  noiseSuppression: (() => { try { const v = getStorage().getItem('noiseSuppression'); return v === null ? true : v === 'true'; } catch { return true; } })(),
+  echoCancellation: (() => { try { const v = getStorage().getItem('echoCancellation'); return v === null ? true : v === 'true'; } catch { return true; } })(),
+  autoGainControl: (() => { try { const v = getStorage().getItem('autoGainControl'); return v === null ? true : v === 'true'; } catch { return true; } })(),
+  inputSensitivity: (() => { try { const v = getStorage().getItem('inputSensitivity'); return v ? Number(v) : 0.78; } catch { return 0.78; } })(),
+  localInputLevel: 0,
 
   setCurrentChannel: (channelId) => set({ currentChannelId: channelId }),
 
@@ -126,6 +147,35 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set({ pttKey: key });
   },
   setPttActive: (active) => set({ isPttActive: active }),
+  setInputDeviceId: (deviceId) => {
+    getStorage().setItem('inputDeviceId', deviceId);
+    set({ inputDeviceId: deviceId });
+  },
+  setOutputDeviceId: (deviceId) => {
+    getStorage().setItem('outputDeviceId', deviceId);
+    set({ outputDeviceId: deviceId });
+  },
+  setNoiseSuppression: (enabled) => {
+    getStorage().setItem('noiseSuppression', String(enabled));
+    set({ noiseSuppression: enabled });
+  },
+  setEchoCancellation: (enabled) => {
+    getStorage().setItem('echoCancellation', String(enabled));
+    set({ echoCancellation: enabled });
+  },
+  setAutoGainControl: (enabled) => {
+    getStorage().setItem('autoGainControl', String(enabled));
+    set({ autoGainControl: enabled });
+  },
+  setInputSensitivity: (value) => {
+    const next = Math.min(1, Math.max(0, value));
+    getStorage().setItem('inputSensitivity', String(next));
+    set({ inputSensitivity: next });
+  },
+  setLocalInputLevel: (value) => {
+    const next = Math.min(1, Math.max(0, value));
+    set({ localInputLevel: next });
+  },
   toggleSpeaker: () => set((s) => {
     const next = !s.speakerOn;
     getStorage().setItem('speakerOn', String(next));

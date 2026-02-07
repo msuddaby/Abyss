@@ -13,6 +13,7 @@ ABYSS_ISSUES.md
 
 # ASP.NET
 server/Abyss.Api/bin/
+server/Abyss.Api/bin\\*/
 server/Abyss.Api/obj/
 server/Abyss.Api/appsettings.Development.json
 

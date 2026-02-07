@@ -17,6 +17,9 @@ public class ChatHub : Hub
     private readonly PermissionService _perms;
     private readonly NotificationService _notifications;
 
+    private const int MaxMessageLength = 4000;
+    private const int MaxAttachmentsPerMessage = 10;
+
     // Track online users: connectionId -> userId
     internal static readonly Dictionary<string, string> _connections = new();
     internal static readonly object _lock = new();
@@ -39,6 +42,49 @@ public class ChatHub : Hub
         if (channel.ServerId.HasValue)
             return await _perms.IsMemberAsync(channel.ServerId.Value, UserId);
         return false;
+    }
+
+    private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, out string normalized, out string? error)
+    {
+        error = null;
+        normalized = content;
+
+        if (attachmentCount > MaxAttachmentsPerMessage)
+        {
+            error = $"Maximum {MaxAttachmentsPerMessage} attachments per message";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            if (attachmentCount == 0)
+            {
+                error = $"Message must be 1-{MaxMessageLength} characters";
+                return false;
+            }
+
+            normalized = string.Empty;
+        }
+
+        if (normalized.Length > MaxMessageLength)
+        {
+            error = $"Message must be 1-{MaxMessageLength} characters";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateMessageForEdit(string newContent, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(newContent) || newContent.Length > MaxMessageLength)
+        {
+            error = $"Message must be 1-{MaxMessageLength} characters";
+            return false;
+        }
+
+        return true;
     }
 
     public override async Task OnConnectedAsync()
@@ -147,6 +193,18 @@ public class ChatHub : Hub
 
     public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)
     {
+        if (attachmentIds == null)
+        {
+            await Clients.Caller.SendAsync("Error", "Attachments list is required.");
+            return;
+        }
+
+        if (!TryNormalizeAndValidateMessageForSend(content, attachmentIds.Count, out var normalizedContent, out var error))
+        {
+            await Clients.Caller.SendAsync("Error", error);
+            return;
+        }
+
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
@@ -163,7 +221,7 @@ public class ChatHub : Hub
         var message = new Message
         {
             Id = Guid.NewGuid(),
-            Content = content,
+            Content = normalizedContent,
             AuthorId = UserId,
             ChannelId = channelGuid,
             CreatedAt = DateTime.UtcNow,
@@ -277,6 +335,12 @@ public class ChatHub : Hub
 
     public async Task EditMessage(string messageId, string newContent)
     {
+        if (!TryValidateMessageForEdit(newContent, out var error))
+        {
+            await Clients.Caller.SendAsync("Error", error);
+            return;
+        }
+
         if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.FindAsync(msgGuid);
         if (message == null || message.AuthorId != UserId || message.IsDeleted) return;

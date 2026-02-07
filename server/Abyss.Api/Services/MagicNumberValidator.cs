@@ -97,7 +97,7 @@ public class MagicNumberValidator
                 {
                     stream.Position = 8;
                     var subtype = new byte[4];
-                    stream.Read(subtype, 0, 4);
+                    stream.ReadExactly(subtype, 0, 4);
                     if (subtype[0] == 0x4D && subtype[1] == 0x34 && subtype[2] == 0x41) // M4A
                     {
                         return "audio/mp4";

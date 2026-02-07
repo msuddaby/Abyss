@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useServerStore, useAuthStore, usePresenceStore, useDmStore, useMessageStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
@@ -12,6 +12,7 @@ export default function MemberList() {
   const currentUser = useAuthStore((s) => s.user);
   const [profileCard, setProfileCard] = useState<{ userId: string; x: number; y: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ member: ServerMember; x: number; y: number } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [showRoleAssign, setShowRoleAssign] = useState(false);
   const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
@@ -26,6 +27,25 @@ export default function MemberList() {
     const handleClick = () => setContextMenu(null);
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
+  }, [contextMenu]);
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) return;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = contextMenu.x;
+    let top = contextMenu.y;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (top + rect.height > window.innerHeight - margin) {
+      top = window.innerHeight - rect.height - margin;
+    }
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    if (left !== contextMenu.x || top !== contextMenu.y) {
+      setContextMenu({ ...contextMenu, x: left, y: top });
+    }
   }, [contextMenu]);
 
   if (members.length === 0) return null;
@@ -137,7 +157,7 @@ export default function MemberList() {
         />
       )}
       {contextMenu && (
-        <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button className="context-menu-item" onClick={handleMessage}>Message</button>
           {canManageRoles && currentMember && canActOn(currentMember, contextMenu.member) && (
             <button className="context-menu-item" onClick={handleManageRoles}>Manage Roles</button>

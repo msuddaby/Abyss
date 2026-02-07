@@ -16,6 +16,7 @@ export default function MessageList() {
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
@@ -72,6 +73,19 @@ export default function MessageList() {
     };
   }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction, currentUserId, currentChannelId]);
 
+  const updateScrollToBottomState = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const distanceFromBottom =
+      list.scrollHeight - list.scrollTop - list.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 150);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    setShowScrollToBottom(false);
+  }, []);
+
   // Scroll to bottom on channel switch (after messages load)
   const prevLoadingRef = useRef(false);
   useEffect(() => {
@@ -85,9 +99,10 @@ export default function MessageList() {
     if (channelChanged || (justFinishedLoading && messages.length > 0)) {
       requestAnimationFrame(() => {
         bottomRef.current?.scrollIntoView();
+        updateScrollToBottomState();
       });
     }
-  }, [currentChannelId, messages, loading]);
+  }, [currentChannelId, messages, loading, updateScrollToBottomState]);
 
   // Scroll to bottom on new messages (only if near bottom), preserve position on loadMore
   useEffect(() => {
@@ -123,7 +138,8 @@ export default function MessageList() {
         }
       }
     }
-  }, [messages, currentUserId]);
+    requestAnimationFrame(updateScrollToBottomState);
+  }, [messages, currentUserId, updateScrollToBottomState]);
 
   const scrollToMessage = useCallback((id: string) => {
     const el = messageRefs.current.get(id);
@@ -147,44 +163,56 @@ export default function MessageList() {
         // Restore scroll position after older messages are prepended
         requestAnimationFrame(() => {
           list.scrollTop = list.scrollHeight - prevScrollHeight;
+          updateScrollToBottomState();
         });
       });
+    } else {
+      updateScrollToBottomState();
     }
   };
 
   return (
     <div className="message-list" ref={listRef} onScroll={handleScroll}>
-      {loading && <div className="loading">Loading messages...</div>}
-      {messages.length == 0 ? (
-        <div className="empty-channel-message">
-          <p>ha ha empty channel</p>
+      {showScrollToBottom && (
+        <div className="scroll-to-bottom-banner">
+          <button type="button" onClick={scrollToBottom}>
+            You’re viewing earlier messages — jump to latest
+          </button>
         </div>
-      ) : (
-        <></>
       )}
-      {messages.map((msg, i) => {
-        const prev = messages[i - 1];
-        const grouped =
-          !!prev &&
-          !prev.isDeleted &&
-          !msg.replyTo &&
-          prev.authorId === msg.authorId &&
-          new Date(msg.createdAt).getTime() -
-            new Date(prev.createdAt).getTime() <
-            5 * 60 * 1000;
-        return (
-          <div key={msg.id} data-message-id={msg.id} ref={(el) => { if (el) messageRefs.current.set(msg.id, el); else messageRefs.current.delete(msg.id); }}>
-            <MessageItem
-              message={msg}
-              grouped={grouped}
-              contextMenuOpen={contextMenuMessageId === msg.id}
-              setContextMenuMessageId={setContextMenuMessageId}
-              onScrollToMessage={scrollToMessage}
-            />
+      <div className="message-list-inner">
+        {loading && <div className="loading">Loading messages...</div>}
+        {messages.length == 0 ? (
+          <div className="empty-channel-message">
+            <p>ha ha empty channel</p>
           </div>
-        );
-      })}
-      <div ref={bottomRef} />
+        ) : (
+          <></>
+        )}
+        {messages.map((msg, i) => {
+          const prev = messages[i - 1];
+          const grouped =
+            !!prev &&
+            !prev.isDeleted &&
+            !msg.replyTo &&
+            prev.authorId === msg.authorId &&
+            new Date(msg.createdAt).getTime() -
+              new Date(prev.createdAt).getTime() <
+              5 * 60 * 1000;
+          return (
+            <div key={msg.id} data-message-id={msg.id} ref={(el) => { if (el) messageRefs.current.set(msg.id, el); else messageRefs.current.delete(msg.id); }}>
+              <MessageItem
+                message={msg}
+                grouped={grouped}
+                contextMenuOpen={contextMenuMessageId === msg.id}
+                setContextMenuMessageId={setContextMenuMessageId}
+                onScrollToMessage={scrollToMessage}
+              />
+            </div>
+          );
+        })}
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

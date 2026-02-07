@@ -155,6 +155,43 @@ export interface SearchResponse {
   totalCount: number;
 }
 
+export interface AdminServer {
+  id: string;
+  name: string;
+  ownerId: string;
+  memberCount: number;
+  channelCount: number;
+}
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  displayName: string;
+  email?: string;
+  status: string;
+}
+
+export interface AdminOverview {
+  servers: AdminServer[];
+  users: AdminUser[];
+}
+
+export interface InviteCode {
+  id: string;
+  code: string;
+  createdById?: string;
+  createdAt: string;
+  expiresAt?: string;
+  maxUses?: number;
+  uses: number;
+  lastUsedAt?: string;
+}
+
+export interface AdminSettings {
+  inviteOnly: boolean;
+  codes: InviteCode[];
+}
+
 export const Permission = {
   ManageChannels: 1 << 0,
   ManageMessages: 1 << 1,
