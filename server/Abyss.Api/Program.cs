@@ -99,6 +99,8 @@ builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<VoiceStateService>();
 builder.Services.AddSingleton<ImageService>();
+builder.Services.AddSingleton<MediaConfig>();
+builder.Services.AddScoped<MediaValidator>();
 
 // HTTP Client for push notifications
 builder.Services.AddHttpClient();
