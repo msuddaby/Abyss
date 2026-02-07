@@ -30,7 +30,7 @@ let screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 
 // Audio analysis state
 let audioContext: AudioContext | null = null;
-let analysers: Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode }> = new Map();
+let analysers: Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode; analysisStream: MediaStream }> = new Map();
 let analyserInterval: ReturnType<typeof setInterval> | null = null;
 const SPEAKING_THRESHOLD = 0.015;
 const INPUT_THRESHOLD_MIN = 0.005;
@@ -90,11 +90,16 @@ function addAnalyser(userId: string, stream: MediaStream) {
   // Remove existing analyser for this user
   removeAnalyser(userId);
   const ctx = ensureAudioContext();
-  const source = ctx.createMediaStreamSource(stream);
+  // Clone the stream so the analyser always receives real audio data,
+  // even when track.enabled is toggled off on the original (voice activity mode).
+  // Without this, disabling track.enabled causes the analyser to read silence,
+  // preventing voice activity detection from ever re-enabling the track.
+  const analysisStream = stream.clone();
+  const source = ctx.createMediaStreamSource(analysisStream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
   source.connect(analyser);
-  analysers.set(userId, { analyser, source });
+  analysers.set(userId, { analyser, source, analysisStream });
   startAnalyserLoop();
 }
 
@@ -102,6 +107,7 @@ function removeAnalyser(userId: string) {
   const entry = analysers.get(userId);
   if (entry) {
     entry.source.disconnect();
+    entry.analysisStream.getTracks().forEach((t) => t.stop());
     analysers.delete(userId);
   }
   useVoiceStore.getState().setSpeaking(userId, false);
@@ -150,6 +156,7 @@ function cleanupAnalysers() {
   const store = useVoiceStore.getState();
   for (const [userId, entry] of analysers) {
     entry.source.disconnect();
+    entry.analysisStream.getTracks().forEach((t) => t.stop());
     store.setSpeaking(userId, false);
   }
   analysers.clear();
