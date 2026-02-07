@@ -1500,6 +1500,17 @@
   box-shadow: 0 0 8px var(--success);
 }
 
+.voice-ctrl-btn.audio-unlock {
+  background: var(--bg-accent);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.voice-ctrl-btn.audio-unlock:hover {
+  background: var(--bg-accent-hover);
+}
+
 .voice-mode-toggle {
   font-size: 11px;
   font-weight: 700;

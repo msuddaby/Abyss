@@ -59,6 +59,33 @@ function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
   });
 }
 
+export async function attemptAudioUnlock() {
+  if (audioContext && audioContext.state === 'suspended') {
+    try {
+      await audioContext.resume();
+    } catch (err) {
+      console.warn('Failed to resume audio context:', err);
+    }
+  }
+
+  const store = useVoiceStore.getState();
+  let failed = false;
+  const plays: Promise<void>[] = [];
+  audioElements.forEach((audio) => {
+    if (!audio.srcObject) return;
+    plays.push(
+      audio.play().catch((err) => {
+        console.warn('Audio unlock play failed:', err);
+        failed = true;
+      })
+    );
+  });
+  if (plays.length > 0) {
+    await Promise.all(plays);
+  }
+  store.setNeedsAudioUnlock(failed);
+}
+
 function addAnalyser(userId: string, stream: MediaStream) {
   // Remove existing analyser for this user
   removeAnalyser(userId);
@@ -174,7 +201,12 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       applyOutputDevice(audio, currentOutputDeviceId);
       audio.srcObject = stream;
       audio.muted = useVoiceStore.getState().isDeafened;
-      audio.play().catch((err) => console.error('Audio play failed:', err));
+      audio.play()
+        .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+        .catch((err) => {
+          console.error('Audio play failed:', err);
+          useVoiceStore.getState().setNeedsAudioUnlock(true);
+        });
       addAnalyser(peerId, stream);
     } else if (track.kind === 'video') {
       screenVideoStreams.set(peerId, stream);
@@ -215,6 +247,7 @@ function cleanupAll() {
   screenVideoStreams.clear();
   pendingCandidates.clear();
   screenTrackSenders.clear();
+  useVoiceStore.getState().setNeedsAudioUnlock(false);
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;

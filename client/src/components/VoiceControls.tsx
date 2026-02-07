@@ -1,8 +1,8 @@
 import { useVoiceStore, useServerStore } from '@abyss/shared';
-import { useWebRTC } from '../hooks/useWebRTC';
+import { useWebRTC, attemptAudioUnlock } from '../hooks/useWebRTC';
 
 export default function VoiceControls() {
-  const { currentChannelId, isScreenSharing, voiceMode, isPttActive, pttKey, setVoiceMode } = useVoiceStore();
+  const { currentChannelId, isScreenSharing, voiceMode, isPttActive, pttKey, setVoiceMode, needsAudioUnlock } = useVoiceStore();
   const channels = useServerStore((s) => s.channels);
   const { leaveVoice, startScreenShare, stopScreenShare } = useWebRTC();
 
@@ -18,6 +18,15 @@ export default function VoiceControls() {
         {channel && <span className="voice-channel-name">🔊 {channel.name}</span>}
       </div>
       <div className="voice-controls-buttons">
+        {needsAudioUnlock && (
+          <button
+            className="voice-ctrl-btn audio-unlock"
+            onClick={() => attemptAudioUnlock()}
+            title="Enable audio playback"
+          >
+            Enable Audio
+          </button>
+        )}
         <button
           className={`voice-ctrl-btn voice-mode-toggle`}
           onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}

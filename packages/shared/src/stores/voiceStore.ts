@@ -23,6 +23,7 @@ interface VoiceState {
   autoGainControl: boolean;
   inputSensitivity: number;
   localInputLevel: number;
+  needsAudioUnlock: boolean;
   setCurrentChannel: (channelId: string | null) => void;
   setParticipants: (participants: Map<string, string>) => void;
   addParticipant: (userId: string, displayName: string) => void;
@@ -46,6 +47,7 @@ interface VoiceState {
   setAutoGainControl: (enabled: boolean) => void;
   setInputSensitivity: (value: number) => void;
   setLocalInputLevel: (value: number) => void;
+  setNeedsAudioUnlock: (value: boolean) => void;
   speakerOn: boolean;
   toggleSpeaker: () => void;
   setSpeaking: (userId: string, speaking: boolean) => void;
@@ -72,6 +74,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   autoGainControl: (() => { try { const v = getStorage().getItem('autoGainControl'); return v === null ? true : v === 'true'; } catch { return true; } })(),
   inputSensitivity: (() => { try { const v = getStorage().getItem('inputSensitivity'); return v ? Number(v) : 0.78; } catch { return 0.78; } })(),
   localInputLevel: 0,
+  needsAudioUnlock: false,
 
   setCurrentChannel: (channelId) => set({ currentChannelId: channelId }),
 
@@ -176,6 +179,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     const next = Math.min(1, Math.max(0, value));
     set({ localInputLevel: next });
   },
+  setNeedsAudioUnlock: (value) => set({ needsAudioUnlock: value }),
   toggleSpeaker: () => set((s) => {
     const next = !s.speakerOn;
     getStorage().setItem('speakerOn', String(next));
