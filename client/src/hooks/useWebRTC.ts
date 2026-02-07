@@ -321,15 +321,16 @@ async function stopScreenShareInternal() {
 
 // Called when a viewer requests to watch our stream
 async function addVideoTrackForViewer(viewerUserId: string) {
-  if (!screenStream) return;
+  const activeScreenStream = screenStream;
+  if (!activeScreenStream) return;
   const pc = peers.get(viewerUserId);
   if (!pc) return;
 
   // Add all tracks from screen stream (video + audio if available)
   const senders: RTCRtpSender[] = [];
-  screenStream.getTracks().forEach((track) => {
+  activeScreenStream.getTracks().forEach((track) => {
     console.log(`Adding screen ${track.kind} track for viewer ${viewerUserId}`);
-    const sender = pc.addTrack(track, screenStream);
+    const sender = pc.addTrack(track, activeScreenStream);
     senders.push(sender);
   });
 
