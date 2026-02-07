@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useMessageStore } from "../stores/messageStore";
-import { getConnection } from "../services/signalr";
+import { useMessageStore, getConnection } from "@abyss/shared";
+import type { Message, Reaction } from "@abyss/shared";
 import MessageItem from "./MessageItem";
-import type { Message, Reaction } from "../types";
 
 export default function MessageList() {
   const { messages, loading, hasMore, loadMore } = useMessageStore();

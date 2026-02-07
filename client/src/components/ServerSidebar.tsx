@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useServerStore } from '../stores/serverStore';
-import { useDmStore } from '../stores/dmStore';
-import { useUnreadStore } from '../stores/unreadStore';
+import { useServerStore, useDmStore, useUnreadStore } from '@abyss/shared';
 import CreateServerModal from './CreateServerModal';
 import JoinServerModal from './JoinServerModal';
 

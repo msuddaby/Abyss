@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchStore } from '../stores/searchStore';
-import { useServerStore } from '../stores/serverStore';
-import { useMessageStore } from '../stores/messageStore';
-import api from '../services/api';
-import { API_BASE } from '../services/api';
-import type { SearchResult, Message } from '../types';
+import { useSearchStore, useServerStore, useMessageStore, api, getApiBase } from '@abyss/shared';
+import type { SearchResult, Message } from '@abyss/shared';
 
 export default function SearchPanel() {
   const { query, setQuery, filters, setFilters, clearFilters, results, totalCount, loading, hasMore, search, loadMore, closeSearch } = useSearchStore();
@@ -15,7 +11,7 @@ export default function SearchPanel() {
   const fetchMessages = useMessageStore((s) => s.fetchMessages);
   const [showFilters, setShowFilters] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const textChannels = channels.filter((c) => c.type === 'Text');
 
@@ -170,7 +166,7 @@ export default function SearchPanel() {
             <div className="search-result-meta">
               <div className="search-result-avatar">
                 {r.message.author.avatarUrl ? (
-                  <img src={`${API_BASE}${r.message.author.avatarUrl}`} alt="" />
+                  <img src={`${getApiBase()}${r.message.author.avatarUrl}`} alt="" />
                 ) : (
                   r.message.author.displayName[0]
                 )}

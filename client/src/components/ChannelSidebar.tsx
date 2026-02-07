@@ -1,11 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { useServerStore } from '../stores/serverStore';
-import { useMessageStore } from '../stores/messageStore';
-import { useVoiceStore } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
-import { useUnreadStore } from '../stores/unreadStore';
-import { useDmStore } from '../stores/dmStore';
-import { usePresenceStore } from '../stores/presenceStore';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission } from '@abyss/shared';
+import type { DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
 import InviteModal from './InviteModal';
@@ -13,9 +8,6 @@ import VoiceChannel from './VoiceChannel';
 import VoiceControls from './VoiceControls';
 import UserSettingsModal from './UserSettingsModal';
 import ServerSettingsModal from './ServerSettingsModal';
-import api, { API_BASE } from '../services/api';
-import { hasPermission, Permission } from '../types';
-import type { DmChannel, User } from '../types';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel } = useServerStore();
@@ -131,7 +123,7 @@ export default function ChannelSidebar() {
                   <button key={u.id} className="dm-search-result-item" onClick={() => handleSelectUser(u)}>
                     <div className="dm-avatar">
                       {u.avatarUrl ? (
-                        <img src={u.avatarUrl.startsWith('http') ? u.avatarUrl : `${API_BASE}${u.avatarUrl}`} alt={u.displayName} />
+                        <img src={u.avatarUrl.startsWith('http') ? u.avatarUrl : `${getApiBase()}${u.avatarUrl}`} alt={u.displayName} />
                       ) : (
                         <span>{u.displayName.charAt(0).toUpperCase()}</span>
                       )}
@@ -167,7 +159,7 @@ export default function ChannelSidebar() {
                 >
                   <div className="dm-avatar">
                     {dm.otherUser.avatarUrl ? (
-                      <img src={dm.otherUser.avatarUrl.startsWith('http') ? dm.otherUser.avatarUrl : `${API_BASE}${dm.otherUser.avatarUrl}`} alt={dm.otherUser.displayName} />
+                      <img src={dm.otherUser.avatarUrl.startsWith('http') ? dm.otherUser.avatarUrl : `${getApiBase()}${dm.otherUser.avatarUrl}`} alt={dm.otherUser.displayName} />
                     ) : (
                       <span>{dm.otherUser.displayName.charAt(0).toUpperCase()}</span>
                     )}
@@ -311,7 +303,7 @@ function UserBar({ user, onSettings }: { user: { id: string; displayName: string
     <div className="user-bar">
       <div className="user-bar-avatar">
         {user.avatarUrl ? (
-          <img src={user.avatarUrl.startsWith('http') ? user.avatarUrl : `${API_BASE}${user.avatarUrl}`} alt={user.displayName} />
+          <img src={user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`} alt={user.displayName} />
         ) : (
           <span>{user.displayName.charAt(0).toUpperCase()}</span>
         )}

@@ -1,0 +1,9 @@
+{
+  "name": "abyss",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "client",
+    "packages/app"
+  ]
+}

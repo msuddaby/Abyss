@@ -1,4 +1,4 @@
-import { usePresenceStore } from '../stores/presenceStore';
+import { usePresenceStore } from '@abyss/shared';
 
 export default function TypingIndicator() {
   const typingUsers = usePresenceStore((s) => s.typingUsers);

@@ -1,9 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { useMessageStore } from "../stores/messageStore";
-import { useServerStore } from "../stores/serverStore";
-import { useDmStore } from "../stores/dmStore";
-import { uploadFile, API_BASE } from "../services/api";
-import { getConnection } from "../services/signalr";
+import { useMessageStore, useServerStore, useDmStore, uploadFile, getApiBase, getConnection } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 
@@ -91,7 +87,7 @@ export default function MessageInput() {
         id: `custom-${e.id}`,
         name: e.name,
         keywords: [e.name],
-        skins: [{ src: `${API_BASE}${e.imageUrl}` }],
+        skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
       })),
     }] : [],
   [emojis]);
@@ -266,7 +262,7 @@ export default function MessageInput() {
     const endOffset = sel.getRangeAt(0).startOffset;
 
     const img = document.createElement('img');
-    img.src = `${API_BASE}${option.imageUrl}`;
+    img.src = `${getApiBase()}${option.imageUrl}`;
     img.alt = `:${option.name}:`;
     img.title = `:${option.name}:`;
     img.className = 'input-custom-emoji';
@@ -329,7 +325,7 @@ export default function MessageInput() {
       const ce = emojis.find((e) => e.id === emojiId);
       if (ce) {
         const img = document.createElement('img');
-        img.src = `${API_BASE}${ce.imageUrl}`;
+        img.src = `${getApiBase()}${ce.imageUrl}`;
         img.alt = `:${ce.name}:`;
         img.title = `:${ce.name}:`;
         img.className = 'input-custom-emoji';
@@ -503,7 +499,7 @@ export default function MessageInput() {
               }}
               onMouseEnter={() => setEmojiIndex(i)}
             >
-              <img src={`${API_BASE}${option.imageUrl}`} alt={option.name} className="emoji-autocomplete-img" />
+              <img src={`${getApiBase()}${option.imageUrl}`} alt={option.name} className="emoji-autocomplete-img" />
               <span className="mention-autocomplete-name">:{option.name}:</span>
             </div>
           ))}

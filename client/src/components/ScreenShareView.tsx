@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useVoiceStore } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
+import { useVoiceStore, useAuthStore } from '@abyss/shared';
 import { getScreenVideoStream, getLocalScreenStream, requestWatch, stopWatching } from '../hooks/useWebRTC';
 
 export default function ScreenShareView() {

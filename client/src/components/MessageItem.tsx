@@ -1,10 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { API_BASE } from '../services/api';
-import { useAuthStore } from '../stores/authStore';
-import { useServerStore } from '../stores/serverStore';
-import { useMessageStore } from '../stores/messageStore';
-import type { Message, ServerMember, CustomEmoji } from '../types';
-import { hasPermission, Permission, getDisplayColor, canActOn } from '../types';
+import { getApiBase, useAuthStore, useServerStore, useMessageStore, hasPermission, Permission, getDisplayColor, canActOn } from '@abyss/shared';
+import type { Message, ServerMember, CustomEmoji } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -49,7 +45,7 @@ function renderMentions(content: string, members: ServerMember[], emojis: Custom
       const emoji = emojis.find((e) => e.id === seg.id);
       if (emoji) {
         parts.push(
-          <img key={key++} src={`${API_BASE}${emoji.imageUrl}`} alt={`:${seg.name}:`} title={`:${seg.name}:`} className="custom-emoji" />
+          <img key={key++} src={`${getApiBase()}${emoji.imageUrl}`} alt={`:${seg.name}:`} title={`:${seg.name}:`} className="custom-emoji" />
         );
       } else {
         parts.push(<span key={key++}>:{seg.name}:</span>);
@@ -220,7 +216,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       id: `custom-${e.id}`,
       name: e.name,
       keywords: [e.name],
-      skins: [{ src: `${API_BASE}${e.imageUrl}` }],
+      skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
     })),
   }] : [];
 
@@ -243,7 +239,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       <div className="message-item message-deleted">
         <div className="message-avatar" onClick={handleAuthorClick}>
           {authorAvatarUrl ? (
-            <img src={authorAvatarUrl.startsWith('http') ? authorAvatarUrl : `${API_BASE}${authorAvatarUrl}`} alt={authorDisplayName} />
+            <img src={authorAvatarUrl.startsWith('http') ? authorAvatarUrl : `${getApiBase()}${authorAvatarUrl}`} alt={authorDisplayName} />
           ) : (
             <span>{authorDisplayName.charAt(0).toUpperCase()}</span>
           )}
@@ -281,7 +277,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
           <div className="reply-reference-line" />
           <div className="reply-reference-avatar">
             {message.replyTo.author.avatarUrl ? (
-              <img src={message.replyTo.author.avatarUrl.startsWith('http') ? message.replyTo.author.avatarUrl : `${API_BASE}${message.replyTo.author.avatarUrl}`} alt={message.replyTo.author.displayName} />
+              <img src={message.replyTo.author.avatarUrl.startsWith('http') ? message.replyTo.author.avatarUrl : `${getApiBase()}${message.replyTo.author.avatarUrl}`} alt={message.replyTo.author.displayName} />
             ) : (
               <span>{message.replyTo.author.displayName.charAt(0).toUpperCase()}</span>
             )}
@@ -303,7 +299,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       ) : (
         <div className="message-avatar clickable" onClick={handleAuthorClick}>
           {message.author.avatarUrl ? (
-            <img src={message.author.avatarUrl.startsWith('http') ? message.author.avatarUrl : `${API_BASE}${message.author.avatarUrl}`} alt={message.author.displayName} />
+            <img src={message.author.avatarUrl.startsWith('http') ? message.author.avatarUrl : `${getApiBase()}${message.author.avatarUrl}`} alt={message.author.displayName} />
           ) : (
             <span>{message.author.displayName.charAt(0).toUpperCase()}</span>
           )}
@@ -337,9 +333,9 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
             {message.attachments.map((att) => (
               <div key={att.id} className="attachment">
                 {att.contentType.startsWith('image/') ? (
-                  <img src={`${API_BASE}${att.filePath}`} alt={att.fileName} className="attachment-image" />
+                  <img src={`${getApiBase()}${att.filePath}`} alt={att.fileName} className="attachment-image" />
                 ) : (
-                  <a href={`${API_BASE}${att.filePath}`} target="_blank" rel="noopener noreferrer">
+                  <a href={`${getApiBase()}${att.filePath}`} target="_blank" rel="noopener noreferrer">
                     {att.fileName}
                   </a>
                 )}
@@ -358,7 +354,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
                 <span className="reaction-emoji">{g.emoji.startsWith('custom:') ? (() => {
                   const eid = g.emoji.substring(7);
                   const ce = emojis.find((e) => e.id === eid);
-                  return ce ? <img src={`${API_BASE}${ce.imageUrl}`} alt={`:${ce.name}:`} className="custom-emoji-reaction" /> : '?';
+                  return ce ? <img src={`${getApiBase()}${ce.imageUrl}`} alt={`:${ce.name}:`} className="custom-emoji-reaction" /> : '?';
                 })() : g.emoji}</span>
                 <span className="reaction-count">{g.count}</span>
               </button>

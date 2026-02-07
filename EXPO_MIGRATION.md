@@ -1,6 +1,6 @@
 # Expo Universal Migration Plan
 
-Migrate the Abyss React web client to an Expo universal app targeting **iOS + Android + Web** from a single codebase.
+Migrate the Abyss mobile experience to an Expo app targeting **iOS + Android**. The existing React/Vite web client remains the canonical web app — Expo targets native mobile only.
 
 **Current client:** ~5,665 lines TypeScript/TSX, 2,763 lines CSS, 18 components, 8 stores, 1 hook, 2 services.
 
@@ -21,13 +21,13 @@ abyss/
         utils/           # Mention parsing, message grouping, etc.
       package.json
 
-    app/                 # Expo universal app (replaces client/)
+    app/                 # Expo mobile app (iOS + Android only)
       app/               # Expo Router file-based routing
         (auth)/
           login.tsx
           register.tsx
         (main)/
-          _layout.tsx    # Main 3-column layout
+          _layout.tsx    # Responsive layout shell
           index.tsx      # Server view
       src/
         components/      # All UI components (RN primitives)
@@ -37,14 +37,12 @@ abyss/
       app.json
       package.json
 
-    web/                 # OPTIONAL: Keep current client as-is during transition
-      ...current client/
-
+  client/                # React/Vite web client (uses @abyss/shared, canonical web app)
   server/                # Unchanged backend
-  package.json           # Monorepo root (npm workspaces or turborepo)
+  package.json           # Monorepo root (npm workspaces)
 ```
 
-**Why monorepo:** Stores, types, and services are already UI-agnostic. Extract them once, import from both web (legacy) and Expo (new). This lets you migrate incrementally without breaking the existing web app.
+**Why monorepo:** Stores, types, and services are UI-agnostic. Both the React web client and Expo mobile app import from `@abyss/shared`. New business logic goes in shared, UI is implemented separately per platform.
 
 ---
 
@@ -53,10 +51,10 @@ abyss/
 ### Phase 0: Monorepo Setup & Shared Package Extraction
 > Estimated: 1-2 days | Risk: Low
 
-- [ ] Initialize monorepo (npm workspaces or Turborepo) at repo root
-- [ ] Create `packages/shared/` with its own `package.json` and `tsconfig.json`
-- [ ] Move `client/src/types/index.ts` -> `packages/shared/src/types/index.ts`
-- [ ] Move all 8 stores -> `packages/shared/src/stores/`
+- [x] Initialize monorepo (npm workspaces or Turborepo) at repo root
+- [x] Create `packages/shared/` with its own `package.json` and `tsconfig.json`
+- [x] Move `client/src/types/index.ts` -> `packages/shared/src/types/index.ts`
+- [x] Move all 8 stores -> `packages/shared/src/stores/`
   - Replace `localStorage` with a storage adapter interface:
     ```ts
     // packages/shared/src/storage.ts
@@ -72,19 +70,19 @@ abyss/
     ```
   - Web impl: wraps `localStorage` (sync->async shim)
   - Expo impl: wraps `@react-native-async-storage/async-storage`
-- [ ] Move `client/src/services/api.ts` -> `packages/shared/src/services/api.ts`
+- [x] Move `client/src/services/api.ts` -> `packages/shared/src/services/api.ts`
   - Axios works in both web and RN, no changes needed
   - Make base URL configurable (injected at init, not from `import.meta.env`)
-- [ ] Move `client/src/services/signalr.ts` -> `packages/shared/src/services/signalr.ts`
+- [x] Move `client/src/services/signalr.ts` -> `packages/shared/src/services/signalr.ts`
   - `@microsoft/signalr` works in RN over WebSocket transport
   - Make hub URL configurable
-- [ ] Extract utility functions from components into `packages/shared/src/utils/`:
+- [x] Extract utility functions from components into `packages/shared/src/utils/`:
   - Mention parsing regex (from MessageItem.tsx)
   - Message grouping logic (from MessageList.tsx)
   - Permission helpers (bitfield checks)
   - Date formatting helpers
-- [ ] Update `client/` imports to use `@abyss/shared` package
-- [ ] Verify existing web client still works with shared imports
+- [x] Update `client/` imports to use `@abyss/shared` package
+- [x] Verify existing web client still works with shared imports
 
 **Checkpoint:** Web client works identically, but logic lives in shared package.
 
@@ -93,10 +91,10 @@ abyss/
 ### Phase 1: Expo Project Scaffolding
 > Estimated: 1-2 days | Risk: Low
 
-- [ ] Install Expo CLI: `npx create-expo-app packages/app --template tabs`
-- [ ] Configure Expo Router for file-based routing
-- [ ] Set up path aliases for `@abyss/shared` in `tsconfig.json` and `metro.config.js`
-- [ ] Install core dependencies:
+- [x] Install Expo CLI: `npx create-expo-app packages/app --template tabs`
+- [x] Configure Expo Router for file-based routing
+- [x] Set up path aliases for `@abyss/shared` in `tsconfig.json` and `metro.config.js`
+- [x] Install core dependencies:
   ```
   npx expo install expo-router expo-linking expo-constants
   npx expo install @react-native-async-storage/async-storage
@@ -107,7 +105,7 @@ abyss/
   npx expo install expo-notifications        # Push notifications
   npx expo install expo-av                   # Audio playback
   ```
-- [ ] Create theme system:
+- [x] Create theme system:
   ```ts
   // packages/app/src/theme/tokens.ts
   export const colors = {
@@ -126,15 +124,15 @@ abyss/
   export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
   export const fontSize = { sm: 12, md: 14, lg: 16, xl: 20, xxl: 24 };
   ```
-- [ ] Create base reusable primitives:
+- [x] Create base reusable primitives:
   - `Button` (text button, icon button, variants: primary/secondary/danger)
   - `Avatar` (image with fallback initials, online status dot)
   - `Modal` (React Native Modal wrapper with overlay)
   - `TextInput` (styled input with label)
-- [ ] Initialize storage adapter with AsyncStorage on app start
-- [ ] Initialize API + SignalR services with config from `app.json` extras or env
-- [ ] Wire up Expo Router auth guard (redirect to login if no token)
-- [ ] Verify: app boots, shows login screen on iOS simulator + web
+- [x] Initialize storage adapter with AsyncStorage on app start
+- [x] Initialize API + SignalR services with config from `app.json` extras or env
+- [x] Wire up Expo Router auth guard (redirect to login if no token)
+- [x] Verify: app boots, shows login screen on iOS simulator + web
 
 **Checkpoint:** Empty Expo app with routing, theme, and shared services connected.
 
@@ -143,11 +141,11 @@ abyss/
 ### Phase 2: Auth Screens
 > Estimated: 1-2 days | Risk: Low
 
-- [ ] `app/(auth)/login.tsx` — email + password form, calls `authStore.login()`
-- [ ] `app/(auth)/register.tsx` — registration form, calls `authStore.register()`
-- [ ] Token persistence: `expo-secure-store` for JWT (more secure than AsyncStorage)
-- [ ] Auto-login on app start if token exists
-- [ ] Handle 401 responses (clear token, redirect to login)
+- [x] `app/(auth)/login.tsx` — email + password form, calls `authStore.login()`
+- [x] `app/(auth)/register.tsx` — registration form, calls `authStore.register()`
+- [x] Token persistence: `expo-secure-store` for JWT (more secure than AsyncStorage)
+- [x] Auto-login on app start if token exists
+- [x] Handle 401 responses (clear token, redirect to login)
 
 **Component mapping:**
 | Web (LoginPage.tsx, 44 lines) | Expo |
@@ -167,187 +165,208 @@ abyss/
 
 Build the 3-column Discord layout that adapts to mobile.
 
-- [ ] **Layout strategy:**
-  - Web/tablet: 3 columns side-by-side (same as current)
-  - Mobile: drawer navigation. Server sidebar = left drawer, member list = right drawer, channel sidebar = screen, content = screen
-- [ ] `app/(main)/_layout.tsx` — top-level layout with:
-  - `useWindowDimensions()` for responsive breakpoints
-  - Drawer navigation for mobile (`@react-navigation/drawer`)
-  - Static columns for web/tablet
-- [ ] **ServerSidebar component** (97 lines web):
-  - Vertical icon strip with `<FlatList>`
-  - Server icon = `<Pressable>` with `<Avatar>` or initial
-  - Unread dot + mention badge overlays
-  - Home (DM) button, create/join server buttons
-- [ ] **ChannelSidebar component** (344 lines web):
-  - Server name header
-  - Channel list with `<FlatList>` sections (text/voice categories)
-  - Channel item = `<Pressable>` with `<Text>` + unread/mention indicators
-  - Voice channel participants inline (speaking ring, LIVE badge)
-  - User bar at bottom (avatar, name, mute/deafen buttons)
-- [ ] **Content area placeholder** — "Select a channel" empty state
-- [ ] **MemberList component** (192 lines web):
-  - `<SectionList>` with Online/Offline sections
-  - Member item = `<Pressable>` with avatar, name, role color
-- [ ] **SignalR listener registration** (from MainLayout.tsx, 337 lines):
-  - Move all `.on()` handlers into a `useSignalRListeners()` hook in shared package
-  - Call from `_layout.tsx` useEffect
-  - Events: ReceiveMessage, MessageEdited, MessageDeleted, ToggleReaction, UserJoinedServer, UserLeftServer, UserOnline, UserOffline, UserTyping, RoleCreated, RoleUpdated, RoleDeleted, MemberRolesUpdated, UserBanned, UserUnbanned, ServerDeleted, NewUnreadMessage, MentionReceived, VoiceChannelUsers, ScreenShareStartedInChannel, ScreenShareStoppedInChannel
-- [ ] Remember last active server/channel (AsyncStorage)
+- [x] **Layout strategy:**
+  - Desktop (>=768px): All 4 columns side-by-side (server sidebar 72px | channel sidebar 240px | content flex:1 | member list 240px)
+  - Mobile (<768px): State-based panel switching with bottom nav bar (Channels / Chat / Members)
+  - Pure responsive via `useWindowDimensions()` — no drawer library needed
+- [x] `app/(main)/_layout.tsx` — responsive layout shell with:
+  - `useLayout()` breakpoint hook (768px threshold)
+  - `useSignalRListeners()` from shared package
+  - Desktop: `flexDirection: 'row'` with `<Slot />` for content
+  - Mobile: `uiStore.activePanel` state switching + bottom nav bar
+  - `SafeAreaView` wrapping
+- [x] **`useSignalRListeners` hook** extracted to `packages/shared/src/hooks/`:
+  - `fetchServerState()` — voice users, sharers, online users, unreads
+  - All `.on()` handlers (presence, voice, roles, emojis, channels, DMs, unreads, mentions)
+  - Server-switch effect, typing channel tracking, auto-mark-read effects
+  - Web client `MainLayout.tsx` refactored to use shared hook
+- [x] **ServerSidebar component:**
+  - Vertical icon strip with DM button, separator, server icons (`Avatar`), create/join buttons
+  - Unread dots + mention badges via `Badge` component
+  - On mobile, auto-switches to channels panel on tap
+- [x] **ChannelSidebar component** (server mode + DM mode):
+  - Server header (name + settings gear), action buttons (Invite, + Channel)
+  - Text channel list with `ChannelItem` (# icon, unread dot, mention badge)
+  - Voice channel list with `VoiceChannelItem` (participants, speaking indicators, LIVE badges)
+  - DM mode: DM list with avatars, online dots, unreads
+  - `VoiceControls` + `UserBar` at bottom
+  - Channel switching joins SignalR channel group + fetches messages
+  - On mobile, auto-switches to content panel on channel tap
+  - Modals deferred to Phase 5 (show `Alert.alert('Coming Soon')`)
+- [x] **Content area placeholder** (`ContentPlaceholder`):
+  - No channel: "Welcome to Abyss" / "Select a channel"
+  - Channel selected: header bar (# or speaker icon or @ DM name) + "Messages coming in Phase 4"
+- [x] **MemberList component:**
+  - `SectionList` with Online/Offline sections + counts
+  - `MemberItem`: avatar (with online dot), display name (role color), owner/role badge
+  - Context menus deferred to Phase 5
+- [x] **Supporting components:**
+  - `Badge` — unread dot + mention count pill
+  - `useLayout` — responsive breakpoint hook
+  - `uiStore` — mobile panel switching state
+- [x] Remember last active server/channel (via shared `serverStore` using `StorageAdapter`)
 
 **Checkpoint:** Can see servers, switch channels, see members. No messages yet.
 
 ---
 
-### Phase 4: Text Messaging
+### Phase 4: Text Messaging ✓
 > Estimated: 5-7 days | Risk: Medium-High (MessageInput is complex)
 
-- [ ] **MessageList component** (169 lines web):
-  - `<FlatList inverted>` for auto-scroll-to-bottom behavior (RN pattern)
-  - `onEndReached` for loading older messages (replaces scroll-top detection)
-  - Message grouping logic (already extracted to shared utils in Phase 0)
-  - Pull-to-load-more at top
+- [x] **MessageList component** (`packages/app/src/components/MessageList.tsx`):
+  - Normal `FlatList` (not inverted — inverted has performance issues) with `scrollToEnd()`
+  - SignalR listeners: ReceiveMessage, MessageEdited, MessageDeleted, ReactionAdded, ReactionRemoved
+  - Auto-scroll to bottom on channel switch and new messages (only when near bottom, <150px threshold)
+  - Scroll-up pagination: loads more when `contentOffset.y < 100` with scroll position preservation
+  - Message grouping via shared `shouldGroupMessage()` util
+  - Scroll-to-message for reply navigation with highlight animation (1.5s)
+  - Loading spinner (ActivityIndicator) and empty state
 
-- [ ] **MessageItem component** (415 lines web):
-  - Author avatar + name + timestamp + role color
-  - Message content with parsed mentions:
-    - `<@userId>` → highlighted `<Text>` with user name
-    - `@everyone` / `@here` → highlighted `<Text>`
-    - Custom emojis `<:name:id>` → `<Image>` inline
-  - Image attachments → `<Image>` with `<Pressable>` for fullscreen
-  - Reactions bar → horizontal `<ScrollView>` of reaction chips
-  - Long-press for context menu (replaces right-click):
-    - React, Edit, Delete, Copy, Reply
-    - Admin actions: Kick, Ban (if permissions)
-  - Emoji picker for reactions (see below)
+- [x] **MessageItem component** (`packages/app/src/components/MessageItem.tsx`):
+  - Column layout: reply reference on top, avatar+body row below
+  - Author avatar + name (role color via `getDisplayColor`) + timestamp + (edited) label in header
+  - Grouped messages: empty spacer column (no gutter time), timestamps only in header
+  - Content rendering via shared `parseMentions()` → `<Text>` segments for mentions, `<Image>` for custom emojis
+  - Mention highlight background (yellow tint + left border) when message contains current user mention
+  - Image attachments with `resizeMode="contain"`, file name text for non-images
+  - Reactions bar: horizontal `ScrollView` of chips, custom emoji support, active state, toggle on press
+  - Long-press action sheet (`Alert.alert`): Reply, Add Reaction, Copy Text, Edit (own), Delete (own or ManageMessages), Kick/Ban (with `canActOn` hierarchy check)
+  - Inline edit mode with `TextInput` + Save/Cancel buttons
+  - Reply reference: mini avatar + author name + truncated content (pressable to scroll)
+  - Deleted state: avatar + author + "This message has been deleted" italic text
 
-- [ ] **MessageInput component** (591 lines web — HARDEST COMPONENT):
-  - **Cannot use contentEditable.** Replace with:
-    - `<TextInput multiline>` for plain text
-    - Mention autocomplete: detect `@` in text, show dropdown `<FlatList>` above input
-    - Custom emoji autocomplete: detect `:` in text, show dropdown
-    - Selection tracking via `onSelectionChange` prop
-    - Insert mention as `<@userId>` text (render highlighted in MessageItem)
-  - File attachments: `expo-image-picker` for photos, `expo-document-picker` for files
-  - File preview strip below input
-  - Send button (no Enter key on mobile — use send icon button)
-  - Edit mode: populate input with existing message text
+- [x] **MessageInput component** (`packages/app/src/components/MessageInput.tsx`):
+  - Plain `TextInput multiline` (replaces web `contentEditable` — major simplification)
+  - Mention autocomplete: `@` trigger detection via `onSelectionChange` cursor tracking, overlay list of members + @everyone/@here, tap to insert raw `<@userId>` format
+  - Custom emoji autocomplete: `:` trigger, tap to insert `<:name:id>` format
+  - `rn-emoji-keyboard` modal picker with dark theme (replaces web `emoji-mart`)
+  - `expo-image-picker` for image attachments with horizontal preview strip + remove buttons
+  - Reply bar: "Replying to {name}" with close button
+  - Typing indicator: `UserTyping` SignalR call on text change
+  - Send button (disabled when empty and no files)
 
-- [ ] **Emoji picker:**
-  - `emoji-mart` is web-only. Replacements:
-    - [`rn-emoji-keyboard`](https://github.com/TheWidlarzGroup/rn-emoji-keyboard) — popular, maintained
-    - Or build a simple grid picker with emoji data from `@emoji-mart/data`
-  - Custom server emojis: separate section in picker, fetched from server
+- [x] **TypingIndicator** (`packages/app/src/components/TypingIndicator.tsx`):
+  - Reads `typingUsers` from presenceStore, formats "X is typing..." / "X and Y are typing..." / "X and N others are typing..."
+  - Fixed 24px height to prevent layout shift
 
-- [ ] **TypingIndicator** (21 lines web):
-  - Simple `<Text>` with animated dots. Direct port.
+- [x] **index.tsx** (`packages/app/app/(main)/index.tsx`):
+  - `KeyboardAvoidingView` wrapping on iOS (offset 90px)
+  - Channel header: # (text) / speaker emoji (voice) / @ (DM) + name
+  - Text channels / DMs: header + MessageList + TypingIndicator + MessageInput
+  - Voice channels: header + "Voice view coming in Phase 6" placeholder
+  - No channel: "Welcome to Abyss" / "Select a channel"
+
+- [x] **Dependencies:** `rn-emoji-keyboard@^1.7.0`, `expo-image-picker@~17.0.10`
 
 **Checkpoint:** Full text chat working — send/receive messages, mentions, reactions, attachments.
 
 ---
 
-### Phase 5: Modals & Settings
-> Estimated: 3-4 days | Risk: Low
+### Phase 5: Modals & Settings ✅
+> Completed
 
-All modals convert from CSS overlays to React Native `<Modal>` component.
+All modals ported from CSS overlays to React Native `<Modal>` component.
 
-- [ ] **CreateServerModal** (39 lines) — simple form, direct port
-- [ ] **JoinServerModal** (37 lines) — invite code input, direct port
-- [ ] **CreateChannelModal** (57 lines) — name + type picker, direct port
-- [ ] **InviteModal** (40 lines) — generate code + copy button (`expo-clipboard`)
-- [ ] **UserSettingsModal** (169 lines):
-  - Avatar upload via `expo-image-picker`
-  - Display name + bio `<TextInput>`
-  - Voice mode toggle (voice activity / PTT)
-  - PTT key binding — **skip on mobile** (PTT uses screen button on mobile)
-- [ ] **UserProfileCard** (80 lines):
-  - Bottom sheet or modal on mobile (instead of positioned popover)
-  - Avatar, name, bio, role pills
-- [ ] **ServerSettingsModal** (495 lines):
-  - Tab navigation (roles, bans, emojis, audit log, danger zone)
-  - Role editor: name, color picker, permission checkboxes
-  - Ban list with unban action
-  - Custom emoji upload via `expo-image-picker`
-  - Audit log list
-  - **Consider:** This is complex enough to be its own screen stack on mobile rather than a modal
+- [x] **Modal base component** — reusable wrapper with dark overlay, centered card, title, scroll
+- [x] **CreateServerModal** — server name form, creates + switches to new server
+- [x] **JoinServerModal** — invite code input
+- [x] **CreateChannelModal** — channel type picker (Text/Voice) + name
+- [x] **InviteModal** — generate code + copy button (`expo-clipboard`)
+- [x] **UserSettingsModal** — avatar upload (expo-image-picker), display name, bio, status, voice mode toggle, PTT key section web-only
+- [x] **UserProfileCard** — modal with avatar, name, bio, role pills, owner badge
+- [x] **ServerSettingsModal** — tabbed modal (Members, Roles, Emojis, Bans, Audit Log, Danger Zone), all permission-gated, role editor with permissions checkboxes, role assignment sub-modal, emoji upload, ban/unban, audit log list, delete server confirmation
+- [x] **uiStore** — `activeModal`/`modalProps`/`openModal`/`closeModal` state
+- [x] **Wiring** — all `Alert.alert('Coming Soon')` replaced with `openModal()` in ServerSidebar, ChannelSidebar, UserBar, MemberList/MemberItem
 
 **Checkpoint:** All settings and admin features working.
 
 ---
 
-### Phase 6: Voice Chat (WebRTC)
-> Estimated: 7-10 days | Risk: HIGH
+### Phase 6: Voice Chat (WebRTC) ✅
+> Completed
 
-This is the most technically challenging phase.
+- [x] Installed `react-native-webrtc` + `@config-plugins/react-native-webrtc`
+- [x] Updated `app.json`: iOS microphone permission + background audio, Android RECORD_AUDIO + MODIFY_AUDIO_SETTINGS, ICE server extras
+- [x] Created `packages/app/src/hooks/useWebRTC.ts` (~250 lines): ported from web client using `react-native-webrtc` APIs
+  - Module-level singleton pattern (same as web)
+  - `mediaDevices.getUserMedia()` from `react-native-webrtc`
+  - RN-webrtc auto-plays remote audio (no HTMLAudioElement needed)
+  - Deafen via `receiver.track.enabled` on peer receivers
+  - PTT keyboard/mouse listeners wrapped in `Platform.OS === 'web'` guard
+  - Screen share SignalR events update store only (Phase 7)
+  - Omitted: VAD (no Web Audio API in RN), screen sharing (Phase 7)
+- [x] Created `packages/app/src/components/VoiceView.tsx` (~160 lines): participant grid, PTT button, mute/deafen/disconnect action bar
+- [x] Wired into ChannelSidebar (joinVoice/leaveVoice), VoiceControls (disconnect), index.tsx (VoiceView replaces placeholder)
 
-- [ ] Install `react-native-webrtc`:
-  ```
-  npx expo install react-native-webrtc
-  npx expo prebuild  # Ejects to bare workflow for native modules
-  ```
-  - **Note:** This requires Expo bare workflow or development build (not Expo Go)
-  - Needs Xcode for iOS, Android Studio for Android
-  - Add microphone permission to `app.json`:
-    ```json
-    { "ios": { "infoPlist": { "NSMicrophoneUsageDescription": "..." } } }
-    ```
-
-- [ ] Rewrite `useWebRTC.ts` (586 lines) using `react-native-webrtc` APIs:
-  - `RTCPeerConnection` — same API, different import
-  - `mediaDevices.getUserMedia()` — same API, from `react-native-webrtc`
-  - `MediaStream` / `RTCSessionDescription` / `RTCIceCandidate` — same API
-  - Audio playback: `RTCView` component for remote streams (replaces `<audio>` elements)
-
-- [ ] **Voice activity detection:**
-  - Web Audio API (`AudioContext` + `AnalyserNode`) does NOT exist in RN
-  - Options:
-    a. Use `expo-av` audio level metering (less precise but simpler)
-    b. Native module for audio analysis (more work, better results)
-    c. Skip VAD on mobile, rely on PTT or simple threshold detection
-  - Recommendation: Start with (a), upgrade later if needed
-
-- [ ] **VoiceChannel component** (51 lines) — participant grid with speaking indicators
-- [ ] **VoiceControls component** (47 lines) — mute/deafen/disconnect buttons
-- [ ] **PTT on mobile:** Large on-screen button (press-and-hold to talk)
-  - No keyboard events on mobile, so PTT = `<Pressable onPressIn/onPressOut>`
-
-- [ ] Handle audio session / audio focus:
-  - iOS: AVAudioSession category configuration
-  - Android: Audio focus management
-  - Keep audio playing when app is backgrounded
-
-**Checkpoint:** Voice chat working on all platforms.
+**Known limitations:**
+- No voice activity detection / speaking indicators on mobile (Web Audio API not available in RN)
+- No screen sharing (Phase 7)
+- Expo Go no longer works (must use dev builds with `npx expo run:ios` / `npx expo run:android`)
+- Audio may route to earpiece on iOS — may need `react-native-incall-manager` (follow-up)
 
 ---
 
-### Phase 7: Screen Sharing
-> Estimated: 5-7 days | Risk: HIGH (platform-specific native code)
+### Phase 7: Mobile-Only Cleanup ✅
+> Completed
 
-- [ ] **Sharing your screen (mobile):**
-  - iOS: Requires a Broadcast Upload Extension (ReplayKit) — native Swift code
-  - Android: Uses `MediaProjection` API — native Kotlin/Java code
-  - Both require `react-native-webrtc` screen capture support
-  - `expo-screen-capture` only detects screenshots, does NOT do screen sharing
-  - This is significantly harder than web's `getDisplayMedia()`
-  - **Consider deferring mobile screen sharing** — keep it web-only initially
+The Expo app now targets **iOS + Android only**. All web-specific code stripped.
 
-- [ ] **Watching someone's screen share (mobile):**
-  - Much easier — just receive the WebRTC video track
-  - Display in `RTCView` component (from `react-native-webrtc`)
-  - Fullscreen video with pinch-to-zoom
+- [x] **Removed Expo web target:**
+  - Removed `"web"` from `app.json` → `expo.platforms` (now `["ios", "android"]`)
+  - Removed `react-dom`, `react-native-web` from `packages/app/package.json`
+  - Removed `"web"` config block from `app.json` (bundler/favicon)
+  - Removed `"web"` script from package.json
+- [x] **Stripped all `Platform.OS === 'web'` branches:**
+  - `MessageInput.tsx` — removed web blob conversion, kept native `{uri, name, type}` only
+  - `UserSettingsModal.tsx` — removed web file upload path + PTT web-only note
+  - `ServerSettingsModal.tsx` — removed web file upload path
+  - `useWebRTC.ts` — removed entire PTT keyboard/mouse web listener useEffect, removed all `Platform.OS !== 'web'` guards around InCallManager calls
+  - `VoiceView.tsx` — speaker toggle always rendered (removed `Platform.OS !== 'web'` guard)
+  - Removed unused `Platform` imports from all cleaned components
+- [x] **Removed desktop layout path:**
+  - Deleted `useLayout.ts` hook entirely (breakpoint logic no longer needed)
+  - `(main)/_layout.tsx` — removed desktop 4-column layout branch, kept only mobile panel-switching
+  - `ServerSidebar.tsx` — removed `isMobile` conditional, always calls `setPanel()`
+  - `ChannelSidebar.tsx` — removed `isMobile` conditional, always calls `setPanel()`
+- [x] **Simplified storage adapter:**
+  - `packages/app/src/storage.ts` — removed `Platform.OS !== 'web'` check, always uses SecureStore for secure keys
 
-- [ ] **ScreenShareView component** (133 lines):
-  - Sharer picker cards (when multiple sharers)
-  - Video view for active stream
-  - Switcher bar for swapping between sharers
-
-**Recommendation:** Phase 7a = viewing only (easy). Phase 7b = sharing from mobile (hard, defer).
-
-**Checkpoint:** Can watch screen shares. Sharing from mobile is stretch goal.
+**Checkpoint:** Expo project is clean mobile-only code. Zero `Platform.OS === 'web'` checks, no desktop layout branches, no web dependencies. Simpler, smaller, more maintainable.
 
 ---
 
-### Phase 8: Push Notifications
+### Phase 8a: Screen Share Viewing ✅
+> Completed
+
+Mobile users can watch screen shares from web (or other) clients. Sharing from mobile deferred to Phase 8b.
+
+- [x] **useWebRTC hook updates** (`packages/app/src/hooks/useWebRTC.ts`):
+  - Added `screenVideoStreams: Map<string, MediaStream>` module-level state
+  - Video track handling in `ontrack`: caches remote screen video streams, bumps store version
+  - Exported `requestWatch(sharerUserId)` — sets watching in store + sends `RequestWatchStream` to backend
+  - Exported `stopWatching()` — cleans up stream cache + sends `StopWatchingStream` to backend
+  - Exported `getScreenVideoStream(userId)` — returns cached `MediaStream` for RTCView
+  - `ScreenShareStopped` handler cleans up `screenVideoStreams` if watching that sharer
+  - `closePeer` and `cleanupAll` clean up `screenVideoStreams`
+  - `WatchStreamRequested`/`StopWatchingRequested` remain no-ops (mobile can't share yet)
+
+- [x] **ScreenShareView component** (`packages/app/src/components/ScreenShareView.tsx`):
+  - Three states: no sharers (returns null), sharer picker cards, watching (fullscreen RTCView)
+  - Sharer picker: card per sharer with name + "Watch Stream" button
+  - Watching: `RTCView` with `streamURL` from `stream.toURL()`, `objectFit="contain"`, black background
+  - Header with sharer name + "Stop Watching" button
+  - Switcher bar (horizontal ScrollView chips) when multiple sharers, tap to switch
+  - Self-viewing supported (for when mobile sharing is added in Phase 8b)
+
+- [x] **VoiceView integration** (`packages/app/src/components/VoiceView.tsx`):
+  - When watching: `ScreenShareView` takes over the content area (above action bar)
+  - When not watching but sharers exist: picker cards shown above participant grid in ScrollView
+
+**Checkpoint:** Can watch screen shares from mobile. Backend unchanged. No new dependencies.
+
+---
+
+### Phase 9: Push Notifications
 > Estimated: 3-4 days | Risk: Medium
 
 - [ ] Install and configure `expo-notifications`
@@ -373,7 +392,7 @@ This is the most technically challenging phase.
 
 ---
 
-### Phase 9: Search & DMs
+### Phase 10: Search & DMs
 > Estimated: 2-3 days | Risk: Low
 
 - [ ] **SearchPanel** (198 lines):
@@ -390,47 +409,61 @@ This is the most technically challenging phase.
 
 ---
 
-### Phase 10: Polish & Platform-Specific UX
-> Estimated: 3-5 days | Risk: Low
+### Phase 11: Polish & Mobile UX
+> Estimated: 5-7 days | Risk: Medium
 
-- [ ] **Keyboard handling:**
-  - `KeyboardAvoidingView` for message input
-  - Dismiss keyboard on scroll / tap outside
+#### Custom Context Menus
+Replace native `Alert.alert` action sheets with themed context menus:
+- [ ] **ContextMenu component** — animated bottom sheet:
+  - Slides up from bottom with backdrop overlay
+  - Dark themed (bgSecondary background, textPrimary items, danger-colored destructive actions)
+  - Separator lines between action groups
+  - Smooth open/close animations
+- [ ] **MessageItem integration** — replace `Alert.alert` long-press with custom ContextMenu
+- [ ] **MemberList context menu** — role management, kick/ban actions via themed bottom sheet
+
+#### Custom Emoji Picker
+`rn-emoji-keyboard` doesn't support custom server emojis. Build a custom picker:
+- [ ] **EmojiPicker component** — full replacement:
+  - Grid of native emojis organized by category
+  - Custom server emoji section at the top (fetched from serverStore.emojis)
+  - Search bar with filtering
+  - Category tabs (custom, smileys, people, nature, food, etc.)
+  - Dark themed to match app
+  - Bottom sheet presentation
+  - Frequently used / recent emojis section
+- [ ] **MessageInput integration** — replace `rn-emoji-keyboard` with custom picker
+- [ ] **MessageItem reactions** — use custom picker for "Add Reaction" action
+
+#### Other Polish
+- [ ] **Keyboard handling:** Dismiss keyboard on scroll / tap outside
 - [ ] **Haptic feedback:** `expo-haptics` for button presses, long-press actions
 - [ ] **Image viewer:** Fullscreen image viewer for attachments (pinch/zoom/pan)
 - [ ] **Pull-to-refresh** on channel/server lists
 - [ ] **Swipe gestures:**
   - Swipe message left for quick actions (reply, react)
-  - Swipe to reveal server/channel drawers on mobile
+  - Swipe to reveal server/channel panels
 - [ ] **App icon + splash screen** via `app.json` config
 - [ ] **Deep linking:** `abyss://invite/CODE` to join servers from links
 - [ ] **Offline state:** Show banner when disconnected, auto-reconnect
-- [ ] **Web-specific tweaks:**
-  - Ensure hover states work on web (RN doesn't have `:hover` — use `Pressable` style function)
-  - Keyboard shortcuts on web (Enter to send, etc.)
 - [ ] **Accessibility:** Screen reader labels, font scaling
 
 ---
 
-## Dependency Mapping
+## Dependency Mapping (Web → Mobile)
 
-| Web Dependency | Expo Replacement | Notes |
+| Web (React client) | Mobile (Expo app) | Notes |
 |---|---|---|
-| `react-dom` | (removed) | Not needed in RN |
 | `react-router-dom` | `expo-router` | File-based routing |
-| `emoji-mart` / `@emoji-mart/react` | `rn-emoji-keyboard` or custom | Web component, no RN version |
-| `localStorage` | `@react-native-async-storage/async-storage` | Async API |
-| `contentEditable` | `<TextInput multiline>` + custom logic | Major rewrite |
+| `emoji-mart` / `@emoji-mart/react` | Custom emoji picker (Phase 11) | `rn-emoji-keyboard` used as interim |
+| `localStorage` | `AsyncStorage` + `expo-secure-store` | Async API, SecureStore for JWT |
+| `contentEditable` | `<TextInput multiline>` | Simpler on mobile |
 | `navigator.mediaDevices` | `react-native-webrtc` | Same API, different import |
-| `AudioContext` / `AnalyserNode` | `expo-av` metering or native module | Voice activity detection |
-| `getDisplayMedia()` | ReplayKit (iOS) / MediaProjection (Android) | Screen sharing from mobile |
+| `getDisplayMedia()` | N/A (viewing only via RTCView) | Mobile can watch but not broadcast |
 | `HTMLVideoElement` | `RTCView` from `react-native-webrtc` | Video display |
-| `HTMLAudioElement` | `RTCView` or `expo-av` | Audio playback |
-| `window.getSelection()` / Range API | `TextInput.onSelectionChange` | Text selection |
-| `FileReader` / `File` | `expo-file-system` / `expo-image-picker` | File handling |
 | `navigator.clipboard` | `expo-clipboard` | Copy text |
-| `CSS (App.css)` | `StyleSheet.create()` | Complete rewrite |
-| `Vite` | Metro bundler (Expo default) | Build tooling |
+| `CSS (App.css)` | `StyleSheet.create()` | Separate UI per platform |
+| `Vite` | Metro bundler | Build tooling |
 
 ---
 
@@ -441,7 +474,7 @@ This is the most technically challenging phase.
 | `react-native-webrtc` instability | Voice chat broken on mobile | Pin version, test on real devices early, have web fallback |
 | Expo prebuild complexity | Build failures, native debugging | Use EAS Build for CI, test on both platforms weekly |
 | MessageInput rewrite scope creep | Delays Phase 4 | Start with plain text only, add mention/emoji autocomplete incrementally |
-| Screen sharing on mobile | May not be feasible short-term | Defer to Phase 7b, support viewing-only first |
+| Screen sharing on mobile | May not be feasible short-term | Viewing implemented (Phase 8a), broadcasting from mobile not planned |
 | SignalR reconnection on mobile networks | Dropped connections, missed messages | Add aggressive reconnect logic + push notification fallback |
 | Performance (large message lists) | Scroll jank on low-end devices | Use `FlatList` with `getItemLayout`, memo components, limit re-renders |
 
@@ -451,22 +484,26 @@ This is the most technically challenging phase.
 
 For the fastest path to a usable mobile app:
 
-**Sprint 1 (Week 1-2):** Phases 0 + 1 + 2 — Monorepo, scaffolding, auth
-**Sprint 2 (Week 3-4):** Phase 3 — Layout shell with navigation
-**Sprint 3 (Week 5-7):** Phase 4 — Text messaging (core feature)
-**Sprint 4 (Week 8):** Phase 5 — Modals and settings
-**Sprint 5 (Week 9):** Phase 8 — Push notifications
-**Sprint 6 (Week 10-12):** Phase 6 — Voice chat
-**Sprint 7 (Week 13+):** Phases 7, 9, 10 — Screen sharing, search, polish
+**Sprint 1 (Week 1-2):** Phases 0 + 1 + 2 — Monorepo, scaffolding, auth ✓
+**Sprint 2 (Week 3-4):** Phase 3 — Layout shell with navigation ✓
+**Sprint 3 (Week 5-7):** Phase 4 — Text messaging (core feature) ✓
+**Sprint 4 (Week 8):** Phase 5 — Modals and settings ✓
+**Sprint 5 (Week 9):** Phase 6 — Voice chat ✓
+**Sprint 6 (Done):** Phase 7 — Mobile-only cleanup (strip web code/layout) ✓
+**Sprint 7 (Done):** Phase 8a — Screen share viewing ✓
+**Sprint 8:** Phase 9 — Push notifications
+**Sprint 9:** Phase 10 — Search & DMs
+**Sprint 10:** Phase 11 — Polish (context menus, emoji picker, haptics)
 
-**MVP = Sprints 1-5** (~9 weeks): Text chat + push notifications, no voice.
-**Full feature parity = all sprints** (~13+ weeks).
+**MVP = Sprints 1-8** : Text chat + voice + screen share viewing + push notifications.
+**Full feature parity = all sprints**.
 
 ---
 
 ## Notes
 
-- Keep the existing `client/` web app running throughout migration. The monorepo structure with `packages/shared` lets both coexist.
+- The React/Vite web client (`client/`) is the canonical web app. It stays as-is and continues to evolve independently.
+- The Expo app (`packages/app/`) targets iOS + Android only. No Expo web.
+- Both share business logic via `@abyss/shared`. New features: implement shared logic once, build UI separately per platform.
 - Test on real iOS and Android devices early (especially WebRTC). Simulators are unreliable for audio/video.
 - Expo Go won't work once you add `react-native-webrtc`. Use Expo Development Builds instead.
-- The web target in Expo uses `react-native-web` under the hood. Most RN components work, but test web rendering at each phase.

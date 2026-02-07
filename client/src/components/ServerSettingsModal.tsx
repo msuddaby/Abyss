@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useServerStore } from '../stores/serverStore';
-import { useAuthStore } from '../stores/authStore';
-import { API_BASE } from '../services/api';
-import type { AuditLog, ServerRole, ServerMember } from '../types';
-import { hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '../types';
+import { useServerStore, useAuthStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '@abyss/shared';
+import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -226,7 +223,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                       <div className="member-manage-info">
                         <div className="member-manage-avatar">
                           {m.user.avatarUrl ? (
-                            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${API_BASE}${m.user.avatarUrl}`} alt={m.user.displayName} />
+                            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${getApiBase()}${m.user.avatarUrl}`} alt={m.user.displayName} />
                           ) : (
                             <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
                           )}
@@ -421,7 +418,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
               {emojis.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No custom emojis yet.</p>}
               {emojis.map((emoji) => (
                 <div key={emoji.id} className="emoji-item">
-                  <img src={`${API_BASE}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
+                  <img src={`${getApiBase()}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
                   <span className="emoji-item-name">:{emoji.name}:</span>
                   <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
                 </div>

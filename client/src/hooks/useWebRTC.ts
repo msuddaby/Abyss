@@ -1,7 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { getConnection } from '../services/signalr';
-import { useVoiceStore } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
+import { getConnection, useVoiceStore, useAuthStore } from '@abyss/shared';
 
 const turnUrls = import.meta.env.VITE_TURN_URLS?.split(',') ?? [];
 const ICE_SERVERS: RTCConfiguration = {

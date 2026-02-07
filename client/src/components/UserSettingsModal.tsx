@@ -1,7 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAuthStore } from '../stores/authStore';
-import { useVoiceStore } from '../stores/voiceStore';
-import { API_BASE } from '../services/api';
+import { useAuthStore, useVoiceStore, getApiBase } from '@abyss/shared';
 
 export default function UserSettingsModal({ onClose }: { onClose: () => void }) {
   const user = useAuthStore((s) => s.user)!;
@@ -67,7 +65,7 @@ export default function UserSettingsModal({ onClose }: { onClose: () => void }) 
   };
 
   const currentAvatar = avatarPreview
-    || (user.avatarUrl ? (user.avatarUrl.startsWith('http') ? user.avatarUrl : `${API_BASE}${user.avatarUrl}`) : null);
+    || (user.avatarUrl ? (user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`) : null);
 
   return (
     <div className="modal-overlay" onClick={onClose}>

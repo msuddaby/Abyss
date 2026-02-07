@@ -1,6 +1,5 @@
-import { useServerStore } from '../stores/serverStore';
-import { useVoiceStore } from '../stores/voiceStore';
-import type { Channel } from '../types';
+import { useServerStore, useVoiceStore } from '@abyss/shared';
+import type { Channel } from '@abyss/shared';
 
 interface Props {
   channel: Channel;

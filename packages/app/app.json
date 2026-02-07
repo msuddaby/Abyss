@@ -1,0 +1,71 @@
+{
+  "expo": {
+    "name": "Abyss",
+    "slug": "abyss",
+    "version": "1.0.0",
+    "scheme": "abyss",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#202225"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Abyss needs microphone access for voice channels",
+        "UIBackgroundModes": [
+          "audio",
+          "audio"
+        ]
+      },
+      "bitcode": false,
+      "bundleIdentifier": "com.msuddaby.abyss",
+      "appleTeamId": "M854WQZ3F8"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#202225"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": false,
+          "microphonePermission": "Abyss needs microphone access for voice channels"
+        }
+      ]
+    ],
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "extra": {
+      "apiUrl": "http://192.168.1.197:5000",
+      "stunUrl": "stun:stun.l.google.com:19302",
+      "turnUrls": "",
+      "turnUsername": "",
+      "turnCredential": ""
+    }
+  }
+}

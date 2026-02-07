@@ -166,6 +166,92 @@ REST controllers for CRUD:
 - Auto-mark-read on channel switch, real-time `NewUnreadMessage`/`MentionReceived` SignalR events
 - `NotificationService` handles mention parsing, notification creation, and unread queries
 
+## Expo Mobile App (Branch: `expo-refactor`)
+
+See `EXPO_MIGRATION.md` for full plan. The React/Vite web client (`client/`) is the canonical web app. The Expo app (`packages/app/`) targets **iOS + Android only** — no Expo web.
+
+### Monorepo Structure
+```
+abyss/
+  package.json              # Root — npm workspaces
+  .npmrc                    # legacy-peer-deps=true
+  packages/
+    shared/                 # @abyss/shared — types, stores, services, utils
+      src/
+        types/index.ts
+        stores/             # All 8 Zustand stores (platform-agnostic)
+        services/api.ts     # Axios + setOnUnauthorized() callback
+        services/signalr.ts # SignalR connection
+        utils/              # Mention parsing, message grouping, formatting
+        storage.ts          # StorageAdapter interface
+        index.ts            # Barrel export
+    app/                    # @abyss/app — Expo mobile app (iOS + Android)
+      app/
+        _layout.tsx         # Root layout: init storage/api/auth, auth routing guard
+        (auth)/login.tsx    # Login screen
+        (auth)/register.tsx # Register screen
+        (main)/_layout.tsx  # Mobile layout shell (panel switching + bottom nav)
+        (main)/index.tsx    # Content area (messages / voice)
+      src/
+        components/         # All RN UI components
+        hooks/useWebRTC.ts  # react-native-webrtc version
+        stores/uiStore.ts   # Mobile panel switching + modal state
+        theme/tokens.ts     # Design tokens (colors, spacing, fontSize, borderRadius)
+        storage.ts          # AsyncStorage + SecureStore adapter (preloadStorage())
+  client/                   # React/Vite web client (canonical web app, uses @abyss/shared)
+  server/                   # ASP.NET backend (unchanged)
+```
+
+### Completed Phases
+- **Phase 0:** Monorepo setup, shared package extraction, client re-imports
+- **Phase 1:** Expo project scaffolding, routing, theme, base components, storage adapter
+- **Phase 2:** Auth screens (login/register), SecureStore for JWT on native, 401 auto-logout interceptor
+- **Phase 3:** Main layout shell — responsive 4-column desktop / mobile panel switching with bottom nav
+- **Phase 4:** Text messaging — MessageList, MessageItem, MessageInput, TypingIndicator, emoji picker, mention autocomplete, reactions, file attachments
+- **Phase 5:** Modals & Settings — All 7 modal components ported (CreateServer, JoinServer, CreateChannel, Invite, UserSettings, UserProfileCard, ServerSettings with tabbed UI), uiStore modal state, wired into existing sidebar/bar components
+- **Phase 6:** Voice Chat (WebRTC) — useWebRTC hook + VoiceView component
+- **Phase 7:** Mobile-Only Cleanup — stripped all web code (Platform.OS === 'web' branches, react-dom, react-native-web, desktop layout, useLayout hook)
+- **Phase 8a:** Screen Share Viewing — receive + display remote screen via RTCView, sharer picker, switcher bar (no new deps)
+
+### Key Implementation Details
+- `StorageAdapter` — sync interface backed by in-memory `Map` cache. Web: `localStorage`. Expo: `AsyncStorage` + `expo-secure-store` for token key on native.
+- `setOnUnauthorized()` in `api.ts` — callback pattern avoids circular deps between api.ts ↔ authStore. Called in `client/src/init.ts` and `packages/app/app/_layout.tsx`.
+- Metro config in `packages/app/metro.config.js` strips `.js` extensions from `@abyss/shared` imports (shared uses ESM `.js` convention, Metro needs `.ts`).
+- Expo API URL: `app.json` → `expo.extra.apiUrl` → `expo-constants`
+- `useSignalRListeners()` hook in `packages/shared/src/hooks/` — extracted from web MainLayout, used by both web client and Expo app
+- Expo layout: mobile-only panel switching (`uiStore.activePanel`: channels/content/members) with bottom nav bar. No desktop layout in Expo — desktop is the React web client.
+
+### Phase 4 Implementation Details
+- `MessageList.tsx` — `FlatList` with SignalR listeners (ReceiveMessage, MessageEdited, MessageDeleted, ReactionAdded, ReactionRemoved), auto-scroll to bottom on channel switch and new messages (only if near bottom), scroll-up pagination, message grouping via `shouldGroupMessage()`, scroll-to-message for reply navigation with highlight
+- `MessageItem.tsx` — Full message rendering: parsed mentions (`parseMentions()`), custom emoji images, reply references above message row, message grouping (avatar vs empty spacer), mention highlight, image attachments, reaction chips (horizontal ScrollView, custom emoji support), long-press action sheet (Reply, Add Reaction, Edit, Delete, Kick, Ban with hierarchy checks), inline edit mode with TextInput
+- `MessageInput.tsx` — Plain `TextInput multiline` (no contentEditable). Mention autocomplete (`@` trigger → member list + @everyone/@here, tap to insert `<@userId>`). Custom emoji autocomplete (`:` trigger → insert `<:name:id>`). `rn-emoji-keyboard` modal picker with dark theme. `expo-image-picker` for image attachments with preview strip. Reply bar. Typing indicator via SignalR `UserTyping`. Send button.
+- `TypingIndicator.tsx` — Reads `typingUsers` from presenceStore, fixed 24px height
+- `index.tsx` — `KeyboardAvoidingView` wrapping on iOS, channel header (# / speaker / @ DM), voice channels show Phase 6 placeholder
+- Dependencies: `rn-emoji-keyboard@^1.7.0`, `expo-image-picker@~17.0.10`
+
+### Known Limitations (Phase 11 Polish)
+- **Context menus:** Currently uses native `Alert.alert` — doesn't match app theme. Phase 11 replaces with custom themed bottom sheets.
+- **Emoji picker:** `rn-emoji-keyboard` doesn't support custom server emojis. Phase 11 replaces with a custom emoji picker that includes server emoji sections.
+
+### Phase 5 Implementation Details
+- `Modal.tsx` — base component wrapping RN `<Modal transparent animationType="fade">` with dark overlay, centered card, title, ScrollView
+- `uiStore.ts` — `activeModal` (union type), `modalProps` (Record), `openModal(type, props?)`, `closeModal()`
+- All modals rendered in `(main)/_layout.tsx` outside the column layout (overlays everything)
+- `ServerSettingsModal.tsx` — tabbed modal with horizontal ScrollView tab bar. Tabs: Members (search + role/kick/ban actions), Roles (list + editor with name/color/permissions), Emojis (upload via expo-image-picker + list with delete), Bans (list + unban), Audit Log (list with icons/labels), Danger Zone (delete with name confirmation). Role assignment via nested `RoleAssignModal` sub-component.
+- `UserSettingsModal.tsx` — avatar upload (expo-image-picker), voice mode toggle.
+- `InviteModal.tsx` — copy via `expo-clipboard` (`Clipboard.setStringAsync`)
+- `UserProfileCard.tsx` — fetches profile from API, shows banner, avatar, roles, bio
+- Dependencies added: `expo-clipboard`
+
+### Phase 8a Implementation Details
+- `useWebRTC.ts` — added `screenVideoStreams` map, video track handling in `ontrack`, exported `requestWatch()`/`stopWatching()`/`getScreenVideoStream()`
+- `ScreenShareView.tsx` — three-state component (null / picker cards / fullscreen RTCView), sharer switcher bar, `stream.toURL()` for RTCView `streamURL`
+- `VoiceView.tsx` — when watching: ScreenShareView takes over content; when not watching but sharers exist: picker cards above participant grid
+- No new dependencies — uses existing `react-native-webrtc` `RTCView` component
+- Backend unchanged — same `RequestWatchStream`/`StopWatchingStream` SignalR flow as web
+
+### Next: Phase 9 — Push Notifications
+
 ## Not Yet Implemented
 
 - Message search

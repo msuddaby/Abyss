@@ -1,0 +1,230 @@
+import { View, Text, Pressable, ScrollView, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
+import { useVoiceStore, useAuthStore, useServerStore, getApiBase } from '@abyss/shared';
+import Avatar from './Avatar';
+import ScreenShareView from './ScreenShareView';
+import { useWebRTC } from '../hooks/useWebRTC';
+import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
+
+export default function VoiceView() {
+  const participants = useVoiceStore((s) => s.participants);
+  const isMuted = useVoiceStore((s) => s.isMuted);
+  const isDeafened = useVoiceStore((s) => s.isDeafened);
+  const voiceMode = useVoiceStore((s) => s.voiceMode);
+  const isPttActive = useVoiceStore((s) => s.isPttActive);
+  const toggleMute = useVoiceStore((s) => s.toggleMute);
+  const toggleDeafen = useVoiceStore((s) => s.toggleDeafen);
+  const speakerOn = useVoiceStore((s) => s.speakerOn);
+  const toggleSpeaker = useVoiceStore((s) => s.toggleSpeaker);
+  const setPttActive = useVoiceStore((s) => s.setPttActive);
+  const speakingUsers = useVoiceStore((s) => s.speakingUsers);
+  const activeSharers = useVoiceStore((s) => s.activeSharers);
+  const watchingUserId = useVoiceStore((s) => s.watchingUserId);
+  const user = useAuthStore((s) => s.user);
+  const members = useServerStore((s) => s.members);
+  const { leaveVoice } = useWebRTC();
+
+  const isWatching = watchingUserId !== null;
+
+  const isPtt = voiceMode === 'push-to-talk';
+  const participantEntries = Array.from(participants.entries());
+
+  const getMemberAvatar = (userId: string): string | undefined => {
+    const member = members.find((m) => m.userId === userId);
+    if (!member?.user?.avatarUrl) return undefined;
+    return member.user.avatarUrl.startsWith('http') ? member.user.avatarUrl : `${getApiBase()}${member.user.avatarUrl}`;
+  };
+
+  return (
+    <View style={styles.container}>
+      {isWatching ? (
+        <ScreenShareView />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {activeSharers.size > 0 && <ScreenShareView />}
+          <View style={styles.grid}>
+            {participantEntries.map(([userId, displayName]) => {
+              const isSpeaking = speakingUsers.has(userId);
+              const isSelf = userId === user?.id;
+              const memberIsMuted = isSelf && isMuted;
+
+              return (
+                <View key={userId} style={styles.card}>
+                  <View style={[styles.avatarRing, isSpeaking && styles.avatarRingSpeaking]}>
+                    <Avatar uri={getMemberAvatar(userId)} name={displayName} size={64} />
+                  </View>
+                  {memberIsMuted && (
+                    <View style={styles.muteOverlay}>
+                      <Text style={styles.muteIcon}>🔇</Text>
+                    </View>
+                  )}
+                  <Text style={styles.participantName} numberOfLines={1}>{displayName}</Text>
+                </View>
+              );
+            })}
+            {participantEntries.length === 0 && (
+              <Text style={styles.emptyText}>No one in voice yet</Text>
+            )}
+          </View>
+        </ScrollView>
+      )}
+
+      {isPtt && (
+        <View style={styles.pttContainer}>
+          <Pressable
+            style={[styles.pttButton, isPttActive && styles.pttButtonActive]}
+            onPressIn={() => setPttActive(true)}
+            onPressOut={() => setPttActive(false)}
+          >
+            <Text style={styles.pttButtonText}>
+              {isPttActive ? '🎤 Speaking...' : 'Hold to Talk'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      <View style={styles.actionBar}>
+        <Pressable
+          style={[styles.actionBtn, isMuted && styles.actionBtnActive]}
+          onPress={toggleMute}
+        >
+          <Text style={styles.actionBtnText}>{isMuted ? '🔇' : '🎤'}</Text>
+          <Text style={styles.actionLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.actionBtn, isDeafened && styles.actionBtnActive]}
+          onPress={toggleDeafen}
+        >
+          <Text style={styles.actionBtnText}>{isDeafened ? '🔈' : '🔊'}</Text>
+          <Text style={styles.actionLabel}>{isDeafened ? 'Undeafen' : 'Deafen'}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.actionBtn, speakerOn && styles.actionBtnActive]}
+          onPress={toggleSpeaker}
+        >
+          <Text style={styles.actionBtnText}>{speakerOn ? '📢' : '📱'}</Text>
+          <Text style={styles.actionLabel}>{speakerOn ? 'Speaker' : 'Earpiece'}</Text>
+        </Pressable>
+
+        <Pressable
+          style={[styles.actionBtn, styles.disconnectBtn]}
+          onPress={leaveVoice}
+        >
+          <Text style={styles.actionBtnText}>📞</Text>
+          <Text style={styles.actionLabel}>Leave</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bgPrimary,
+  } as ViewStyle,
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    gap: spacing.xl,
+    paddingBottom: spacing.xxl,
+  } as ViewStyle,
+  card: {
+    alignItems: 'center',
+    width: 96,
+    gap: spacing.xs,
+  } as ViewStyle,
+  avatarRing: {
+    borderRadius: 36,
+    borderWidth: 3,
+    borderColor: 'transparent',
+    padding: 2,
+  } as ViewStyle,
+  avatarRingSpeaking: {
+    borderColor: colors.success,
+  } as ViewStyle,
+  muteOverlay: {
+    position: 'absolute',
+    top: 46,
+    right: 10,
+    backgroundColor: colors.bgTertiary,
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  muteIcon: {
+    fontSize: 12,
+  } as TextStyle,
+  participantName: {
+    color: colors.headerPrimary,
+    fontSize: fontSize.sm,
+    fontWeight: '500',
+    textAlign: 'center',
+  } as TextStyle,
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: fontSize.md,
+    textAlign: 'center',
+    marginTop: spacing.xxl,
+  } as TextStyle,
+  pttContainer: {
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.md,
+  } as ViewStyle,
+  pttButton: {
+    backgroundColor: colors.bgTertiary,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+  } as ViewStyle,
+  pttButtonActive: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  } as ViewStyle,
+  pttButtonText: {
+    color: colors.headerPrimary,
+    fontSize: fontSize.lg,
+    fontWeight: '700',
+  } as TextStyle,
+  actionBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xl,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.bgTertiary,
+    backgroundColor: colors.bgSecondary,
+  } as ViewStyle,
+  actionBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.bgTertiary,
+    gap: 2,
+  } as ViewStyle,
+  actionBtnActive: {
+    backgroundColor: colors.bgModifierActive,
+  } as ViewStyle,
+  disconnectBtn: {
+    backgroundColor: colors.danger,
+  } as ViewStyle,
+  actionBtnText: {
+    fontSize: 20,
+  } as TextStyle,
+  actionLabel: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '500',
+  } as TextStyle,
+});

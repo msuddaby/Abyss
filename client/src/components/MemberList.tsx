@@ -1,13 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useServerStore } from '../stores/serverStore';
-import { useAuthStore } from '../stores/authStore';
-import { usePresenceStore } from '../stores/presenceStore';
-import { useDmStore } from '../stores/dmStore';
-import { useMessageStore } from '../stores/messageStore';
-import { API_BASE } from '../services/api';
+import { useServerStore, useAuthStore, usePresenceStore, useDmStore, useMessageStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '@abyss/shared';
+import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
-import type { ServerMember } from '../types';
-import { hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '../types';
 
 export default function MemberList() {
   const members = useServerStore((s) => s.members);
@@ -106,7 +100,7 @@ export default function MemberList() {
       <div key={m.userId} className={`member-item${!onlineUsers.has(m.userId) ? ' offline' : ''}`} onClick={(e) => handleMemberClick(m.userId, e)} onContextMenu={(e) => handleContextMenu(m, e)}>
         <div className="member-avatar">
           {m.user.avatarUrl ? (
-            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${API_BASE}${m.user.avatarUrl}`} alt={m.user.displayName} />
+            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${getApiBase()}${m.user.avatarUrl}`} alt={m.user.displayName} />
           ) : (
             <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
           )}
