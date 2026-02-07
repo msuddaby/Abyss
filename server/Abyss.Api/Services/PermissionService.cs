@@ -71,6 +71,12 @@ public class PermissionService
         return await CanActOnAsync(serverId, actorId, targetId);
     }
 
+    public async Task<bool> CanMuteAsync(Guid serverId, string actorId, string targetId)
+    {
+        if (!await HasPermissionAsync(serverId, actorId, Permission.MuteMembers)) return false;
+        return await CanActOnAsync(serverId, actorId, targetId);
+    }
+
     public Task<ServerRole?> GetDefaultRoleAsync(Guid serverId) =>
         _db.ServerRoles.FirstOrDefaultAsync(r => r.ServerId == serverId && r.IsDefault);
 

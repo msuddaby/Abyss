@@ -17,6 +17,9 @@ public class ChatHub : Hub
     private readonly PermissionService _perms;
     private readonly NotificationService _notifications;
 
+    private const int MaxMessageLength = 4000;
+    private const int MaxAttachmentsPerMessage = 10;
+
     // Track online users: connectionId -> userId
     internal static readonly Dictionary<string, string> _connections = new();
     internal static readonly object _lock = new();
@@ -39,6 +42,49 @@ public class ChatHub : Hub
         if (channel.ServerId.HasValue)
             return await _perms.IsMemberAsync(channel.ServerId.Value, UserId);
         return false;
+    }
+
+    private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, out string normalized, out string? error)
+    {
+        error = null;
+        normalized = content;
+
+        if (attachmentCount > MaxAttachmentsPerMessage)
+        {
+            error = $"Maximum {MaxAttachmentsPerMessage} attachments per message";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            if (attachmentCount == 0)
+            {
+                error = $"Message must be 1-{MaxMessageLength} characters";
+                return false;
+            }
+
+            normalized = string.Empty;
+        }
+
+        if (normalized.Length > MaxMessageLength)
+        {
+            error = $"Message must be 1-{MaxMessageLength} characters";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateMessageForEdit(string newContent, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(newContent) || newContent.Length > MaxMessageLength)
+        {
+            error = $"Message must be 1-{MaxMessageLength} characters";
+            return false;
+        }
+
+        return true;
     }
 
     public override async Task OnConnectedAsync()
@@ -128,7 +174,7 @@ public class ChatHub : Hub
     // Join a server's SignalR group (called after joining/creating a server)
     public async Task JoinServerGroup(string serverId)
     {
-        var serverGuid = Guid.Parse(serverId);
+        if (!Guid.TryParse(serverId, out var serverGuid)) return;
         if (!await _perms.IsMemberAsync(serverGuid, UserId)) return;
         await Groups.AddToGroupAsync(Context.ConnectionId, $"server:{serverId}");
         await Clients.Group($"server:{serverId}").SendAsync("UserOnline", UserId, DisplayName);
@@ -147,7 +193,19 @@ public class ChatHub : Hub
 
     public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (attachmentIds == null)
+        {
+            await Clients.Caller.SendAsync("Error", "Attachments list is required.");
+            return;
+        }
+
+        if (!TryNormalizeAndValidateMessageForSend(content, attachmentIds.Count, out var normalizedContent, out var error))
+        {
+            await Clients.Caller.SendAsync("Error", error);
+            return;
+        }
+
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
@@ -163,7 +221,7 @@ public class ChatHub : Hub
         var message = new Message
         {
             Id = Guid.NewGuid(),
-            Content = content,
+            Content = normalizedContent,
             AuthorId = UserId,
             ChannelId = channelGuid,
             CreatedAt = DateTime.UtcNow,
@@ -277,7 +335,13 @@ public class ChatHub : Hub
 
     public async Task EditMessage(string messageId, string newContent)
     {
-        var msgGuid = Guid.Parse(messageId);
+        if (!TryValidateMessageForEdit(newContent, out var error))
+        {
+            await Clients.Caller.SendAsync("Error", error);
+            return;
+        }
+
+        if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.FindAsync(msgGuid);
         if (message == null || message.AuthorId != UserId || message.IsDeleted) return;
 
@@ -290,7 +354,7 @@ public class ChatHub : Hub
 
     public async Task DeleteMessage(string messageId)
     {
-        var msgGuid = Guid.Parse(messageId);
+        if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
         if (message == null) return;
 
@@ -324,7 +388,7 @@ public class ChatHub : Hub
     // Reactions
     public async Task ToggleReaction(string messageId, string emoji)
     {
-        var msgGuid = Guid.Parse(messageId);
+        if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
         if (message == null || message.IsDeleted) return;
         if (!await CanAccessChannel(message.Channel)) return;
@@ -367,7 +431,7 @@ public class ChatHub : Hub
     // Typing indicator
     public async Task UserTyping(string channelId)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
@@ -378,7 +442,7 @@ public class ChatHub : Hub
     // Get online users for a server
     public async Task<List<string>> GetOnlineUsers(string serverId)
     {
-        var serverGuid = Guid.Parse(serverId);
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new List<string>();
         var memberUserIds = await _db.ServerMembers
             .Where(sm => sm.ServerId == serverGuid)
             .Select(sm => sm.UserId)
@@ -394,9 +458,9 @@ public class ChatHub : Hub
     }
 
     // Get voice users for all channels in a server (for sidebar display)
-    public async Task<Dictionary<Guid, Dictionary<string, string>>> GetServerVoiceUsers(string serverId)
+    public async Task<Dictionary<Guid, Dictionary<string, VoiceUserStateDto>>> GetServerVoiceUsers(string serverId)
     {
-        var serverGuid = Guid.Parse(serverId);
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new Dictionary<Guid, Dictionary<string, VoiceUserStateDto>>();
         var channelIds = await _db.Channels
             .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
             .Select(c => c.Id)
@@ -405,17 +469,24 @@ public class ChatHub : Hub
     }
 
     // Voice channels
-    public async Task JoinVoiceChannel(string channelId)
+    public async Task JoinVoiceChannel(string channelId, bool isMuted = false, bool isDeafened = false)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
 
         // Membership check
         var voiceChannel = await _db.Channels.FindAsync(channelGuid);
         if (voiceChannel == null || !voiceChannel.ServerId.HasValue) return;
         if (!await _perms.IsMemberAsync(voiceChannel.ServerId.Value, UserId)) return;
 
-        // Leave any existing voice channel
+        // Enforce single voice session: if user is already in voice, notify other sessions to disconnect
         var currentChannel = _voiceState.GetUserChannel(UserId);
+        if (currentChannel.HasValue)
+        {
+            // Notify all other sessions for this user to leave voice
+            await Clients.OthersInGroup($"user:{UserId}").SendAsync("VoiceSessionReplaced", "You have joined voice from another device.");
+        }
+
+        // Leave any existing voice channel from THIS connection
         if (currentChannel.HasValue)
         {
             // Clear screen share if leaving while sharing
@@ -442,11 +513,11 @@ public class ChatHub : Hub
             }
         }
 
-        _voiceState.JoinChannel(channelGuid, UserId, DisplayName);
+        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, isMuted, isDeafened);
         await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
 
         // Send current participants to the joining user
-        var users = _voiceState.GetChannelUsers(channelGuid);
+        var users = _voiceState.GetChannelUsersDisplayNames(channelGuid);
         await Clients.Caller.SendAsync("VoiceChannelUsers", users);
 
         // Send current screen sharers to the joining user
@@ -463,13 +534,45 @@ public class ChatHub : Hub
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel?.ServerId != null)
         {
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, DisplayName);
+            var state = new VoiceUserStateDto(DisplayName, isMuted, isDeafened, false, false);
+            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state);
         }
+    }
+
+    public async Task UpdateVoiceState(bool isMuted, bool isDeafened)
+    {
+        var channelId = _voiceState.GetUserChannel(UserId);
+        if (!channelId.HasValue) return;
+
+        var updated = _voiceState.UpdateUserState(channelId.Value, UserId, isMuted, isDeafened);
+        if (updated == null) return;
+
+        var channel = await _db.Channels.FindAsync(channelId.Value);
+        if (channel?.ServerId != null)
+        {
+            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), UserId, updated);
+        }
+    }
+
+    public async Task ModerateVoiceState(string targetUserId, bool isMuted, bool isDeafened)
+    {
+        var channelId = _voiceState.GetUserChannel(targetUserId);
+        if (!channelId.HasValue) return;
+
+        var channel = await _db.Channels.FindAsync(channelId.Value);
+        if (channel?.ServerId == null) return;
+
+        if (!await _perms.CanMuteAsync(channel.ServerId.Value, UserId, targetUserId)) return;
+
+        var updated = _voiceState.UpdateUserState(channelId.Value, targetUserId, isMuted, isDeafened, isMuted, isDeafened);
+        if (updated == null) return;
+
+        await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), targetUserId, updated);
     }
 
     public async Task LeaveVoiceChannel(string channelId)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
 
         // Clear screen share if leaving while sharing
         var wasSharing = _voiceState.IsScreenSharing(channelGuid, UserId);
@@ -498,7 +601,7 @@ public class ChatHub : Hub
     // Screen sharing
     public async Task NotifyScreenShare(string channelId, bool isSharing)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null || !channel.ServerId.HasValue) return;
         if (!await _perms.IsMemberAsync(channel.ServerId.Value, UserId)) return;
@@ -578,13 +681,14 @@ public class ChatHub : Hub
 
     public Dictionary<string, string> GetVoiceChannelUsers(string channelId)
     {
-        return _voiceState.GetChannelUsers(Guid.Parse(channelId));
+        if (!Guid.TryParse(channelId, out var channelGuid)) return new Dictionary<string, string>();
+        return _voiceState.GetChannelUsersDisplayNames(channelGuid);
     }
 
     // Get screen sharers for all voice channels in a server (for sidebar LIVE indicators)
     public async Task<Dictionary<Guid, HashSet<string>>> GetServerVoiceSharers(string serverId)
     {
-        var serverGuid = Guid.Parse(serverId);
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new Dictionary<Guid, HashSet<string>>();
         var channelIds = await _db.Channels
             .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
             .Select(c => c.Id)
@@ -595,14 +699,14 @@ public class ChatHub : Hub
     // Mark a channel as read for the current user
     public async Task MarkChannelRead(string channelId)
     {
-        var channelGuid = Guid.Parse(channelId);
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
         await _notifications.MarkChannelRead(UserId, channelGuid);
     }
 
     // Get unread state for all channels in a server
     public async Task<List<ChannelUnreadDto>> GetUnreadState(string serverId)
     {
-        var serverGuid = Guid.Parse(serverId);
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new List<ChannelUnreadDto>();
         return await _notifications.GetUnreadChannels(UserId, serverGuid);
     }
 

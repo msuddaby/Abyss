@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
@@ -9,9 +10,14 @@ namespace Abyss.Api.Services;
 public class NotificationService
 {
     private readonly AppDbContext _db;
+    private readonly IHttpClientFactory _httpClientFactory;
     private static readonly Regex MentionRegex = new(@"<@([a-zA-Z0-9-]+)>", RegexOptions.Compiled);
 
-    public NotificationService(AppDbContext db) => _db = db;
+    public NotificationService(AppDbContext db, IHttpClientFactory httpClientFactory)
+    {
+        _db = db;
+        _httpClientFactory = httpClientFactory;
+    }
 
     public record MentionParseResult(
         List<string> UserIds,
@@ -121,9 +127,111 @@ public class NotificationService
         {
             _db.Notifications.AddRange(notifications);
             await _db.SaveChangesAsync();
+
+            // Send push notifications to offline users
+            await SendPushNotifications(notifications, onlineUserIds, message);
         }
 
         return notifications;
+    }
+
+    public async Task SendPushNotifications(
+        List<Notification> notifications,
+        HashSet<string> onlineUserIds,
+        Message message)
+    {
+        // Only send push to offline users
+        var offlineUserIds = notifications
+            .Select(n => n.UserId)
+            .Where(userId => !onlineUserIds.Contains(userId))
+            .Distinct()
+            .ToList();
+
+        if (offlineUserIds.Count == 0) return;
+
+        // Get push tokens for offline users
+        var pushTokens = await _db.DevicePushTokens
+            .Where(t => offlineUserIds.Contains(t.UserId))
+            .Include(t => t.User)
+            .ToListAsync();
+
+        if (pushTokens.Count == 0) return;
+
+        // Get author info
+        var author = await _db.Users.FindAsync(message.AuthorId);
+        if (author == null) return;
+
+        // Get channel info
+        var channel = await _db.Channels.FindAsync(message.ChannelId);
+        if (channel == null) return;
+
+        // Prepare push messages
+        var expoPushMessages = new List<object>();
+        foreach (var token in pushTokens)
+        {
+            var userNotifications = notifications
+                .Where(n => n.UserId == token.UserId)
+                .ToList();
+
+            if (userNotifications.Count == 0) continue;
+
+            // Determine notification type
+            var isDm = channel.Type == ChannelType.DM;
+            var channelName = isDm ? $"@{author.DisplayName}" : $"#{channel.Name}";
+
+            // Truncate message content
+            var contentPreview = message.Content.Length > 100
+                ? message.Content.Substring(0, 100) + "..."
+                : message.Content;
+
+            expoPushMessages.Add(new
+            {
+                to = token.Token,
+                sound = "default",
+                title = $"{author.DisplayName} in {channelName}",
+                body = contentPreview,
+                data = new
+                {
+                    channelId = message.ChannelId.ToString(),
+                    serverId = channel.ServerId?.ToString(),
+                    messageId = message.Id.ToString(),
+                    type = "message"
+                },
+                badge = await GetUnreadMentionCount(token.UserId)
+            });
+        }
+
+        if (expoPushMessages.Count == 0) return;
+
+        // Send to Expo Push Service
+        try
+        {
+            var httpClient = _httpClientFactory.CreateClient();
+            var json = JsonSerializer.Serialize(expoPushMessages);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PostAsync(
+                "https://exp.host/--/api/v2/push/send",
+                content
+            );
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"Failed to send push notification: {error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error sending push notification: {ex.Message}");
+        }
+    }
+
+
+    private async Task<int> GetUnreadMentionCount(string userId)
+    {
+        return await _db.Notifications
+            .CountAsync(n => n.UserId == userId && !n.IsRead);
     }
 
     public async Task MarkChannelRead(string userId, Guid channelId)

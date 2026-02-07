@@ -22,6 +22,22 @@ namespace Abyss.Api.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Abyss.Api.Models.AppConfig", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Value")
+                        .HasColumnType("text");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("AppConfigs");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.AppUser", b =>
                 {
                     b.Property<string>("Id")
@@ -261,6 +277,37 @@ namespace Abyss.Api.Migrations
                     b.ToTable("CustomEmojis");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.DevicePushToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "Token")
+                        .IsUnique();
+
+                    b.ToTable("DevicePushTokens");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.Invite", b =>
                 {
                     b.Property<Guid>("Id")
@@ -297,6 +344,44 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ServerId");
 
                     b.ToTable("Invites");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.InviteCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedById")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("MaxUses")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Uses")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.HasIndex("CreatedById");
+
+                    b.ToTable("InviteCodes");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Message", b =>
@@ -766,6 +851,17 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Server");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.DevicePushToken", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.AppUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.Invite", b =>
                 {
                     b.HasOne("Abyss.Api.Models.AppUser", "Creator")
@@ -783,6 +879,16 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Creator");
 
                     b.Navigation("Server");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.InviteCode", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.AppUser", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedById")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("CreatedBy");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Message", b =>

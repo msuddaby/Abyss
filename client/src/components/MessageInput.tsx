@@ -1,9 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { useMessageStore } from "../stores/messageStore";
-import { useServerStore } from "../stores/serverStore";
-import { useDmStore } from "../stores/dmStore";
-import { uploadFile, API_BASE } from "../services/api";
-import { getConnection } from "../services/signalr";
+import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
+import { useMessageStore, useServerStore, useDmStore, uploadFile, getApiBase, getConnection } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 
@@ -62,10 +58,13 @@ export default function MessageInput() {
   const [emojiQuery, setEmojiQuery] = useState<string | null>(null);
   const [emojiIndex, setEmojiIndex] = useState(0);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [emojiPickerStyle, setEmojiPickerStyle] = useState<React.CSSProperties | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   // Stores the trigger text node + start offset for autocomplete insertion
   const triggerRef = useRef<{ node: Text; startOffset: number } | null>(null);
@@ -91,7 +90,7 @@ export default function MessageInput() {
         id: `custom-${e.id}`,
         name: e.name,
         keywords: [e.name],
-        skins: [{ src: `${API_BASE}${e.imageUrl}` }],
+        skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
       })),
     }] : [],
   [emojis]);
@@ -147,6 +146,36 @@ export default function MessageInput() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showEmojiPicker]);
+
+  useEffect(() => {
+    if (showEmojiPicker) return;
+    setEmojiPickerStyle(null);
+    setEmojiPickerAnchor(null);
+  }, [showEmojiPicker]);
+
+  useLayoutEffect(() => {
+    if (!showEmojiPicker || !emojiPickerRef.current || !emojiPickerAnchor) return;
+    const rect = emojiPickerRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = emojiPickerAnchor.x;
+    let top = emojiPickerAnchor.y;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (left < margin) left = margin;
+    const aboveTop = emojiPickerAnchor.y - rect.height - margin;
+    const belowTop = emojiPickerAnchor.y + margin;
+    if (aboveTop >= margin) {
+      top = aboveTop;
+    } else if (belowTop + rect.height <= window.innerHeight - margin) {
+      top = belowTop;
+    } else {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (!emojiPickerStyle || emojiPickerStyle.left !== left || emojiPickerStyle.top !== top) {
+      setEmojiPickerStyle({ left, top });
+    }
+  }, [showEmojiPicker, emojiPickerAnchor, emojiPickerStyle]);
 
   const handleTyping = () => {
     if (!effectiveChannelId) return;
@@ -266,7 +295,7 @@ export default function MessageInput() {
     const endOffset = sel.getRangeAt(0).startOffset;
 
     const img = document.createElement('img');
-    img.src = `${API_BASE}${option.imageUrl}`;
+    img.src = `${getApiBase()}${option.imageUrl}`;
     img.alt = `:${option.name}:`;
     img.title = `:${option.name}:`;
     img.className = 'input-custom-emoji';
@@ -329,7 +358,7 @@ export default function MessageInput() {
       const ce = emojis.find((e) => e.id === emojiId);
       if (ce) {
         const img = document.createElement('img');
-        img.src = `${API_BASE}${ce.imageUrl}`;
+        img.src = `${getApiBase()}${ce.imageUrl}`;
         img.alt = `:${ce.name}:`;
         img.title = `:${ce.name}:`;
         img.className = 'input-custom-emoji';
@@ -467,6 +496,12 @@ export default function MessageInput() {
       if (sel && sel.rangeCount > 0) {
         savedSelectionRef.current = sel.getRangeAt(0).cloneRange();
       }
+      const rect = emojiButtonRef.current?.getBoundingClientRect();
+      if (rect) {
+        setEmojiPickerAnchor({ x: rect.right, y: rect.top });
+      } else {
+        setEmojiPickerAnchor({ x: 0, y: 0 });
+      }
     }
     setShowEmojiPicker(!showEmojiPicker);
   };
@@ -503,7 +538,7 @@ export default function MessageInput() {
               }}
               onMouseEnter={() => setEmojiIndex(i)}
             >
-              <img src={`${API_BASE}${option.imageUrl}`} alt={option.name} className="emoji-autocomplete-img" />
+              <img src={`${getApiBase()}${option.imageUrl}`} alt={option.name} className="emoji-autocomplete-img" />
               <span className="mention-autocomplete-name">:{option.name}:</span>
             </div>
           ))}
@@ -567,13 +602,14 @@ export default function MessageInput() {
           <button
             type="button"
             className="emoji-btn"
+            ref={emojiButtonRef}
             onClick={handleEmojiPickerToggle}
             title="Emoji"
           >
             &#128578;
           </button>
           {showEmojiPicker && (
-            <div className="emoji-picker-input-container" ref={emojiPickerRef}>
+            <div className="emoji-picker-input-container" ref={emojiPickerRef} style={emojiPickerStyle ?? undefined}>
               <Picker data={data} custom={customEmojiCategory} onEmojiSelect={handlePickerEmojiSelect} theme="dark" previewPosition="none" skinTonePosition="none" />
             </div>
           )}

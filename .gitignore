@@ -9,9 +9,11 @@ turnserver.conf
 
 # Tunnel docs (contains public IP)
 TUNNEL_SETUP.md
+ABYSS_ISSUES.md
 
 # ASP.NET
 server/Abyss.Api/bin/
+server/Abyss.Api/bin\\*/
 server/Abyss.Api/obj/
 server/Abyss.Api/appsettings.Development.json
 
@@ -42,3 +44,4 @@ Thumbs.db
 # Uploads (user-generated content)
 server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep
+server/Abyss.Api/uploads/*

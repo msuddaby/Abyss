@@ -6,10 +6,10 @@
 - [x] Server settings (delete server, delete channels, kick/ban, promote/demote)
 - [x] Audit log (admin actions tracked with actor/target/timestamp)
 - [ ] Ephemeral TURN credentials (currently static creds are exposed in client JS — use coturn `use-auth-secret` + backend endpoint to issue short-lived HMAC credentials)
-- [ ] Unread indicators / notifications
-- [ ] Direct messages
-- [ ] User avatars (profile pictures)
-- [ ] Message search
+- [x] Unread indicators / notifications
+- [x] Direct messages
+- [x] User avatars (profile pictures)
+- [x] Message search
 - [ ] Server rename
 - [ ] Mobile responsiveness
 - [ ] Tests

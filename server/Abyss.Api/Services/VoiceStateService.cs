@@ -1,19 +1,37 @@
 using System.Collections.Concurrent;
+using System.Linq;
+using Abyss.Api.DTOs;
 
 namespace Abyss.Api.Services;
 
 public class VoiceStateService
 {
-    // channelId -> set of userIds
-    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _voiceChannels = new();
+    private sealed class VoiceUserState
+    {
+        public string DisplayName { get; set; } = "";
+        public bool IsMuted { get; set; }
+        public bool IsDeafened { get; set; }
+        public bool IsServerMuted { get; set; }
+        public bool IsServerDeafened { get; set; }
+    }
+
+    // channelId -> {userId -> VoiceUserState}
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, VoiceUserState>> _voiceChannels = new();
 
     // channelId -> {userId -> displayName} of active screen sharers
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _activeSharers = new();
 
-    public void JoinChannel(Guid channelId, string userId, string displayName)
+    public void JoinChannel(Guid channelId, string userId, string displayName, bool isMuted, bool isDeafened)
     {
-        var users = _voiceChannels.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, string>());
-        users[userId] = displayName;
+        var users = _voiceChannels.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, VoiceUserState>());
+        users[userId] = new VoiceUserState
+        {
+            DisplayName = displayName,
+            IsMuted = isMuted,
+            IsDeafened = isDeafened,
+            IsServerMuted = false,
+            IsServerDeafened = false,
+        };
     }
 
     public void LeaveChannel(Guid channelId, string userId)
@@ -52,24 +70,60 @@ public class VoiceStateService
         return null;
     }
 
-    public Dictionary<string, string> GetChannelUsers(Guid channelId)
+    public Dictionary<string, string> GetChannelUsersDisplayNames(Guid channelId)
     {
         if (_voiceChannels.TryGetValue(channelId, out var users))
-            return new Dictionary<string, string>(users);
+            return users.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.DisplayName);
         return new Dictionary<string, string>();
     }
 
-    public Dictionary<Guid, Dictionary<string, string>> GetUsersForChannels(IEnumerable<Guid> channelIds)
+    public Dictionary<Guid, Dictionary<string, VoiceUserStateDto>> GetUsersForChannels(IEnumerable<Guid> channelIds)
     {
-        var result = new Dictionary<Guid, Dictionary<string, string>>();
+        var result = new Dictionary<Guid, Dictionary<string, VoiceUserStateDto>>();
         foreach (var channelId in channelIds)
         {
             if (_voiceChannels.TryGetValue(channelId, out var users) && !users.IsEmpty)
             {
-                result[channelId] = new Dictionary<string, string>(users);
+                result[channelId] = users.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => new VoiceUserStateDto(
+                        kvp.Value.DisplayName,
+                        kvp.Value.IsMuted,
+                        kvp.Value.IsDeafened,
+                        kvp.Value.IsServerMuted,
+                        kvp.Value.IsServerDeafened
+                    )
+                );
             }
         }
         return result;
+    }
+
+    public VoiceUserStateDto? UpdateUserState(
+        Guid channelId,
+        string userId,
+        bool isMuted,
+        bool isDeafened,
+        bool? serverMuted = null,
+        bool? serverDeafened = null)
+    {
+        if (_voiceChannels.TryGetValue(channelId, out var users) && users.TryGetValue(userId, out var state))
+        {
+            if (serverMuted.HasValue) state.IsServerMuted = serverMuted.Value;
+            if (serverDeafened.HasValue) state.IsServerDeafened = serverDeafened.Value;
+
+            state.IsMuted = state.IsServerMuted || isMuted;
+            state.IsDeafened = state.IsServerDeafened || isDeafened;
+
+            return new VoiceUserStateDto(
+                state.DisplayName,
+                state.IsMuted,
+                state.IsDeafened,
+                state.IsServerMuted,
+                state.IsServerDeafened
+            );
+        }
+        return null;
     }
 
     public void AddScreenSharer(Guid channelId, string userId, string displayName)

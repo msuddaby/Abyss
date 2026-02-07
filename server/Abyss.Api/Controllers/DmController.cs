@@ -46,6 +46,10 @@ public class DmController : ControllerBase
         return Ok(result);
     }
 
+    // TODO: this is wildly inefficient.
+    // TODO: also allows for searching by user id which is dumb
+    // TODO: ALSO allows searching for literally anyone, which is a privacy issue
+    // TODO: Probably should add a friend system or at least only search for users who share a server with you.
     [HttpGet("search")]
     public async Task<ActionResult<List<UserDto>>> SearchUsers([FromQuery] string q)
     {

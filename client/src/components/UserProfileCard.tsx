@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import api, { API_BASE } from '../services/api';
-import { useServerStore } from '../stores/serverStore';
-import type { User } from '../types';
+import { api, getApiBase, useServerStore } from '@abyss/shared';
+import type { User } from '@abyss/shared';
 
 interface Props {
   userId: string;
@@ -31,7 +30,7 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
   if (!user) return null;
 
   const avatarUrl = user.avatarUrl
-    ? (user.avatarUrl.startsWith('http') ? user.avatarUrl : `${API_BASE}${user.avatarUrl}`)
+    ? (user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`)
     : null;
 
   // Position the card so it doesn't go off-screen

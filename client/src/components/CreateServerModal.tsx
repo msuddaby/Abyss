@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useServerStore } from '../stores/serverStore';
+import { useServerStore } from '@abyss/shared';
 
 export default function CreateServerModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');

@@ -104,7 +104,8 @@ public class ServersController : ControllerBase
         if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
 
         var maxPos = await _db.Channels.Where(c => c.ServerId == serverId).MaxAsync(c => (int?)c.Position) ?? -1;
-        var channelType = Enum.Parse<ChannelType>(req.Type);
+        if (!Enum.TryParse<ChannelType>(req.Type, ignoreCase: true, out var channelType))
+            return BadRequest("Invalid channel type");
 
         var channel = new Channel
         {

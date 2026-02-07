@@ -1,0 +1,21 @@
+{
+  "name": "@abyss/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types/index.ts",
+    "./stores/*": "./src/stores/*.ts",
+    "./services/*": "./src/services/*.ts",
+    "./utils/*": "./src/utils/*.ts",
+    "./storage": "./src/storage.ts"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^10.0.0",
+    "axios": "^1.13.4",
+    "zustand": "^5.0.11"
+  }
+}

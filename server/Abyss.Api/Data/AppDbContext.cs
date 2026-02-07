@@ -22,6 +22,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<ChannelRead> ChannelReads => Set<ChannelRead>();
     public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<CustomEmoji> CustomEmojis => Set<CustomEmoji>();
+    public DbSet<DevicePushToken> DevicePushTokens => Set<DevicePushToken>();
+    public DbSet<AppConfig> AppConfigs => Set<AppConfig>();
+    public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -232,5 +235,31 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<CustomEmoji>()
             .HasIndex(e => new { e.ServerId, e.Name })
             .IsUnique();
+
+        // DevicePushToken
+        builder.Entity<DevicePushToken>()
+            .HasOne(d => d.User)
+            .WithMany()
+            .HasForeignKey(d => d.UserId);
+
+        builder.Entity<DevicePushToken>()
+            .HasIndex(d => d.UserId);
+
+        builder.Entity<DevicePushToken>()
+            .HasIndex(d => new { d.UserId, d.Token })
+            .IsUnique();
+
+        builder.Entity<AppConfig>()
+            .HasKey(c => c.Key);
+
+        builder.Entity<InviteCode>()
+            .HasIndex(i => i.Code)
+            .IsUnique();
+
+        builder.Entity<InviteCode>()
+            .HasOne(i => i.CreatedBy)
+            .WithMany()
+            .HasForeignKey(i => i.CreatedById)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }

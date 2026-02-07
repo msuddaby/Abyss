@@ -27,3 +27,4 @@ public record DmChannelDto(Guid Id, UserDto OtherUser, DateTime? LastMessageAt, 
 public record DmUnreadDto(Guid ChannelId, bool HasUnread, int MentionCount);
 public record SearchResultDto(MessageDto Message, string ChannelName);
 public record SearchResponseDto(List<SearchResultDto> Results, int TotalCount);
+public record VoiceUserStateDto(string DisplayName, bool IsMuted, bool IsDeafened, bool IsServerMuted, bool IsServerDeafened);

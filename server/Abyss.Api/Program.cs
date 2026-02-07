@@ -99,6 +99,11 @@ builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<VoiceStateService>();
 builder.Services.AddSingleton<ImageService>();
+builder.Services.AddSingleton<MediaConfig>();
+builder.Services.AddScoped<MediaValidator>();
+
+// HTTP Client for push notifications
+builder.Services.AddHttpClient();
 
 // SignalR
 builder.Services.AddSignalR();
@@ -111,16 +116,34 @@ var corsEnv = Environment.GetEnvironmentVariable("CORS_ORIGINS");
 var allowedOrigins = !string.IsNullOrEmpty(corsEnv)
     ? corsEnv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     : new[] { "http://localhost:5173" };
-builder.Services.AddCors(opt =>
+if (builder.Environment.IsDevelopment())
 {
-    opt.AddDefaultPolicy(policy =>
+    builder.Services.AddCors(opt =>
     {
-        policy.WithOrigins(allowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+        opt.AddDefaultPolicy(policy =>
+        {
+            policy.WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        });
     });
-});
+}
+else
+{
+    builder.Services.AddCors(opt =>
+    {
+        opt.AddDefaultPolicy(policy =>
+        {
+            policy.WithOrigins(allowedOrigins)
+                .AllowCredentials()
+                .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE")
+                .WithHeaders("content-type", "authorization", "x-requested-with");
+        });
+    });
+}
+
+
 
 var app = builder.Build();
 

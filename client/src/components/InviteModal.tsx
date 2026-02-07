@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import api from '../services/api';
+import { api } from '@abyss/shared';
 
 export default function InviteModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [code, setCode] = useState('');

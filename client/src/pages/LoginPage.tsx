@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAuthStore } from '../stores/authStore';
+import { useAuthStore } from '@abyss/shared';
 import { Link, useNavigate } from 'react-router-dom';
 
 export default function LoginPage() {

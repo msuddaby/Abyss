@@ -12,4 +12,5 @@ public enum Permission : long
     ManageServer = 1 << 6,
     ManageInvites = 1 << 7,
     ManageEmojis = 1 << 8,
+    MuteMembers = 1 << 9,
 }

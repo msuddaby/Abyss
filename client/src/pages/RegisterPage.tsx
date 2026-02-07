@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAuthStore } from '../stores/authStore';
+import { useAuthStore } from '@abyss/shared';
 import { Link, useNavigate } from 'react-router-dom';
 
 export default function RegisterPage() {
@@ -7,6 +7,7 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ export default function RegisterPage() {
     e.preventDefault();
     setError('');
     try {
-      await register(username, email, password, displayName);
+      await register(username, email, password, displayName, inviteCode.trim() || undefined);
       navigate('/');
     } catch (err: any) {
       const data = err.response?.data;
@@ -47,6 +48,15 @@ export default function RegisterPage() {
         <label>
           Password
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        </label>
+        <label>
+          Invite Code
+          <input
+            type="text"
+            value={inviteCode}
+            onChange={(e) => setInviteCode(e.target.value)}
+            placeholder="Only required if invite-only is enabled"
+          />
         </label>
         <button type="submit">Continue</button>
         <p className="auth-link">

@@ -1,5 +1,4 @@
-import { useVoiceStore } from '../stores/voiceStore';
-import { useServerStore } from '../stores/serverStore';
+import { useVoiceStore, useServerStore } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 
 export default function VoiceControls() {

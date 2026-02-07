@@ -1,10 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
-import { API_BASE } from '../services/api';
-import { useAuthStore } from '../stores/authStore';
-import { useServerStore } from '../stores/serverStore';
-import { useMessageStore } from '../stores/messageStore';
-import type { Message, ServerMember, CustomEmoji } from '../types';
-import { hasPermission, Permission, getDisplayColor, canActOn } from '../types';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { getApiBase, useAuthStore, useServerStore, useMessageStore, hasPermission, Permission, getDisplayColor, canActOn } from '@abyss/shared';
+import type { Message, ServerMember, CustomEmoji, Attachment } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -49,7 +45,7 @@ function renderMentions(content: string, members: ServerMember[], emojis: Custom
       const emoji = emojis.find((e) => e.id === seg.id);
       if (emoji) {
         parts.push(
-          <img key={key++} src={`${API_BASE}${emoji.imageUrl}`} alt={`:${seg.name}:`} title={`:${seg.name}:`} className="custom-emoji" />
+          <img key={key++} src={`${getApiBase()}${emoji.imageUrl}`} alt={`:${seg.name}:`} title={`:${seg.name}:`} className="custom-emoji" />
         );
       } else {
         parts.push(<span key={key++}>:{seg.name}:</span>);
@@ -106,11 +102,14 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [showPicker, setShowPicker] = useState(false);
-  const [pickerFlip, setPickerFlip] = useState(false);
+  const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [pickerStyle, setPickerStyle] = useState<React.CSSProperties | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const currentUser = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
@@ -149,12 +148,79 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showPicker]);
 
+  const updatePickerPosition = useCallback(() => {
+    if (!showPicker || !pickerRef.current || !pickerAnchor) return;
+    const rect = pickerRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = pickerAnchor.x;
+    let top = pickerAnchor.y;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (left < margin) left = margin;
+    const aboveTop = pickerAnchor.y - rect.height - margin;
+    const belowTop = pickerAnchor.y + margin;
+    if (aboveTop >= margin) {
+      top = aboveTop;
+    } else if (belowTop + rect.height <= window.innerHeight - margin) {
+      top = belowTop;
+    } else {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    setPickerStyle((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
+  }, [showPicker, pickerAnchor]);
+
+  useLayoutEffect(() => {
+    updatePickerPosition();
+  }, [updatePickerPosition]);
+
+  useEffect(() => {
+    if (!showPicker || !pickerRef.current) return;
+    const ro = new ResizeObserver(() => updatePickerPosition());
+    ro.observe(pickerRef.current);
+    window.addEventListener('resize', updatePickerPosition);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updatePickerPosition);
+    };
+  }, [showPicker, updatePickerPosition]);
+
   useEffect(() => {
     if (!contextMenuOpen) return;
     const handleClick = () => setContextMenuMessageId(null);
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
   }, [contextMenuOpen, setContextMenuMessageId]);
+
+  useLayoutEffect(() => {
+    if (!contextMenuOpen || !contextMenuRef.current) return;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = contextMenuPos.x;
+    let top = contextMenuPos.y;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (top + rect.height > window.innerHeight - margin) {
+      top = window.innerHeight - rect.height - margin;
+    }
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
+      setContextMenuPos({ x: left, y: top });
+    }
+  }, [contextMenuOpen, contextMenuPos]);
+
+  useEffect(() => {
+    if (!previewAttachment) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPreviewAttachment(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [previewAttachment]);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -183,6 +249,14 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     setProfileCard({ x: e.clientX, y: e.clientY });
   };
 
+  const handleImagePreview = (att: Attachment) => {
+    setPreviewAttachment(att);
+  };
+
+  const handleClosePreview = () => {
+    setPreviewAttachment(null);
+  };
+
   const handleEditSave = async () => {
     const trimmed = editContent.trim();
     if (trimmed && trimmed !== message.content) {
@@ -205,10 +279,13 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     deleteMessage(message.id);
   };
 
-  const openPicker = () => {
-    if (messageRef.current) {
-      const rect = messageRef.current.getBoundingClientRect();
-      setPickerFlip(rect.top < 440);
+  const openPicker = (e?: React.MouseEvent<HTMLElement>) => {
+    const target = e?.currentTarget as HTMLElement | null;
+    const rect = target?.getBoundingClientRect() ?? messageRef.current?.getBoundingClientRect();
+    if (rect) {
+      setPickerAnchor({ x: rect.right, y: rect.top });
+    } else {
+      setPickerAnchor({ x: 0, y: 0 });
     }
     setShowPicker(true);
   };
@@ -220,7 +297,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       id: `custom-${e.id}`,
       name: e.name,
       keywords: [e.name],
-      skins: [{ src: `${API_BASE}${e.imageUrl}` }],
+      skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
     })),
   }] : [];
 
@@ -243,7 +320,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       <div className="message-item message-deleted">
         <div className="message-avatar" onClick={handleAuthorClick}>
           {authorAvatarUrl ? (
-            <img src={authorAvatarUrl.startsWith('http') ? authorAvatarUrl : `${API_BASE}${authorAvatarUrl}`} alt={authorDisplayName} />
+            <img src={authorAvatarUrl.startsWith('http') ? authorAvatarUrl : `${getApiBase()}${authorAvatarUrl}`} alt={authorDisplayName} />
           ) : (
             <span>{authorDisplayName.charAt(0).toUpperCase()}</span>
           )}
@@ -281,7 +358,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
           <div className="reply-reference-line" />
           <div className="reply-reference-avatar">
             {message.replyTo.author.avatarUrl ? (
-              <img src={message.replyTo.author.avatarUrl.startsWith('http') ? message.replyTo.author.avatarUrl : `${API_BASE}${message.replyTo.author.avatarUrl}`} alt={message.replyTo.author.displayName} />
+              <img src={message.replyTo.author.avatarUrl.startsWith('http') ? message.replyTo.author.avatarUrl : `${getApiBase()}${message.replyTo.author.avatarUrl}`} alt={message.replyTo.author.displayName} />
             ) : (
               <span>{message.replyTo.author.displayName.charAt(0).toUpperCase()}</span>
             )}
@@ -303,7 +380,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       ) : (
         <div className="message-avatar clickable" onClick={handleAuthorClick}>
           {message.author.avatarUrl ? (
-            <img src={message.author.avatarUrl.startsWith('http') ? message.author.avatarUrl : `${API_BASE}${message.author.avatarUrl}`} alt={message.author.displayName} />
+            <img src={message.author.avatarUrl.startsWith('http') ? message.author.avatarUrl : `${getApiBase()}${message.author.avatarUrl}`} alt={message.author.displayName} />
           ) : (
             <span>{message.author.displayName.charAt(0).toUpperCase()}</span>
           )}
@@ -337,9 +414,14 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
             {message.attachments.map((att) => (
               <div key={att.id} className="attachment">
                 {att.contentType.startsWith('image/') ? (
-                  <img src={`${API_BASE}${att.filePath}`} alt={att.fileName} className="attachment-image" />
+                  <img
+                    src={`${getApiBase()}${att.filePath}`}
+                    alt={att.fileName}
+                    className="attachment-image"
+                    onClick={() => handleImagePreview(att)}
+                  />
                 ) : (
-                  <a href={`${API_BASE}${att.filePath}`} target="_blank" rel="noopener noreferrer">
+                  <a href={`${getApiBase()}${att.filePath}`} target="_blank" rel="noopener noreferrer">
                     {att.fileName}
                   </a>
                 )}
@@ -358,18 +440,18 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
                 <span className="reaction-emoji">{g.emoji.startsWith('custom:') ? (() => {
                   const eid = g.emoji.substring(7);
                   const ce = emojis.find((e) => e.id === eid);
-                  return ce ? <img src={`${API_BASE}${ce.imageUrl}`} alt={`:${ce.name}:`} className="custom-emoji-reaction" /> : '?';
+                  return ce ? <img src={`${getApiBase()}${ce.imageUrl}`} alt={`:${ce.name}:`} className="custom-emoji-reaction" /> : '?';
                 })() : g.emoji}</span>
                 <span className="reaction-count">{g.count}</span>
               </button>
             ))}
-            <button className="reaction-button reaction-add" onClick={openPicker}>+</button>
+            <button className="reaction-button reaction-add" onClick={(e) => openPicker(e)}>+</button>
           </div>
         )}
       </div>
       <div className="message-actions">
         <button onClick={() => setReplyingTo(message)} title="Reply">&#8617;</button>
-        <button onClick={openPicker} title="Add Reaction">&#128578;</button>
+        <button onClick={(e) => openPicker(e)} title="Add Reaction">&#128578;</button>
         {isOwn && !editing && (
           <button onClick={() => { setEditContent(message.content); setEditing(true); }} title="Edit">&#9998;</button>
         )}
@@ -378,7 +460,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
         )}
       </div>
       {showPicker && (
-        <div className={`emoji-picker-container${pickerFlip ? ' emoji-picker-flip' : ''}`} ref={pickerRef}>
+        <div className="emoji-picker-container" ref={pickerRef} style={pickerStyle ?? undefined}>
           <Picker data={data} custom={customEmojiCategory} onEmojiSelect={handleEmojiSelect} theme="dark" previewPosition="none" skinTonePosition="none" />
         </div>
       )}
@@ -390,9 +472,9 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
         />
       )}
       {contextMenuOpen && (
-        <div className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
+        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
           <button className="context-menu-item" onClick={() => { setReplyingTo(message); setContextMenuMessageId(null); }}>Reply</button>
-          <button className="context-menu-item" onClick={() => { openPicker(); setContextMenuMessageId(null); }}>Add Reaction</button>
+          <button className="context-menu-item" onClick={(e) => { openPicker(e); setContextMenuMessageId(null); }}>Add Reaction</button>
           {isOwn && !editing && (
             <button className="context-menu-item" onClick={() => { setEditContent(message.content); setEditing(true); setContextMenuMessageId(null); }}>Edit Message</button>
           )}
@@ -408,6 +490,27 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
           {canBanAuthor && (
             <button className="context-menu-item danger" onClick={handleBan}>Ban</button>
           )}
+        </div>
+      )}
+      {previewAttachment && (
+        <div className="modal-overlay image-preview-overlay" onClick={handleClosePreview}>
+          <div className="image-preview-modal" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={`${getApiBase()}${previewAttachment.filePath}`}
+              alt={previewAttachment.fileName}
+              className="image-preview-img"
+            />
+            <div className="image-preview-actions">
+              <a
+                className="image-download-btn"
+                href={`${getApiBase()}${previewAttachment.filePath}`}
+                download={previewAttachment.fileName}
+              >
+                Download
+              </a>
+              <button className="btn-secondary" onClick={handleClosePreview}>Close</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

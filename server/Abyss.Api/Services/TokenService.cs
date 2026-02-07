@@ -17,6 +17,13 @@ public class TokenService
             new("displayName", user.DisplayName)
         };
 
+        var sysadminUsername = Environment.GetEnvironmentVariable("SYSADMIN_USERNAME");
+        if (!string.IsNullOrWhiteSpace(sysadminUsername)
+            && string.Equals(user.UserName, sysadminUsername, StringComparison.OrdinalIgnoreCase))
+        {
+            claims.Add(new Claim("sysadmin", "true"));
+        }
+
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
             Environment.GetEnvironmentVariable("JWT_KEY")
                 ?? throw new InvalidOperationException("JWT_KEY is not configured. Check your .env file.")));

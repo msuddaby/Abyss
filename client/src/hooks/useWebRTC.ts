@@ -1,7 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { getConnection } from '../services/signalr';
-import { useVoiceStore } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
+import { ensureConnected, getConnection, useVoiceStore, useAuthStore } from '@abyss/shared';
 
 const turnUrls = import.meta.env.VITE_TURN_URLS?.split(',') ?? [];
 const ICE_SERVERS: RTCConfiguration = {
@@ -25,21 +23,36 @@ let audioElements: Map<string, HTMLAudioElement> = new Map();
 let screenVideoStreams: Map<string, MediaStream> = new Map();
 let pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegistered = false;
+let currentOutputDeviceId: string = 'default';
 
-// Per-viewer screen track senders: viewerUserId -> RTCRtpSender
-let screenTrackSenders: Map<string, RTCRtpSender> = new Map();
+// Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
+let screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 
 // Audio analysis state
 let audioContext: AudioContext | null = null;
 let analysers: Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode }> = new Map();
 let analyserInterval: ReturnType<typeof setInterval> | null = null;
 const SPEAKING_THRESHOLD = 0.015;
+const INPUT_THRESHOLD_MIN = 0.005;
+const INPUT_THRESHOLD_MAX = 0.05;
 
 function ensureAudioContext(): AudioContext {
   if (!audioContext || audioContext.state === 'closed') {
     audioContext = new AudioContext();
   }
   return audioContext;
+}
+
+function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & { setSinkId: (deviceId: string) => Promise<void> } {
+  return typeof (audio as HTMLAudioElement & { setSinkId?: (deviceId: string) => Promise<void> }).setSinkId === 'function';
+}
+
+function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
+  if (!canSetSinkId(audio)) return;
+  const target = deviceId && deviceId !== 'default' ? deviceId : 'default';
+  audio.setSinkId(target).catch((err) => {
+    console.warn('Failed to set audio output device:', err);
+  });
 }
 
 function addAnalyser(userId: string, stream: MediaStream) {
@@ -67,6 +80,8 @@ function startAnalyserLoop() {
   if (analyserInterval) return;
   const buffer = new Uint8Array(256);
   analyserInterval = setInterval(() => {
+    const store = useVoiceStore.getState();
+    const currentUserId = useAuthStore.getState().user?.id;
     for (const [userId, { analyser }] of analysers) {
       analyser.getByteTimeDomainData(buffer);
       let sum = 0;
@@ -75,7 +90,19 @@ function startAnalyserLoop() {
         sum += val * val;
       }
       const rms = Math.sqrt(sum / buffer.length);
-      useVoiceStore.getState().setSpeaking(userId, rms > SPEAKING_THRESHOLD);
+      store.setSpeaking(userId, rms > SPEAKING_THRESHOLD);
+
+      if (currentUserId && userId === currentUserId) {
+        store.setLocalInputLevel(rms);
+        if (localStream && store.voiceMode === 'voice-activity') {
+          const sensitivity = Math.min(1, Math.max(0, store.inputSensitivity));
+          const threshold = INPUT_THRESHOLD_MAX - (INPUT_THRESHOLD_MAX - INPUT_THRESHOLD_MIN) * sensitivity;
+          const enabled = !store.isMuted && rms >= threshold;
+          localStream.getAudioTracks().forEach((track) => {
+            track.enabled = enabled;
+          });
+        }
+      }
     }
   }, 50);
 }
@@ -138,6 +165,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         audio.autoplay = true;
         audioElements.set(peerId, audio);
       }
+      applyOutputDevice(audio, currentOutputDeviceId);
       audio.srcObject = event.streams[0];
       audio.muted = useVoiceStore.getState().isDeafened;
       audio.play().catch((err) => console.error('Audio play failed:', err));
@@ -191,6 +219,38 @@ function cleanupAll() {
   }
 }
 
+async function replaceLocalAudioStream(newStream: MediaStream) {
+  const newTrack = newStream.getAudioTracks()[0];
+  if (!newTrack) return;
+
+  for (const pc of peers.values()) {
+    const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'audio');
+    if (sender) {
+      try {
+        await sender.replaceTrack(newTrack);
+      } catch (err) {
+        console.warn('Failed to replace audio track:', err);
+      }
+    } else {
+      pc.addTrack(newTrack, newStream);
+    }
+  }
+
+  if (localStream) {
+    localStream.getTracks().forEach((track) => track.stop());
+  }
+  localStream = newStream;
+
+  const voiceState = useVoiceStore.getState();
+  const shouldEnable = !voiceState.isMuted && (voiceState.voiceMode === 'voice-activity' || voiceState.isPttActive);
+  newTrack.enabled = shouldEnable;
+
+  const currentUser = useAuthStore.getState().user;
+  if (currentUser) {
+    addAnalyser(currentUser.id, newStream);
+  }
+}
+
 async function applyPendingCandidates(peerId: string) {
   const pc = peers.get(peerId);
   const candidates = pendingCandidates.get(peerId);
@@ -207,7 +267,7 @@ async function startScreenShareInternal() {
   if (!voiceState.currentChannelId) return;
 
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
   } catch (err) {
     console.error('Could not get display media:', err);
     return;
@@ -230,11 +290,11 @@ async function stopScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
   const conn = getConnection();
 
-  // Remove video track from all viewers we're sending to and renegotiate
-  for (const [viewerId, sender] of screenTrackSenders) {
+  // Remove all screen tracks from all viewers we're sending to and renegotiate
+  for (const [viewerId, senders] of screenTrackSenders) {
     const pc = peers.get(viewerId);
     if (pc) {
-      pc.removeTrack(sender);
+      senders.forEach((sender) => pc.removeTrack(sender));
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -265,11 +325,16 @@ async function addVideoTrackForViewer(viewerUserId: string) {
   const pc = peers.get(viewerUserId);
   if (!pc) return;
 
-  const videoTrack = screenStream.getVideoTracks()[0];
-  if (!videoTrack) return;
+  // Add all tracks from screen stream (video + audio if available)
+  const senders: RTCRtpSender[] = [];
+  screenStream.getTracks().forEach((track) => {
+    console.log(`Adding screen ${track.kind} track for viewer ${viewerUserId}`);
+    const sender = pc.addTrack(track, screenStream);
+    senders.push(sender);
+  });
 
-  const sender = pc.addTrack(videoTrack, screenStream);
-  screenTrackSenders.set(viewerUserId, sender);
+  if (senders.length === 0) return;
+  screenTrackSenders.set(viewerUserId, senders);
 
   // Renegotiate
   const conn = getConnection();
@@ -284,11 +349,12 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
 // Called when a viewer stops watching our stream
 async function removeVideoTrackForViewer(viewerUserId: string) {
-  const sender = screenTrackSenders.get(viewerUserId);
+  const senders = screenTrackSenders.get(viewerUserId);
   const pc = peers.get(viewerUserId);
-  if (!sender || !pc) return;
+  if (!senders || !pc) return;
 
-  pc.removeTrack(sender);
+  // Remove all screen tracks (video + audio)
+  senders.forEach((sender) => pc.removeTrack(sender));
   screenTrackSenders.delete(viewerUserId);
 
   // Renegotiate
@@ -447,6 +513,18 @@ function setupSignalRListeners() {
     console.log(`StopWatchingRequested from ${viewerUserId}`);
     removeVideoTrackForViewer(viewerUserId);
   });
+
+  // Voice session replaced (joined voice from another device)
+  conn.on('VoiceSessionReplaced', (message: string) => {
+    console.warn('Voice session replaced:', message);
+    // Force leave voice - clean up all WebRTC state
+    cleanupAll();
+    useVoiceStore.getState().setCurrentChannel(null);
+    useVoiceStore.getState().setParticipants(new Map());
+    useVoiceStore.getState().setScreenSharing(false);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
+  });
 }
 
 export function useWebRTC() {
@@ -456,6 +534,11 @@ export function useWebRTC() {
   const voiceMode = useVoiceStore((s) => s.voiceMode);
   const isPttActive = useVoiceStore((s) => s.isPttActive);
   const pttKey = useVoiceStore((s) => s.pttKey);
+  const inputDeviceId = useVoiceStore((s) => s.inputDeviceId);
+  const outputDeviceId = useVoiceStore((s) => s.outputDeviceId);
+  const noiseSuppression = useVoiceStore((s) => s.noiseSuppression);
+  const echoCancellation = useVoiceStore((s) => s.echoCancellation);
+  const autoGainControl = useVoiceStore((s) => s.autoGainControl);
   const setPttActive = useVoiceStore((s) => s.setPttActive);
   const setCurrentChannel = useVoiceStore((s) => s.setCurrentChannel);
   const setParticipants = useVoiceStore((s) => s.setParticipants);
@@ -508,10 +591,16 @@ export function useWebRTC() {
   // Mute/unmute local tracks (accounts for PTT mode)
   useEffect(() => {
     if (localStream) {
-      const enabled = !isMuted && (voiceMode === 'voice-activity' || isPttActive);
-      localStream.getAudioTracks().forEach((track) => {
-        track.enabled = enabled;
-      });
+      if (voiceMode === 'push-to-talk') {
+        const enabled = !isMuted && isPttActive;
+        localStream.getAudioTracks().forEach((track) => {
+          track.enabled = enabled;
+        });
+      } else if (isMuted) {
+        localStream.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
+      }
     }
   }, [isMuted, voiceMode, isPttActive]);
 
@@ -521,6 +610,64 @@ export function useWebRTC() {
       audio.muted = isDeafened;
     });
   }, [isDeafened]);
+
+  // Apply output device changes to all remote audio elements
+  useEffect(() => {
+    currentOutputDeviceId = outputDeviceId || 'default';
+    audioElements.forEach((audio) => applyOutputDevice(audio, currentOutputDeviceId));
+  }, [outputDeviceId]);
+
+  const buildAudioConstraints = useCallback((): MediaTrackConstraints | boolean => {
+    const base: MediaTrackConstraints = {
+      noiseSuppression,
+      echoCancellation,
+      autoGainControl,
+    };
+    if (inputDeviceId && inputDeviceId !== 'default') {
+      return { ...base, deviceId: { exact: inputDeviceId } };
+    }
+    return base;
+  }, [inputDeviceId, noiseSuppression, echoCancellation, autoGainControl]);
+
+  // Switch input device / processing while connected
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const constraints: MediaStreamConstraints = { audio: buildAudioConstraints() };
+        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (cancelled) {
+          newStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        await replaceLocalAudioStream(newStream);
+      } catch (err) {
+        console.error('Failed to switch microphone:', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [buildAudioConstraints, currentChannelId]);
+
+  // Broadcast mute/deafen state to everyone in the server
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const conn = await ensureConnected();
+        if (cancelled) return;
+        await conn.invoke('UpdateVoiceState', isMuted, isDeafened);
+      } catch (err) {
+        console.warn('Failed to update voice state', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentChannelId, isMuted, isDeafened]);
 
   // Register SignalR listeners once (module-level flag, not per-instance)
   useEffect(() => {
@@ -536,7 +683,8 @@ export function useWebRTC() {
     }
 
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const constraints: MediaStreamConstraints = { audio: buildAudioConstraints() };
+      localStream = await navigator.mediaDevices.getUserMedia(constraints);
       console.log('Got local audio stream, tracks:', localStream.getAudioTracks().length);
     } catch (err) {
       console.error('Could not access microphone:', err);
@@ -558,8 +706,8 @@ export function useWebRTC() {
 
     setCurrentChannel(channelId);
     const conn = getConnection();
-    await conn.invoke('JoinVoiceChannel', channelId);
-  }, [currentChannelId, setCurrentChannel]);
+    await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
+  }, [buildAudioConstraints, currentChannelId, setCurrentChannel]);
 
   const leaveVoice = useCallback(async () => {
     if (currentChannelId) {
