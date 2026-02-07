@@ -19,6 +19,7 @@ server/Abyss.Api/appsettings.Development.json
 client/node_modules/
 client/dist/
 client/dist-ssr/
+node_modules/
 
 # Logs
 *.log
