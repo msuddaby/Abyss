@@ -52,6 +52,10 @@ function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
   const target = deviceId && deviceId !== 'default' ? deviceId : 'default';
   audio.setSinkId(target).catch((err) => {
     console.warn('Failed to set audio output device:', err);
+    // Fallback to default if the stored device id is no longer valid
+    if (target !== 'default') {
+      useVoiceStore.getState().setOutputDeviceId('default');
+    }
   });
 }
 
