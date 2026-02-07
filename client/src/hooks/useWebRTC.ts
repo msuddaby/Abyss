@@ -157,6 +157,8 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
   pc.ontrack = (event) => {
     const track = event.track;
     console.log(`Got remote ${track.kind} track from ${peerId}`);
+    const stream =
+      event.streams && event.streams.length > 0 ? event.streams[0] : new MediaStream([track]);
 
     if (track.kind === 'audio') {
       let audio = audioElements.get(peerId);
@@ -166,12 +168,12 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         audioElements.set(peerId, audio);
       }
       applyOutputDevice(audio, currentOutputDeviceId);
-      audio.srcObject = event.streams[0];
+      audio.srcObject = stream;
       audio.muted = useVoiceStore.getState().isDeafened;
       audio.play().catch((err) => console.error('Audio play failed:', err));
-      addAnalyser(peerId, event.streams[0]);
+      addAnalyser(peerId, stream);
     } else if (track.kind === 'video') {
-      screenVideoStreams.set(peerId, event.streams[0]);
+      screenVideoStreams.set(peerId, stream);
       useVoiceStore.getState().bumpScreenStreamVersion();
     }
   };
