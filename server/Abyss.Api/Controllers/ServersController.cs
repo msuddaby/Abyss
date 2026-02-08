@@ -341,7 +341,7 @@ public class ServersController : ControllerBase
             .Where(c => c.ServerId == serverId)
             .OrderBy(c => c.Type)
             .ThenBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position))
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null))
             .ToListAsync();
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);
