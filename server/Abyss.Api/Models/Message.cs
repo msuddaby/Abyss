@@ -11,6 +11,7 @@ public class Message
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? EditedAt { get; set; }
     public bool IsDeleted { get; set; }
+    public bool IsSystem { get; set; }
     public Guid? ReplyToMessageId { get; set; }
     public Message? ReplyToMessage { get; set; }
     public ICollection<Attachment> Attachments { get; set; } = new List<Attachment>();

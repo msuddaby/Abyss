@@ -273,7 +273,7 @@ public class ChatHub : Hub
             }
         }
 
-        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, new List<ReactionDto>(), replyToGuid, replyDto);
+        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, false, new List<ReactionDto>(), replyToGuid, replyDto);
 
         await Clients.Group($"channel:{channelId}").SendAsync("ReceiveMessage", messageDto);
 
@@ -349,7 +349,7 @@ public class ChatHub : Hub
 
         if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.FindAsync(msgGuid);
-        if (message == null || message.AuthorId != UserId || message.IsDeleted) return;
+        if (message == null || message.AuthorId != UserId || message.IsDeleted || message.IsSystem) return;
 
         message.Content = newContent;
         message.EditedAt = DateTime.UtcNow;
@@ -362,7 +362,7 @@ public class ChatHub : Hub
     {
         if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
-        if (message == null) return;
+        if (message == null || message.IsSystem) return;
 
         var isAuthor = message.AuthorId == UserId;
 

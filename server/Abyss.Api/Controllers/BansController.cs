@@ -19,12 +19,14 @@ public class BansController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly IHubContext<ChatHub> _hub;
+    private readonly SystemMessageService _systemMessages;
 
-    public BansController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub)
+    public BansController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, SystemMessageService systemMessages)
     {
         _db = db;
         _perms = perms;
         _hub = hub;
+        _systemMessages = systemMessages;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -90,6 +92,11 @@ public class BansController : ControllerBase
             targetId: userId, targetName: targetUser.DisplayName, details: req?.Reason);
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("MemberBanned", serverId.ToString(), userId);
+
+        if (member != null)
+        {
+            await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false);
+        }
         return Ok();
     }
 

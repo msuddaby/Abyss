@@ -126,7 +126,10 @@ export default function MemberList() {
           )}
           <span className={`presence-dot ${onlineUsers.has(m.userId) ? 'online' : 'offline'}`} />
         </div>
-        <span className="member-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
+        <div className="member-text">
+          <span className="member-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
+          <span className="member-status">{m.user.status || ''}</span>
+        </div>
         {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}
         {!m.isOwner && highestRole && (
           <span className="member-badge" style={{ background: highestRole.color, color: '#fff' }}>{highestRole.name}</span>

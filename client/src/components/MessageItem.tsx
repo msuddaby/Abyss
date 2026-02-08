@@ -315,6 +315,20 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     toggleReaction(message.id, emoji);
   };
 
+  if (message.isSystem) {
+    return (
+      <div className="message-item system-message">
+        <div className="system-message-content">
+          <span className="system-message-icon">●</span>
+          <span className="system-message-text">
+            <strong>{authorDisplayName}</strong> {message.content}
+          </span>
+          <span className="system-message-time">{formatDate(message.createdAt)} at {formatTime(message.createdAt)}</span>
+        </div>
+      </div>
+    );
+  }
+
   if (message.isDeleted) {
     return (
       <div className="message-item message-deleted">

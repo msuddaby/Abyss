@@ -6,6 +6,7 @@ const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
   ChannelCreated: 'Created channel',
   ChannelDeleted: 'Deleted channel',
+  ChannelUpdated: 'Updated channel',
   MemberKicked: 'Kicked',
   MemberPromoted: 'Promoted',
   MemberDemoted: 'Demoted',
@@ -16,14 +17,17 @@ const ACTION_LABELS: Record<string, string> = {
   RoleUpdated: 'Updated role',
   RoleDeleted: 'Deleted role',
   MemberRolesUpdated: 'Updated roles of',
+  MemberLeft: 'Left the server',
   EmojiCreated: 'Created emoji',
   EmojiDeleted: 'Deleted emoji',
+  ServerUpdated: 'Updated server',
 };
 
 const ACTION_ICONS: Record<string, string> = {
   MessageDeleted: '\u{1F5D1}',
   ChannelCreated: '\u{2795}',
   ChannelDeleted: '\u{2796}',
+  ChannelUpdated: '\u{270F}',
   MemberKicked: '\u{1F6AB}',
   MemberPromoted: '\u{2B06}',
   MemberDemoted: '\u{2B07}',
@@ -34,8 +38,10 @@ const ACTION_ICONS: Record<string, string> = {
   RoleUpdated: '\u{270F}',
   RoleDeleted: '\u{274C}',
   MemberRolesUpdated: '\u{1F465}',
+  MemberLeft: '\u{1F6AA}',
   EmojiCreated: '\u{1F600}',
   EmojiDeleted: '\u{274C}',
+  ServerUpdated: '\u{270F}',
 };
 
 const PERMISSION_LABELS: { perm: number; label: string }[] = [
@@ -56,13 +62,14 @@ function formatTimestamp(dateStr: string) {
   return d.toLocaleString();
 }
 
-type Tab = 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
+type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
 
 export default function ServerSettingsModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const { fetchAuditLogs, deleteServer, activeServer, fetchBans, unbanMember, kickMember, banMember } = useServerStore();
+  const channels = useServerStore((s) => s.channels);
   const members = useServerStore((s) => s.members);
   const roles = useServerStore((s) => s.roles);
   const bans = useServerStore((s) => s.bans);
@@ -74,9 +81,16 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const canBan = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
   const canViewAuditLog = currentMember ? hasPermission(currentMember, Permission.ViewAuditLog) : false;
   const canManageEmojis = currentMember ? hasPermission(currentMember, Permission.ManageEmojis) : false;
+  const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
   const canManageAnyMembers = canManageRoles || canKick || canBan;
 
-  const [tab, setTab] = useState<Tab>(canManageAnyMembers ? 'members' : 'roles');
+  const [tab, setTab] = useState<Tab>(
+    canManageServer ? 'server'
+      : canManageAnyMembers ? 'members'
+      : canManageRoles ? 'roles'
+      : canViewAuditLog ? 'audit'
+      : 'danger',
+  );
 
   // Members tab state
   const [memberSearch, setMemberSearch] = useState('');
@@ -98,6 +112,15 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [emojiUploading, setEmojiUploading] = useState(false);
   const [emojiError, setEmojiError] = useState('');
 
+  // Server settings
+  const [serverName, setServerName] = useState(activeServer?.name ?? '');
+  const [serverIconFile, setServerIconFile] = useState<File | null>(null);
+  const [serverIconPreview, setServerIconPreview] = useState<string | null>(null);
+  const [serverSaving, setServerSaving] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [joinLeaveEnabled, setJoinLeaveEnabled] = useState(activeServer?.joinLeaveMessagesEnabled ?? true);
+  const [joinLeaveChannelId, setJoinLeaveChannelId] = useState<string>('');
+
   useEffect(() => {
     if (tab === 'audit' && canViewAuditLog) {
       fetchAuditLogs(serverId).then(setLogs).catch(console.error);
@@ -106,6 +129,25 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
       fetchBans(serverId);
     }
   }, [tab, serverId]);
+
+  useEffect(() => {
+    if (activeServer) {
+      setServerName(activeServer.name);
+      setServerIconFile(null);
+      setServerIconPreview(null);
+      setServerError('');
+      const textChannels = channels.filter((c) => c.type === 'Text');
+      setJoinLeaveEnabled(activeServer.joinLeaveMessagesEnabled);
+      setJoinLeaveChannelId(activeServer.joinLeaveChannelId ?? textChannels[0]?.id ?? '');
+    }
+  }, [activeServer?.id, channels]);
+
+  useEffect(() => {
+    if (!serverIconFile) return;
+    const url = URL.createObjectURL(serverIconFile);
+    setServerIconPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [serverIconFile]);
 
   const handleDelete = async () => {
     if (!activeServer || confirmName !== activeServer.name) return;
@@ -172,6 +214,38 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     setRolePerms((p) => (p & perm) ? (p & ~perm) : (p | perm));
   };
 
+  const handleServerIconChange = (file: File | null) => {
+    setServerIconFile(file);
+    setServerError('');
+    if (!file) setServerIconPreview(null);
+  };
+
+  const handleSaveServer = async () => {
+    if (!activeServer) return;
+    const name = serverName.trim();
+    if (!name) {
+      setServerError('Server name is required.');
+      return;
+    }
+    setServerSaving(true);
+    setServerError('');
+    try {
+      await useServerStore.getState().updateServer(serverId, {
+        name,
+        icon: serverIconFile ?? undefined,
+        joinLeaveMessagesEnabled: joinLeaveEnabled,
+        joinLeaveChannelId: joinLeaveEnabled ? (joinLeaveChannelId || undefined) : undefined,
+      });
+      setServerIconFile(null);
+      setServerIconPreview(null);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: string } })?.response?.data;
+      setServerError(typeof msg === 'string' ? msg : 'Update failed');
+    } finally {
+      setServerSaving(false);
+    }
+  };
+
   const showEditor = creating || editingRole != null;
 
   return (
@@ -179,25 +253,104 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
       <div className="modal server-settings-modal" onClick={(e) => e.stopPropagation()}>
         <h2>Server Settings</h2>
         <div className="settings-tabs">
-          {canManageAnyMembers && (
-            <button className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
-          )}
-          {canManageRoles && (
-            <button className={`settings-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
-          )}
-          {canManageEmojis && (
-            <button className={`settings-tab ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
-          )}
-          {canBan && (
-            <button className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
-          )}
-          {canViewAuditLog && (
-            <button className={`settings-tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
-          )}
-          {isOwner && (
-            <button className={`settings-tab ${tab === 'danger' ? 'active' : ''}`} onClick={() => setTab('danger')}>Danger Zone</button>
-          )}
+          <div className="settings-tabs-scroll" role="tablist" aria-label="Server settings sections">
+            {canManageServer && (
+              <button className={`settings-tab ${tab === 'server' ? 'active' : ''}`} onClick={() => setTab('server')}>Server</button>
+            )}
+            {canManageAnyMembers && (
+              <button className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
+            )}
+            {canManageRoles && (
+              <button className={`settings-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
+            )}
+            {canManageEmojis && (
+              <button className={`settings-tab ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
+            )}
+            {canBan && (
+              <button className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+            )}
+            {canViewAuditLog && (
+              <button className={`settings-tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
+            )}
+            {isOwner && (
+              <button className={`settings-tab ${tab === 'danger' ? 'active' : ''}`} onClick={() => setTab('danger')}>Danger Zone</button>
+            )}
+          </div>
         </div>
+
+        {tab === 'server' && canManageServer && (
+          <div className="server-tab">
+            <div className="server-settings-card">
+              <div className="server-icon-row">
+                <button className="server-icon-preview" onClick={() => document.getElementById('server-icon-input')?.click()}>
+                  {(() => {
+                    const iconUrl = serverIconPreview
+                      ?? (activeServer?.iconUrl
+                        ? (activeServer.iconUrl.startsWith('http') ? activeServer.iconUrl : `${getApiBase()}${activeServer.iconUrl}`)
+                        : null);
+                    if (iconUrl) return <img src={iconUrl} alt={activeServer?.name ?? 'Server icon'} />;
+                    return <span>{(activeServer?.name ?? '?').charAt(0).toUpperCase()}</span>;
+                  })()}
+                </button>
+                <div className="server-icon-actions">
+                  <label className="server-icon-upload-btn">
+                    Change Icon
+                    <input
+                      id="server-icon-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={(e) => handleServerIconChange(e.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  <span className="server-icon-hint">PNG, JPG, or WEBP (max 5MB)</span>
+                </div>
+              </div>
+
+              <label className="server-name-label">Server Name</label>
+              <input
+                className="server-name-input"
+                value={serverName}
+                onChange={(e) => { setServerName(e.target.value); setServerError(''); }}
+                placeholder="Server name"
+              />
+
+              <div className="server-settings-section">
+                <label className="server-setting-row">
+                  <input
+                    type="checkbox"
+                    checked={joinLeaveEnabled}
+                    onChange={(e) => setJoinLeaveEnabled(e.target.checked)}
+                  />
+                  <span>Post a message when members join or leave</span>
+                </label>
+                <div className="server-setting-row">
+                  <span className="server-setting-label">Channel</span>
+                  <select
+                    className="server-setting-select"
+                    value={joinLeaveChannelId}
+                    disabled={!joinLeaveEnabled || channels.filter((c) => c.type === 'Text').length === 0}
+                    onChange={(e) => setJoinLeaveChannelId(e.target.value)}
+                  >
+                    {channels.filter((c) => c.type === 'Text').map((c) => (
+                      <option key={c.id} value={c.id}>#{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {channels.filter((c) => c.type === 'Text').length === 0 && (
+                  <div className="server-setting-hint">No text channels available. Create one to enable join/leave messages.</div>
+                )}
+              </div>
+
+              {serverError && <div className="server-error">{serverError}</div>}
+
+              <div className="modal-actions">
+                <button onClick={handleSaveServer} disabled={!serverName.trim() || serverSaving}>
+                  {serverSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {tab === 'members' && canManageAnyMembers && (
           <div className="members-tab">

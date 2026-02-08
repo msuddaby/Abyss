@@ -18,6 +18,8 @@ export interface Server {
   name: string;
   iconUrl?: string;
   ownerId: string;
+  joinLeaveMessagesEnabled: boolean;
+  joinLeaveChannelId?: string | null;
 }
 
 export interface Channel {
@@ -82,6 +84,7 @@ export interface Message {
   attachments: Attachment[];
   editedAt?: string;
   isDeleted: boolean;
+  isSystem: boolean;
   reactions: Reaction[];
   replyToMessageId?: string;
   replyTo?: ReplyReference;

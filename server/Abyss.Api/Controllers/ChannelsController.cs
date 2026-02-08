@@ -63,6 +63,7 @@ public class ChannelsController : ControllerBase
                 m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
                 m.EditedAt,
                 m.IsDeleted,
+                m.IsSystem,
                 m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
                 m.ReplyToMessageId,
                 m.ReplyToMessage == null ? null : new ReplyReferenceDto(
@@ -130,6 +131,7 @@ public class ChannelsController : ControllerBase
                 m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
                 m.EditedAt,
                 m.IsDeleted,
+                m.IsSystem,
                 m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
                 m.ReplyToMessageId,
                 m.ReplyToMessage == null ? null : new ReplyReferenceDto(

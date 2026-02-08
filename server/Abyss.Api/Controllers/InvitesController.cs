@@ -16,11 +16,13 @@ public class InvitesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
+    private readonly SystemMessageService _systemMessages;
 
-    public InvitesController(AppDbContext db, PermissionService perms)
+    public InvitesController(AppDbContext db, PermissionService perms, SystemMessageService systemMessages)
     {
         _db = db;
         _perms = perms;
+        _systemMessages = systemMessages;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -43,7 +45,7 @@ public class InvitesController : ControllerBase
 
         var alreadyMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == invite.ServerId && sm.UserId == UserId);
         if (alreadyMember)
-            return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId));
+            return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId));
 
         _db.ServerMembers.Add(new ServerMember
         {
@@ -54,6 +56,8 @@ public class InvitesController : ControllerBase
         invite.Uses++;
         await _db.SaveChangesAsync();
 
-        return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId));
+        await _systemMessages.SendMemberJoinLeaveAsync(invite.ServerId, UserId, joined: true);
+
+        return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId));
     }
 }

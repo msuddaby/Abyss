@@ -1,14 +1,26 @@
+using Microsoft.AspNetCore.Http;
+
 namespace Abyss.Api.DTOs;
 
 public record CreateServerRequest(string Name);
-public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId);
+public class UpdateServerRequest
+{
+    public string? Name { get; set; }
+    public IFormFile? Icon { get; set; }
+    public bool? RemoveIcon { get; set; }
+    public bool? JoinLeaveMessagesEnabled { get; set; }
+    public Guid? JoinLeaveChannelId { get; set; }
+}
+public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, bool JoinLeaveMessagesEnabled, Guid? JoinLeaveChannelId);
 public record CreateChannelRequest(string Name, string Type);
+public record UpdateChannelRequest(string Name);
+public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
 public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position);
 public record ServerMemberDto(Guid ServerId, string UserId, UserDto User, bool IsOwner, List<ServerRoleDto> Roles, DateTime JoinedAt);
 public record ServerRoleDto(Guid Id, string Name, string Color, long Permissions, int Position, bool IsDefault);
 public record InviteDto(Guid Id, string Code, Guid ServerId, string CreatorId, DateTime? ExpiresAt, int? MaxUses, int Uses);
 public record ReplyReferenceDto(Guid Id, string Content, string AuthorId, UserDto Author, bool IsDeleted);
-public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo);
+public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo);
 public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji);
 public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string ContentType, long Size);
 public record AuditLogDto(Guid Id, string Action, string ActorId, UserDto Actor, string? TargetId, string? TargetName, string? Details, DateTime CreatedAt);

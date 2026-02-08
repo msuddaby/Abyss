@@ -193,6 +193,8 @@ export default function MessageList() {
           const prev = messages[i - 1];
           const grouped =
             !!prev &&
+            !msg.isSystem &&
+            !prev.isSystem &&
             !prev.isDeleted &&
             !msg.replyTo &&
             prev.authorId === msg.authorId &&
