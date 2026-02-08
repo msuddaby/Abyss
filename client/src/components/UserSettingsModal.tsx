@@ -9,6 +9,7 @@ export default function UserSettingsModal({
   const user = useAuthStore((s) => s.user)!;
   const updateProfile = useAuthStore((s) => s.updateProfile);
   const updateAvatar = useAuthStore((s) => s.updateAvatar);
+  const logout = useAuthStore((s) => s.logout);
 
   const [displayName, setDisplayName] = useState(user.displayName);
   const [bio, setBio] = useState(user.bio || "");
@@ -544,6 +545,16 @@ export default function UserSettingsModal({
           )}
           {deviceError && <div className="settings-help">{deviceError}</div>}
         </label>
+
+        <div className="settings-section">
+          <div className="settings-section-title">Account</div>
+          <div className="danger-zone">
+            <p>Sign out of this device.</p>
+            <button className="btn-danger" type="button" onClick={logout}>
+              Log Out
+            </button>
+          </div>
+        </div>
 
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose}>
