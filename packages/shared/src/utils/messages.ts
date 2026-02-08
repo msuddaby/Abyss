@@ -9,6 +9,8 @@ const GROUP_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 export function shouldGroupMessage(msg: Message, prev: Message | undefined): boolean {
   return (
     !!prev &&
+    !msg.isSystem &&
+    !prev.isSystem &&
     !prev.isDeleted &&
     !msg.replyTo &&
     prev.authorId === msg.authorId &&

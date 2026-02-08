@@ -124,6 +124,18 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
   }, [message, isOwn, editing, canDelete, canKickAuthor, canBanAuthor, activeServer, authorDisplayName,
       setReplyingTo, deleteMessage, kickMember, banMember, editMessage, onPickReactionEmoji]);
 
+  if (message.isSystem) {
+    return (
+      <View style={styles.systemRow}>
+        <Text style={styles.systemDot}>•</Text>
+        <Text style={styles.systemText}>
+          <Text style={styles.systemAuthor}>{authorDisplayName}</Text> {message.content}
+        </Text>
+        <Text style={styles.systemTime}>{formatDate(message.createdAt)} {formatTime(message.createdAt)}</Text>
+      </View>
+    );
+  }
+
   const isMentioned = currentUser && (
     message.content.includes(`<@${currentUser.id}>`) ||
     message.content.includes('@everyone') ||
@@ -511,5 +523,30 @@ const styles = StyleSheet.create({
   } as TextStyle,
   reactionCountActive: {
     color: colors.brandColor,
+  } as TextStyle,
+  systemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+  } as ViewStyle,
+  systemDot: {
+    color: colors.textMuted,
+    fontSize: 12,
+  } as TextStyle,
+  systemText: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    flexShrink: 1,
+  } as TextStyle,
+  systemAuthor: {
+    color: colors.headerPrimary,
+    fontWeight: '600',
+  } as TextStyle,
+  systemTime: {
+    marginLeft: 'auto',
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
   } as TextStyle,
 });
