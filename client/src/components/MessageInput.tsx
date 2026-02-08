@@ -408,7 +408,7 @@ export default function MessageInput() {
         setMentionIndex((prev) => (prev - 1 + mentionOptions.length) % mentionOptions.length);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
         e.preventDefault();
         insertMention(mentionOptions[mentionIndex]);
         return;
@@ -431,7 +431,7 @@ export default function MessageInput() {
         setEmojiIndex((prev) => (prev - 1 + emojiOptions.length) % emojiOptions.length);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
         e.preventDefault();
         insertEmoji(emojiOptions[emojiIndex]);
         return;
@@ -449,8 +449,14 @@ export default function MessageInput() {
       setReplyingTo(null);
       return;
     }
-    // Enter sends the message (prevent newline in contentEditable)
+    // Enter sends; Shift+Enter inserts newline
     if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        e.preventDefault();
+        document.execCommand('insertLineBreak');
+        requestAnimationFrame(() => handleInput());
+        return;
+      }
       e.preventDefault();
       handleSubmit();
     }

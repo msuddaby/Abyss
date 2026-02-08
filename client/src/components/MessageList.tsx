@@ -228,7 +228,6 @@ export default function MessageList() {
     if (!highlightedMessageId) return;
     suppressAutoScrollRef.current = true;
     isNearBottomRef.current = false;
-    setShowScrollToBottom(true);
 
     const tryScroll = () => {
       const el = messageRefs.current.get(highlightedMessageId);
@@ -244,7 +243,10 @@ export default function MessageList() {
       }, 1500);
     };
 
-    requestAnimationFrame(tryScroll);
+    requestAnimationFrame(() => {
+      setShowScrollToBottom(true);
+      tryScroll();
+    });
   }, [highlightedMessageId, setHighlightedMessageId]);
 
   const handleScroll = () => {

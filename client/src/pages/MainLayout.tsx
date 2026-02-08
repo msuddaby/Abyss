@@ -29,7 +29,9 @@ export default function MainLayout() {
   }, [fetchConfig]);
 
   useEffect(() => {
-    setShowPins(false);
+    requestAnimationFrame(() => {
+      setShowPins(false);
+    });
   }, [activeChannel?.id, activeDmChannel?.id, isDmMode]);
 
   const showSignalRBanner = signalRStatus !== 'connected';

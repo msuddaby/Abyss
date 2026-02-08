@@ -44,9 +44,11 @@ export default function MemberList() {
     if (left < margin) left = margin;
     if (top < margin) top = margin;
     if (left !== contextMenu.x || top !== contextMenu.y) {
-      setContextMenu({ ...contextMenu, x: left, y: top });
+      requestAnimationFrame(() => {
+        setContextMenu({ member: contextMenu.member, x: left, y: top });
+      });
     }
-  }, [contextMenu]);
+  }, [contextMenu?.member]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (members.length === 0) return null;
 

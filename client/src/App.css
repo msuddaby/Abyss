@@ -1658,6 +1658,80 @@
   white-space: pre-wrap;
 }
 
+.message-content.message-markdown {
+  white-space: normal;
+}
+
+.message-content.message-markdown p {
+  margin: 0 0 6px;
+}
+
+.message-content.message-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content.message-markdown h1,
+.message-content.message-markdown h2,
+.message-content.message-markdown h3,
+.message-content.message-markdown h4,
+.message-content.message-markdown h5,
+.message-content.message-markdown h6 {
+  margin: 10px 0 6px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+
+.message-content.message-markdown h1 { font-size: 20px; }
+.message-content.message-markdown h2 { font-size: 18px; }
+.message-content.message-markdown h3 { font-size: 16px; }
+.message-content.message-markdown h4,
+.message-content.message-markdown h5,
+.message-content.message-markdown h6 { font-size: 15px; }
+
+.message-content.message-markdown ul,
+.message-content.message-markdown ol {
+  margin: 6px 0 6px 18px;
+  padding: 0;
+}
+
+.message-content.message-markdown li {
+  margin: 2px 0;
+}
+
+.message-content.message-markdown blockquote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--bg-accent);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.message-content.message-markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.message-content.message-markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.message-content.message-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.message-content.message-markdown a {
+  color: var(--text-link);
+  text-decoration: underline;
+}
+
 .message-attachments {
   margin-top: 4px;
 }

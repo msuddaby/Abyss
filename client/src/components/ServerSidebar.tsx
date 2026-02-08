@@ -64,22 +64,26 @@ export default function ServerSidebar() {
 
   useEffect(() => {
     if (!contextMenuServer || !contextMenuRef.current) return;
-    const rect = contextMenuRef.current.getBoundingClientRect();
-    const margin = 8;
-    let left = contextMenuPos.x;
-    let top = contextMenuPos.y;
-    if (left + rect.width > window.innerWidth - margin) {
-      left = window.innerWidth - rect.width - margin;
-    }
-    if (top + rect.height > window.innerHeight - margin) {
-      top = window.innerHeight - rect.height - margin;
-    }
-    if (left < margin) left = margin;
-    if (top < margin) top = margin;
-    if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
-      setContextMenuPos({ x: left, y: top });
-    }
-  }, [contextMenuServer, contextMenuPos]);
+
+    requestAnimationFrame(() => {
+      if (!contextMenuRef.current) return;
+      const rect = contextMenuRef.current.getBoundingClientRect();
+      const margin = 8;
+      let left = contextMenuPos.x;
+      let top = contextMenuPos.y;
+      if (left + rect.width > window.innerWidth - margin) {
+        left = window.innerWidth - rect.width - margin;
+      }
+      if (top + rect.height > window.innerHeight - margin) {
+        top = window.innerHeight - rect.height - margin;
+      }
+      if (left < margin) left = margin;
+      if (top < margin) top = margin;
+      if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
+        setContextMenuPos({ x: left, y: top });
+      }
+    });
+  }, [contextMenuServer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleServerContextMenu = (server: typeof servers[0]) => (e: React.MouseEvent) => {
     e.preventDefault();
