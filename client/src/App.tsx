@@ -4,6 +4,7 @@ import { useAuthStore } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import MainLayout from './pages/MainLayout';
+import ToastHost from './components/ToastHost';
 import './App.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -31,6 +32,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <ToastHost />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />

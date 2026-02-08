@@ -15,6 +15,7 @@ public class Channel
     public Guid? ServerId { get; set; }
     public Server? Server { get; set; }
     public int Position { get; set; }
+    public List<ChannelPermissionOverride> PermissionOverrides { get; set; } = new();
 
     // DM-specific fields
     public string? DmUser1Id { get; set; }

@@ -22,6 +22,7 @@ interface ServerState {
   voiceChannelUsers: VoiceChannelUsersMap;
   voiceChannelSharers: VoiceChannelSharersMap;
   fetchServers: () => Promise<void>;
+  fetchChannels: (serverId: string) => Promise<Channel[]>;
   setActiveServer: (server: Server) => Promise<void>;
   setActiveChannel: (channel: Channel | null) => void;
   createServer: (name: string) => Promise<Server>;
@@ -32,8 +33,8 @@ interface ServerState {
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
   fetchRoles: (serverId: string) => Promise<void>;
-  createRole: (serverId: string, name: string, color: string, permissions: number) => Promise<ServerRole>;
-  updateRole: (serverId: string, roleId: string, data: { name?: string; color?: string; permissions?: number }) => Promise<ServerRole>;
+  createRole: (serverId: string, name: string, color: string, permissions: number, displaySeparately: boolean) => Promise<ServerRole>;
+  updateRole: (serverId: string, roleId: string, data: { name?: string; color?: string; permissions?: number; displaySeparately?: boolean }) => Promise<ServerRole>;
   deleteRole: (serverId: string, roleId: string) => Promise<void>;
   reorderRoles: (serverId: string, roleIds: string[]) => Promise<void>;
   updateMemberRoles: (serverId: string, userId: string, roleIds: string[]) => Promise<void>;
@@ -114,12 +115,20 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
   },
 
+  fetchChannels: async (serverId) => {
+    const res = await api.get(`/servers/${serverId}/channels`);
+    const channels: Channel[] = res.data;
+    set((s) => {
+      const activeChannel = s.activeChannel ? channels.find((c) => c.id === s.activeChannel?.id) ?? null : null;
+      return { channels, activeChannel };
+    });
+    return channels;
+  },
+
   setActiveServer: async (server) => {
     set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map() });
     getStorage().setItem('activeServerId', server.id);
-    const res = await api.get(`/servers/${server.id}/channels`);
-    const channels: Channel[] = res.data;
-    set({ channels });
+    const channels = await get().fetchChannels(server.id);
 
     const lastChannelId = getLastChannelMap()[server.id];
     if (lastChannelId) {
@@ -243,8 +252,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
   },
 
-  createRole: async (serverId, name, color, permissions) => {
-    const res = await api.post(`/servers/${serverId}/roles`, { name, color, permissions });
+  createRole: async (serverId, name, color, permissions, displaySeparately) => {
+    const res = await api.post(`/servers/${serverId}/roles`, { name, color, permissions, displaySeparately });
     const role: ServerRole = res.data;
     set((s) => s.roles.some((r) => r.id === role.id) ? s : { roles: [...s.roles, role] });
     return role;

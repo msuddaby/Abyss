@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { getApiBase, useAuthStore, useServerStore, useMessageStore, hasPermission, Permission, getDisplayColor, canActOn } from '@abyss/shared';
+import { getApiBase, useAuthStore, useServerStore, useMessageStore, useAppConfigStore, useToastStore, hasPermission, hasChannelPermission, Permission, getDisplayColor, canActOn, useDmStore } from '@abyss/shared';
 import type { Message, ServerMember, CustomEmoji, Attachment } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
 import Picker from '@emoji-mart/react';
@@ -101,6 +101,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   const [profileCard, setProfileCard] = useState<{ x: number; y: number } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [editError, setEditError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
   const [pickerStyle, setPickerStyle] = useState<React.CSSProperties | null>(null);
@@ -114,13 +115,19 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
   const activeServer = useServerStore((s) => s.activeServer);
+  const activeChannel = useServerStore((s) => s.activeChannel);
+  const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
+  const addToast = useToastStore((s) => s.addToast);
   const { kickMember, banMember } = useServerStore();
-  const { editMessage, deleteMessage, toggleReaction, setReplyingTo } = useMessageStore();
+  const { editMessage, deleteMessage, toggleReaction, setReplyingTo, pinMessage, unpinMessage, isPinned } = useMessageStore();
+  const isDmMode = useDmStore((s) => s.isDmMode);
 
   const isOwn = currentUser?.id === message.authorId;
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canManageMessages = currentMember ? hasPermission(currentMember, Permission.ManageMessages) : false;
   const canDelete = isOwn || canManageMessages;
+  const canPin = isDmMode || canManageMessages;
+  const canAddReactions = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
 
@@ -259,10 +266,20 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
 
   const handleEditSave = async () => {
     const trimmed = editContent.trim();
-    if (trimmed && trimmed !== message.content) {
-      await editMessage(message.id, trimmed);
+    if (trimmed.length > maxMessageLength) {
+      setEditError(`Message must be 1-${maxMessageLength} characters.`);
+      addToast(`Message must be 1-${maxMessageLength} characters.`, 'error');
+      return;
     }
-    setEditing(false);
+    try {
+      if (trimmed && trimmed !== message.content) {
+        await editMessage(message.id, trimmed);
+      }
+      setEditing(false);
+      setEditError(null);
+    } catch (err) {
+      addToast('Failed to edit message.', 'error');
+    }
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
@@ -271,6 +288,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       handleEditSave();
     } else if (e.key === 'Escape') {
       setEditContent(message.content);
+      setEditError(null);
       setEditing(false);
     }
   };
@@ -279,7 +297,16 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     deleteMessage(message.id);
   };
 
+  const handlePinToggle = () => {
+    if (isPinned(message.channelId, message.id)) {
+      unpinMessage(message.id);
+    } else {
+      pinMessage(message.id);
+    }
+  };
+
   const openPicker = (e?: React.MouseEvent<HTMLElement>) => {
+    if (!canAddReactions) return;
     const target = e?.currentTarget as HTMLElement | null;
     const rect = target?.getBoundingClientRect() ?? messageRef.current?.getBoundingClientRect();
     if (rect) {
@@ -302,6 +329,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   }] : [];
 
   const handleEmojiSelect = (emoji: { native?: string; id?: string }) => {
+    if (!canAddReactions) return;
     if (emoji.native) {
       toggleReaction(message.id, emoji.native);
     } else if (emoji.id?.startsWith('custom-')) {
@@ -312,6 +340,7 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   };
 
   const handleReactionClick = (emoji: string) => {
+    if (!canAddReactions) return;
     toggleReaction(message.id, emoji);
   };
 
@@ -410,14 +439,22 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
         )}
         {grouped && message.editedAt && <span className="message-edited-label">(edited)</span>}
         {editing ? (
-          <input
-            ref={editInputRef}
-            className="message-edit-input"
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            onKeyDown={handleEditKeyDown}
-            onBlur={handleEditSave}
-          />
+          <div className="message-edit-wrapper">
+            <input
+              ref={editInputRef}
+              className="message-edit-input"
+              value={editContent}
+              onChange={(e) => {
+                setEditContent(e.target.value);
+                if (editError && e.target.value.trim().length <= maxMessageLength) {
+                  setEditError(null);
+                }
+              }}
+              onKeyDown={handleEditKeyDown}
+              onBlur={handleEditSave}
+            />
+            {editError && <div className="message-edit-error">{editError}</div>}
+          </div>
         ) : (
           <>
             {message.content && <div className="message-content">{renderMentions(message.content, members, emojis)}</div>}
@@ -450,6 +487,8 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
                 key={g.emoji}
                 className={`reaction-button${currentUser && g.userIds.includes(currentUser.id) ? ' reacted' : ''}`}
                 onClick={() => handleReactionClick(g.emoji)}
+                disabled={!canAddReactions}
+                title={!canAddReactions ? 'No permission to add reactions' : undefined}
               >
                 <span className="reaction-emoji">{g.emoji.startsWith('custom:') ? (() => {
                   const eid = g.emoji.substring(7);
@@ -459,13 +498,17 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
                 <span className="reaction-count">{g.count}</span>
               </button>
             ))}
-            <button className="reaction-button reaction-add" onClick={(e) => openPicker(e)}>+</button>
+            {canAddReactions && (
+              <button className="reaction-button reaction-add" onClick={(e) => openPicker(e)}>+</button>
+            )}
           </div>
         )}
       </div>
       <div className="message-actions">
         <button onClick={() => setReplyingTo(message)} title="Reply">&#8617;</button>
-        <button onClick={(e) => openPicker(e)} title="Add Reaction">&#128578;</button>
+        {canAddReactions && (
+          <button onClick={(e) => openPicker(e)} title="Add Reaction">&#128578;</button>
+        )}
         {isOwn && !editing && (
           <button onClick={() => { setEditContent(message.content); setEditing(true); }} title="Edit">&#9998;</button>
         )}
@@ -488,7 +531,17 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       {contextMenuOpen && (
         <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
           <button className="context-menu-item" onClick={() => { setReplyingTo(message); setContextMenuMessageId(null); }}>Reply</button>
-          <button className="context-menu-item" onClick={(e) => { openPicker(e); setContextMenuMessageId(null); }}>Add Reaction</button>
+          {canAddReactions && (
+            <button className="context-menu-item" onClick={(e) => { openPicker(e); setContextMenuMessageId(null); }}>Add Reaction</button>
+          )}
+          {canPin && (
+            <button
+              className="context-menu-item"
+              onClick={() => { handlePinToggle(); setContextMenuMessageId(null); }}
+            >
+              {isPinned(message.channelId, message.id) ? 'Unpin Message' : 'Pin Message'}
+            </button>
+          )}
           {isOwn && !editing && (
             <button className="context-menu-item" onClick={() => { setEditContent(message.content); setEditing(true); setContextMenuMessageId(null); }}>Edit Message</button>
           )}

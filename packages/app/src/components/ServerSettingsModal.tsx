@@ -33,6 +33,8 @@ const ACTION_LABELS: Record<string, string> = {
   EmojiCreated: 'Created emoji',
   EmojiDeleted: 'Deleted emoji',
   ServerUpdated: 'Updated server',
+  MessagePinned: 'Pinned a message',
+  MessageUnpinned: 'Unpinned a message',
 };
 
 const ACTION_ICONS: Record<string, string> = {
@@ -54,6 +56,8 @@ const ACTION_ICONS: Record<string, string> = {
   EmojiCreated: '\u{1F600}',
   EmojiDeleted: '\u{274C}',
   ServerUpdated: '\u{270F}',
+  MessagePinned: '\u{1F4CC}',
+  MessageUnpinned: '\u{1F4CC}',
 };
 
 const PERMISSION_LABELS: { perm: number; label: string }[] = [
@@ -67,6 +71,15 @@ const PERMISSION_LABELS: { perm: number; label: string }[] = [
   { perm: Permission.ManageServer, label: 'Manage Server' },
   { perm: Permission.ManageInvites, label: 'Manage Invites' },
   { perm: Permission.ManageEmojis, label: 'Manage Emojis' },
+  { perm: Permission.ViewChannel, label: 'View Channels' },
+  { perm: Permission.ReadMessageHistory, label: 'Read Message History' },
+  { perm: Permission.SendMessages, label: 'Send Messages' },
+  { perm: Permission.AddReactions, label: 'Add Reactions' },
+  { perm: Permission.AttachFiles, label: 'Attach Files' },
+  { perm: Permission.MentionEveryone, label: 'Mention @everyone/@here' },
+  { perm: Permission.Connect, label: 'Connect (Voice)' },
+  { perm: Permission.Speak, label: 'Speak (Voice)' },
+  { perm: Permission.Stream, label: 'Stream (Screen Share)' },
 ];
 
 function formatTimestamp(dateStr: string) {
@@ -115,6 +128,7 @@ export default function ServerSettingsModal() {
   const [roleName, setRoleName] = useState('');
   const [roleColor, setRoleColor] = useState('#99aab5');
   const [rolePerms, setRolePerms] = useState(0);
+  const [roleDisplaySeparately, setRoleDisplaySeparately] = useState(false);
   const [creating, setCreating] = useState(false);
 
   // Emojis tab
@@ -159,6 +173,7 @@ export default function ServerSettingsModal() {
     setRoleName('');
     setRoleColor('#99aab5');
     setRolePerms(0);
+    setRoleDisplaySeparately(false);
     setCreating(true);
   };
 
@@ -167,15 +182,16 @@ export default function ServerSettingsModal() {
     setRoleName(role.name);
     setRoleColor(role.color);
     setRolePerms(role.permissions);
+    setRoleDisplaySeparately(role.displaySeparately);
     setCreating(false);
   };
 
   const handleSaveRole = async () => {
     const { createRole, updateRole } = useServerStore.getState();
     if (creating) {
-      await createRole(serverId, roleName, roleColor, rolePerms);
+      await createRole(serverId, roleName, roleColor, rolePerms, roleDisplaySeparately);
     } else if (editingRole) {
-      await updateRole(serverId, editingRole.id, { name: roleName, color: roleColor, permissions: rolePerms });
+      await updateRole(serverId, editingRole.id, { name: roleName, color: roleColor, permissions: rolePerms, displaySeparately: roleDisplaySeparately });
     }
     setEditingRole(null);
     setCreating(false);
@@ -521,6 +537,15 @@ export default function ServerSettingsModal() {
                   placeholderTextColor={colors.textMuted}
                 />
               </View>
+              <Pressable
+                style={styles.toggleRow}
+                onPress={() => setRoleDisplaySeparately((v) => !v)}
+              >
+                <View style={[styles.checkbox, roleDisplaySeparately && styles.checkboxChecked]}>
+                  {roleDisplaySeparately && <Text style={styles.checkmark}>{'\u2713'}</Text>}
+                </View>
+                <Text style={styles.toggleLabel}>Display members separately in the online list</Text>
+              </Pressable>
               <Text style={[styles.label, { marginTop: spacing.lg }]}>Permissions</Text>
               {PERMISSION_LABELS.map(({ perm, label }) => (
                 <Pressable
@@ -1005,6 +1030,18 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: borderRadius.sm,
   } as ViewStyle,
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  toggleLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    flex: 1,
+  } as TextStyle,
   permRow: {
     flexDirection: 'row',
     alignItems: 'center',

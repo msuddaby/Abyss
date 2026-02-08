@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
+using Microsoft.AspNetCore.SignalR;
 
 namespace Abyss.Api.Controllers;
 
@@ -12,11 +13,17 @@ namespace Abyss.Api.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> _hub;
     private const string InviteOnlyKey = "InviteOnly";
+    private const string MaxMessageLengthKey = "MaxMessageLength";
+    private const int DefaultMaxMessageLength = 4000;
+    private const int MaxMessageLengthUpperBound = 10000;
+    private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-    public AdminController(AppDbContext db)
+    public AdminController(AppDbContext db, Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> hub)
     {
         _db = db;
+        _hub = hub;
     }
 
     private bool IsSysadmin() => User.HasClaim("sysadmin", "true");
@@ -55,6 +62,7 @@ public class AdminController : ControllerBase
         if (!IsSysadmin()) return Forbid();
 
         var inviteOnly = await GetInviteOnlyAsync();
+        var maxMessageLength = await GetMaxMessageLengthAsync();
         var codes = await _db.InviteCodes
             .OrderByDescending(c => c.CreatedAt)
             .Select(c => new InviteCodeDto(
@@ -68,7 +76,7 @@ public class AdminController : ControllerBase
                 c.LastUsedAt))
             .ToListAsync();
 
-        return Ok(new AdminSettingsDto(inviteOnly, codes));
+        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, codes));
     }
 
     [HttpPut("settings/invite-only")]
@@ -78,6 +86,16 @@ public class AdminController : ControllerBase
 
         await SetInviteOnlyAsync(request.InviteOnly);
         return Ok(new { inviteOnly = request.InviteOnly });
+    }
+
+    [HttpPut("settings/max-message-length")]
+    public async Task<IActionResult> UpdateMaxMessageLength(UpdateMaxMessageLengthRequest request)
+    {
+        if (!IsSysadmin()) return Forbid();
+        var clamped = Math.Clamp(request.MaxMessageLength, 1, MaxMessageLengthUpperBound);
+        await SetMaxMessageLengthAsync(clamped);
+        await _hub.Clients.All.SendAsync("ConfigUpdated", new { maxMessageLength = clamped });
+        return Ok(new { maxMessageLength = clamped });
     }
 
     [HttpPost("invite-codes")]
@@ -117,6 +135,15 @@ public class AdminController : ControllerBase
         return bool.TryParse(row.Value, out var value) && value;
     }
 
+    private async Task<int> GetMaxMessageLengthAsync()
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == MaxMessageLengthKey);
+        if (row == null || string.IsNullOrWhiteSpace(row.Value)) return DefaultMaxMessageLength;
+        return int.TryParse(row.Value, out var value)
+            ? Math.Clamp(value, 1, MaxMessageLengthUpperBound)
+            : DefaultMaxMessageLength;
+    }
+
     private async Task SetInviteOnlyAsync(bool enabled)
     {
         var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == InviteOnlyKey);
@@ -134,15 +161,32 @@ public class AdminController : ControllerBase
         await _db.SaveChangesAsync();
     }
 
+    private async Task SetMaxMessageLengthAsync(int length)
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == MaxMessageLengthKey);
+        if (row == null)
+        {
+            row = new Models.AppConfig { Key = MaxMessageLengthKey, Value = length.ToString() };
+            _db.AppConfigs.Add(row);
+        }
+        else
+        {
+            row.Value = length.ToString();
+            row.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
     private static string GenerateInviteCode()
     {
-        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        
         var bytes = new byte[10];
         System.Security.Cryptography.RandomNumberGenerator.Fill(bytes);
         var chars = new char[10];
         for (var i = 0; i < chars.Length; i++)
         {
-            chars[i] = alphabet[bytes[i] % alphabet.Length];
+            chars[i] = Alphabet[bytes[i] % Alphabet.Length];
         }
         return new string(chars);
     }

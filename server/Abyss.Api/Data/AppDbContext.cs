@@ -26,6 +26,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<AppConfig> AppConfigs => Set<AppConfig>();
     public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<PinnedMessage> PinnedMessages => Set<PinnedMessage>();
+    public DbSet<ChannelPermissionOverride> ChannelPermissionOverrides => Set<ChannelPermissionOverride>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -66,6 +68,23 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .HasIndex(c => new { c.DmUser1Id, c.DmUser2Id })
             .IsUnique()
             .HasFilter("\"DmUser1Id\" IS NOT NULL AND \"DmUser2Id\" IS NOT NULL");
+
+        builder.Entity<ChannelPermissionOverride>()
+            .HasKey(cpo => new { cpo.ChannelId, cpo.RoleId });
+
+        builder.Entity<ChannelPermissionOverride>()
+            .HasOne(cpo => cpo.Channel)
+            .WithMany(c => c.PermissionOverrides)
+            .HasForeignKey(cpo => cpo.ChannelId);
+
+        builder.Entity<ChannelPermissionOverride>()
+            .HasOne(cpo => cpo.Role)
+            .WithMany()
+            .HasForeignKey(cpo => cpo.RoleId);
+
+        builder.Entity<ChannelPermissionOverride>()
+            .HasIndex(cpo => new { cpo.ChannelId, cpo.RoleId })
+            .IsUnique();
 
         builder.Entity<Message>()
             .HasIndex(m => new { m.ChannelId, m.CreatedAt });
@@ -274,5 +293,27 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .WithMany()
             .HasForeignKey(i => i.CreatedById)
             .OnDelete(DeleteBehavior.SetNull);
+
+        // PinnedMessage
+        builder.Entity<PinnedMessage>()
+            .HasKey(pm => new { pm.ChannelId, pm.MessageId });
+
+        builder.Entity<PinnedMessage>()
+            .HasOne(pm => pm.Channel)
+            .WithMany()
+            .HasForeignKey(pm => pm.ChannelId);
+
+        builder.Entity<PinnedMessage>()
+            .HasOne(pm => pm.Message)
+            .WithMany()
+            .HasForeignKey(pm => pm.MessageId);
+
+        builder.Entity<PinnedMessage>()
+            .HasOne(pm => pm.PinnedBy)
+            .WithMany()
+            .HasForeignKey(pm => pm.PinnedById);
+
+        builder.Entity<PinnedMessage>()
+            .HasIndex(pm => new { pm.ChannelId, pm.PinnedAt });
     }
 }

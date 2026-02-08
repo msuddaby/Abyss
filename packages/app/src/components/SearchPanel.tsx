@@ -94,6 +94,7 @@ export default function SearchPanel() {
         messages,
         currentChannelId: channel.id,
         hasMore: true,
+        hasNewer: true,
         loading: false,
       });
       // Set highlighted message ID to trigger scroll

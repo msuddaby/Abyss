@@ -1,5 +1,5 @@
 import { View, Text, Pressable, ScrollView, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
-import { useVoiceStore, useAuthStore, useServerStore, getApiBase } from '@abyss/shared';
+import { useVoiceStore, useAuthStore, useServerStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
 import Avatar from './Avatar';
 import ScreenShareView from './ScreenShareView';
 import { useWebRTC } from '../hooks/useWebRTC';
@@ -33,6 +33,10 @@ export default function VoiceView() {
   const isPtt = voiceMode === 'push-to-talk';
   const channelUsers = activeChannel ? voiceChannelUsers.get(activeChannel.id) : undefined;
   const channelSharers = activeChannel ? voiceChannelSharers.get(activeChannel.id) : undefined;
+  const canConnect = activeChannel ? hasChannelPermission(activeChannel.permissions, Permission.Connect) : false;
+  const selfState = user?.id ? channelUsers?.get(user.id) : undefined;
+  const isServerMuted = !!selfState?.isServerMuted;
+  const isServerDeafened = !!selfState?.isServerDeafened;
   const participantEntries = isConnected
     ? Array.from(participants.entries()).map(([userId, displayName]) => {
         const state = channelUsers?.get(userId) ?? { displayName, isMuted: false, isDeafened: false };
@@ -112,16 +116,18 @@ export default function VoiceView() {
       {isConnected ? (
         <View style={styles.actionBar}>
           <Pressable
-            style={[styles.actionBtn, isMuted && styles.actionBtnActive]}
+            style={[styles.actionBtn, isMuted && styles.actionBtnActive, isServerMuted && styles.actionBtnDisabled]}
             onPress={toggleMute}
+            disabled={isServerMuted}
           >
             <Text style={styles.actionBtnText}>{isMuted ? '🔇' : '🎤'}</Text>
             <Text style={styles.actionLabel}>{isMuted ? 'Unmute' : 'Mute'}</Text>
           </Pressable>
 
           <Pressable
-            style={[styles.actionBtn, isDeafened && styles.actionBtnActive]}
+            style={[styles.actionBtn, isDeafened && styles.actionBtnActive, isServerDeafened && styles.actionBtnDisabled]}
             onPress={toggleDeafen}
+            disabled={isServerDeafened}
           >
             <Text style={styles.actionBtnText}>{isDeafened ? '🔈' : '🔊'}</Text>
             <Text style={styles.actionLabel}>{isDeafened ? 'Undeafen' : 'Deafen'}</Text>
@@ -146,8 +152,9 @@ export default function VoiceView() {
       ) : (
         <View style={styles.connectBar}>
           <Pressable
-            style={styles.connectButton}
+            style={[styles.connectButton, !canConnect && styles.connectButtonDisabled]}
             onPress={() => activeChannel && joinVoice(activeChannel.id)}
+            disabled={!canConnect}
           >
             <Text style={styles.connectButtonText}>Connect</Text>
           </Pressable>
@@ -281,6 +288,9 @@ const styles = StyleSheet.create({
   actionBtnActive: {
     backgroundColor: colors.bgModifierActive,
   } as ViewStyle,
+  actionBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
   disconnectBtn: {
     backgroundColor: colors.danger,
   } as ViewStyle,
@@ -305,6 +315,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
+  } as ViewStyle,
+  connectButtonDisabled: {
+    opacity: 0.5,
   } as ViewStyle,
   connectButtonText: {
     color: colors.headerPrimary,

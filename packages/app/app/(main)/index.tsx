@@ -17,6 +17,7 @@ export default function HomeScreen() {
   const activeServer = useServerStore((s) => s.activeServer);
   const toggleLeftDrawer = useUiStore((s) => s.toggleLeftDrawer);
   const toggleRightDrawer = useUiStore((s) => s.toggleRightDrawer);
+  const openModal = useUiStore((s) => s.openModal);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [reactionTargetId, setReactionTargetId] = useState<string | null>(null);
   const showMembersButton = !!activeServer && !isDmMode;
@@ -48,7 +49,14 @@ export default function HomeScreen() {
           </Pressable>
           <Text style={styles.headerIcon}>@</Text>
           <Text style={styles.headerName}>{activeDmChannel.otherUser.displayName}</Text>
-          <View style={styles.headerSpacer} />
+          <View style={styles.headerActions}>
+            <Pressable
+              style={styles.headerActionButton}
+              onPress={() => openModal('pins', { channelId: activeDmChannel.id })}
+            >
+              <Text style={styles.headerButtonText}>{'📌'}</Text>
+            </Pressable>
+          </View>
         </View>
         <MessageList onPickReactionEmoji={handlePickReactionEmoji} />
         <TypingIndicator />
@@ -70,18 +78,20 @@ export default function HomeScreen() {
     if (isVoice) {
       return (
         <View style={styles.container}>
-          <View style={styles.header}>
-            <Pressable style={styles.headerButton} onPress={toggleLeftDrawer}>
-              <Text style={styles.headerButtonText}>{'☰'}</Text>
-            </Pressable>
-            <Text style={styles.headerIcon}>🔊</Text>
-            <Text style={styles.headerName}>{activeChannel.name}</Text>
+        <View style={styles.header}>
+          <Pressable style={styles.headerButton} onPress={toggleLeftDrawer}>
+            <Text style={styles.headerButtonText}>{'☰'}</Text>
+          </Pressable>
+          <Text style={styles.headerIcon}>🔊</Text>
+          <Text style={styles.headerName}>{activeChannel.name}</Text>
+          <View style={styles.headerActions}>
             {showMembersButton && (
-              <Pressable style={styles.headerButtonRight} onPress={toggleRightDrawer}>
+              <Pressable style={styles.headerActionButton} onPress={toggleRightDrawer}>
                 <Text style={styles.headerButtonText}>{'👥'}</Text>
               </Pressable>
             )}
           </View>
+        </View>
           <VoiceView />
         </View>
       );
@@ -99,11 +109,19 @@ export default function HomeScreen() {
           </Pressable>
           <Text style={styles.headerIcon}>#</Text>
           <Text style={styles.headerName}>{activeChannel.name}</Text>
-          {showMembersButton && (
-            <Pressable style={styles.headerButtonRight} onPress={toggleRightDrawer}>
-              <Text style={styles.headerButtonText}>{'👥'}</Text>
+          <View style={styles.headerActions}>
+            <Pressable
+              style={styles.headerActionButton}
+              onPress={() => openModal('pins', { channelId: activeChannel.id })}
+            >
+              <Text style={styles.headerButtonText}>{'📌'}</Text>
             </Pressable>
-          )}
+            {showMembersButton && (
+              <Pressable style={styles.headerActionButton} onPress={toggleRightDrawer}>
+                <Text style={styles.headerButtonText}>{'👥'}</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
         <MessageList onPickReactionEmoji={handlePickReactionEmoji} />
         <TypingIndicator />
@@ -162,8 +180,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
-  headerButtonRight: {
+  headerActions: {
     marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  } as ViewStyle,
+  headerActionButton: {
     width: 32,
     height: 32,
     alignItems: 'center',

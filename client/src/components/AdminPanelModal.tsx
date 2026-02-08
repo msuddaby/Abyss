@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, useAuthStore } from '@abyss/shared';
+import { api, useAuthStore, useAppConfigStore } from '@abyss/shared';
 import type { AdminOverview, AdminServer, AdminUser, AdminSettings, InviteCode } from '@abyss/shared';
 
 type TabKey = 'overview' | 'servers' | 'users' | 'settings';
@@ -18,6 +18,9 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [maxUses, setMaxUses] = useState<string>('');
   const [expiresAt, setExpiresAt] = useState<string>('');
   const [newCode, setNewCode] = useState<string | null>(null);
+  const [savingMaxMessageLength, setSavingMaxMessageLength] = useState(false);
+  const [maxMessageLengthInput, setMaxMessageLengthInput] = useState<string>('');
+  const setMaxMessageLength = useAppConfigStore((s) => s.setMaxMessageLength);
 
   const load = async () => {
     setLoading(true);
@@ -29,6 +32,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       ]);
       setData(overviewRes.data);
       setSettings(settingsRes.data);
+      setMaxMessageLengthInput(String(settingsRes.data.maxMessageLength ?? 4000));
     } catch (err: any) {
       setError(err?.response?.data || 'Failed to load admin overview.');
     } finally {
@@ -94,6 +98,28 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setError(err?.response?.data || 'Failed to create invite code.');
     } finally {
       setCreatingCode(false);
+    }
+  };
+
+  const updateMaxMessageLength = async () => {
+    if (!settings) return;
+    const parsed = Number(maxMessageLengthInput);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setError('Max message length must be a positive number.');
+      return;
+    }
+    setSavingMaxMessageLength(true);
+    setError(null);
+    try {
+      const res = await api.put('/admin/settings/max-message-length', { maxMessageLength: Math.floor(parsed) });
+      const updated = res.data?.maxMessageLength ?? Math.floor(parsed);
+      setSettings({ ...settings, maxMessageLength: updated });
+      setMaxMessageLengthInput(String(updated));
+      setMaxMessageLength(updated);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to update max message length.');
+    } finally {
+      setSavingMaxMessageLength(false);
     }
   };
 
@@ -282,6 +308,27 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                 <div className="admin-setting-desc">Temporarily pause writes and registrations.</div>
               </div>
               <button className="btn-secondary" disabled>Planned</button>
+            </div>
+            <div className="admin-setting-card">
+              <div>
+                <div className="admin-setting-title">Max Message Length</div>
+                <div className="admin-setting-desc">Maximum number of characters allowed per message.</div>
+              </div>
+              <div className="admin-code-actions">
+                <input
+                  type="number"
+                  min={1}
+                  value={maxMessageLengthInput}
+                  onChange={(e) => setMaxMessageLengthInput(e.target.value)}
+                />
+                <button
+                  className="btn-secondary"
+                  onClick={updateMaxMessageLength}
+                  disabled={savingMaxMessageLength || !settings}
+                >
+                  {savingMaxMessageLength ? 'Saving...' : 'Save'}
+                </button>
+              </div>
             </div>
           </div>
         )}

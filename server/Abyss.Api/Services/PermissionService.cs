@@ -7,6 +7,16 @@ namespace Abyss.Api.Services;
 public class PermissionService
 {
     private readonly AppDbContext _db;
+    public const long ChannelPermissionMask = (long)(
+        Permission.ViewChannel |
+        Permission.ReadMessageHistory |
+        Permission.SendMessages |
+        Permission.AddReactions |
+        Permission.AttachFiles |
+        Permission.MentionEveryone |
+        Permission.Connect |
+        Permission.Speak |
+        Permission.Stream);
 
     public PermissionService(AppDbContext db) => _db = db;
 
@@ -22,7 +32,7 @@ public class PermissionService
     public Task<bool> IsBannedAsync(Guid serverId, string userId) =>
         _db.ServerBans.AnyAsync(b => b.ServerId == serverId && b.UserId == userId);
 
-    public async Task<long> GetPermissionsAsync(Guid serverId, string userId)
+    public async Task<long> GetServerPermissionsAsync(Guid serverId, string userId)
     {
         var member = await GetMemberAsync(serverId, userId);
         if (member == null) return 0;
@@ -30,9 +40,82 @@ public class PermissionService
         return ComputePermissions(serverId, member);
     }
 
+    public Task<long> GetPermissionsAsync(Guid serverId, string userId) =>
+        GetServerPermissionsAsync(serverId, userId);
+
+    public async Task<long> GetChannelPermissionsAsync(Guid channelId, string userId)
+    {
+        var channel = await _db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == channelId);
+        if (channel == null) return 0;
+
+        if (channel.Type == ChannelType.DM)
+        {
+            return channel.DmUser1Id == userId || channel.DmUser2Id == userId ? ~0L : 0;
+        }
+
+        if (!channel.ServerId.HasValue) return 0;
+
+        var member = await GetMemberAsync(channel.ServerId.Value, userId);
+        if (member == null) return 0;
+        if (member.IsOwner) return ~0L;
+
+        var perms = ComputePermissions(channel.ServerId.Value, member);
+
+        var roleIds = new HashSet<Guid>();
+        var defaultRole = await _db.ServerRoles.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.ServerId == channel.ServerId.Value && r.IsDefault);
+        if (defaultRole != null) roleIds.Add(defaultRole.Id);
+        if (member.MemberRoles != null)
+        {
+            foreach (var mr in member.MemberRoles)
+                roleIds.Add(mr.RoleId);
+        }
+
+        if (roleIds.Count == 0) return perms;
+
+        var overrides = await _db.ChannelPermissionOverrides.AsNoTracking()
+            .Where(o => o.ChannelId == channelId && roleIds.Contains(o.RoleId))
+            .ToListAsync();
+
+        if ((perms & ChannelPermissionMask) == 0)
+        {
+            // Default channel perms to enabled when nothing is explicitly set.
+            perms |= ChannelPermissionMask;
+        }
+
+        if (defaultRole != null)
+        {
+            var everyoneOverride = overrides.FirstOrDefault(o => o.RoleId == defaultRole.Id);
+            if (everyoneOverride != null)
+            {
+                perms = ApplyChannelOverride(perms, everyoneOverride.Allow, everyoneOverride.Deny);
+            }
+        }
+
+        long combinedAllow = 0;
+        long combinedDeny = 0;
+        foreach (var ov in overrides)
+        {
+            if (defaultRole != null && ov.RoleId == defaultRole.Id) continue;
+            combinedAllow |= ov.Allow;
+            combinedDeny |= ov.Deny;
+        }
+
+        if (combinedAllow != 0 || combinedDeny != 0)
+            perms = ApplyChannelOverride(perms, combinedAllow, combinedDeny);
+
+        return perms;
+    }
+
     public async Task<bool> HasPermissionAsync(Guid serverId, string userId, Permission perm)
     {
-        var perms = await GetPermissionsAsync(serverId, userId);
+        var perms = await GetServerPermissionsAsync(serverId, userId);
+        return (perms & (long)perm) == (long)perm;
+    }
+
+    public async Task<bool> HasChannelPermissionAsync(Guid channelId, string userId, Permission perm)
+    {
+        var perms = await GetChannelPermissionsAsync(channelId, userId);
         return (perms & (long)perm) == (long)perm;
     }
 
@@ -113,6 +196,15 @@ public class PermissionService
                 perms |= mr.Role.Permissions;
         }
 
+        return perms;
+    }
+
+    private static long ApplyChannelOverride(long perms, long allow, long deny)
+    {
+        var allowMask = allow & ChannelPermissionMask;
+        var denyMask = deny & ChannelPermissionMask;
+        perms &= ~denyMask;
+        perms |= allowMask;
         return perms;
     }
 }

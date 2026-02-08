@@ -6,7 +6,7 @@ import {
 import {
   useAuthStore, useMessageStore, getConnection, shouldGroupMessage,
 } from '@abyss/shared';
-import type { Message, Reaction } from '@abyss/shared';
+import type { Message, Reaction, PinnedMessage } from '@abyss/shared';
 import MessageItem from './MessageItem';
 import { colors, spacing, fontSize } from '../theme/tokens';
 
@@ -18,7 +18,9 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
   const messages = useMessageStore((s) => s.messages);
   const loading = useMessageStore((s) => s.loading);
   const hasMore = useMessageStore((s) => s.hasMore);
+  const hasNewer = useMessageStore((s) => s.hasNewer);
   const loadMore = useMessageStore((s) => s.loadMore);
+  const loadNewer = useMessageStore((s) => s.loadNewer);
   const currentChannelId = useMessageStore((s) => s.currentChannelId);
   const highlightedMessageId = useMessageStore((s) => s.highlightedMessageId);
   const setHighlightedMessageId = useMessageStore((s) => s.setHighlightedMessageId);
@@ -27,12 +29,15 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
   const markDeleted = useMessageStore((s) => s.markDeleted);
   const addReaction = useMessageStore((s) => s.addReaction);
   const removeReaction = useMessageStore((s) => s.removeReaction);
+  const addPinnedMessage = useMessageStore((s) => s.addPinnedMessage);
+  const removePinnedMessage = useMessageStore((s) => s.removePinnedMessage);
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   const flatListRef = useRef<FlatList<Message>>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
+  const isLoadingNewerRef = useRef(false);
 
   const displayMessages = useMemo(() => {
     // Reverse so newest is first in data; inverted list flips it back visually
@@ -47,20 +52,26 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
     const onDel = (id: string) => markDeleted(id);
     const onReactAdd = (r: Reaction) => addReaction(r);
     const onReactRm = (msgId: string, userId: string, emoji: string) => removeReaction(msgId, userId, emoji);
+    const onPin = (pinned: PinnedMessage) => addPinnedMessage(pinned);
+    const onUnpin = (channelId: string, messageId: string) => removePinnedMessage(channelId, messageId);
 
     conn.on('ReceiveMessage', onMsg);
     conn.on('MessageEdited', onEdit);
     conn.on('MessageDeleted', onDel);
     conn.on('ReactionAdded', onReactAdd);
     conn.on('ReactionRemoved', onReactRm);
+    conn.on('MessagePinned', onPin);
+    conn.on('MessageUnpinned', onUnpin);
     return () => {
       conn.off('ReceiveMessage', onMsg);
       conn.off('MessageEdited', onEdit);
       conn.off('MessageDeleted', onDel);
       conn.off('ReactionAdded', onReactAdd);
       conn.off('ReactionRemoved', onReactRm);
+      conn.off('MessagePinned', onPin);
+      conn.off('MessageUnpinned', onUnpin);
     };
-  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction]);
+  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction, addPinnedMessage, removePinnedMessage]);
 
   // Scroll to highlighted message from search
   useEffect(() => {
@@ -122,7 +133,8 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
     const newCount = messages.length;
     prevMessageCountRef.current = newCount;
 
-    if (isLoadingMoreRef.current) return;
+    if (isLoadingMoreRef.current || isLoadingNewerRef.current) return;
+    if (highlightedMessageId) return;
 
     if (newCount > prevCount) {
       const lastMessage = messages[newCount - 1];
@@ -133,7 +145,18 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
         }, 0);
       }
     }
-  }, [messages, currentUserId]);
+  }, [messages, currentUserId, highlightedMessageId]);
+
+  const handleScroll = useCallback((e: any) => {
+    if (!hasNewer || loading || isLoadingNewerRef.current) return;
+    const offsetY = e.nativeEvent?.contentOffset?.y ?? 0;
+    if (offsetY < 80) {
+      isLoadingNewerRef.current = true;
+      loadNewer().finally(() => {
+        isLoadingNewerRef.current = false;
+      });
+    }
+  }, [hasNewer, loading, loadNewer]);
 
   return (
     <FlatList
@@ -144,6 +167,8 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
       inverted
       onEndReached={handleEndReached}
       onEndReachedThreshold={0.2}
+      onScroll={handleScroll}
+      scrollEventThrottle={16}
       maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
       style={styles.list}
       contentContainerStyle={messages.length === 0 && !loading ? styles.emptyContainer : undefined}

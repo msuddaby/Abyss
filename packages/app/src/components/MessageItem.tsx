@@ -4,8 +4,8 @@ import {
   StyleSheet, type ViewStyle, type TextStyle, type ImageStyle,
 } from 'react-native';
 import {
-  getApiBase, useAuthStore, useServerStore, useMessageStore,
-  hasPermission, Permission, getDisplayColor, canActOn,
+  getApiBase, useAuthStore, useServerStore, useMessageStore, useAppConfigStore, useToastStore,
+  hasPermission, hasChannelPermission, Permission, getDisplayColor, canActOn, useDmStore,
   parseMentions, resolveMentionName, resolveCustomEmoji,
   groupReactions, formatTime, formatDate,
 } from '@abyss/shared';
@@ -23,22 +23,34 @@ interface Props {
 export default function MessageItem({ message, grouped, onScrollToMessage, onPickReactionEmoji }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const currentUser = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
   const activeServer = useServerStore((s) => s.activeServer);
+  const activeChannel = useServerStore((s) => s.activeChannel);
+  const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
+  const addToast = useToastStore((s) => s.addToast);
   const kickMember = useServerStore((s) => s.kickMember);
   const banMember = useServerStore((s) => s.banMember);
   const editMessage = useMessageStore((s) => s.editMessage);
   const deleteMessage = useMessageStore((s) => s.deleteMessage);
   const toggleReaction = useMessageStore((s) => s.toggleReaction);
   const setReplyingTo = useMessageStore((s) => s.setReplyingTo);
+  const pinMessage = useMessageStore((s) => s.pinMessage);
+  const unpinMessage = useMessageStore((s) => s.unpinMessage);
+  const isPinned = useMessageStore((s) => s.isPinned);
+  const currentChannelId = useMessageStore((s) => s.currentChannelId);
+  const isDmMode = useDmStore((s) => s.isDmMode);
 
   const isOwn = currentUser?.id === message.authorId;
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canManageMessages = currentMember ? hasPermission(currentMember, Permission.ManageMessages) : false;
   const canDelete = isOwn || canManageMessages;
+  const canPin = isDmMode || canManageMessages;
+  const canAddReactions = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
+  const pinned = currentChannelId ? isPinned(currentChannelId, message.id) : false;
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const authorDisplayName = authorMember?.user.displayName ?? message.author.displayName;
@@ -56,19 +68,34 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
 
   const handleEditSave = useCallback(async () => {
     const trimmed = editContent.trim();
-    if (trimmed && trimmed !== message.content) {
-      await editMessage(message.id, trimmed);
+    if (trimmed.length > maxMessageLength) {
+      setEditError(`Message must be 1-${maxMessageLength} characters.`);
+      addToast(`Message must be 1-${maxMessageLength} characters.`, 'error');
+      return;
     }
-    setEditing(false);
-  }, [editContent, message.content, message.id, editMessage]);
+    try {
+      if (trimmed && trimmed !== message.content) {
+        await editMessage(message.id, trimmed);
+      }
+      setEditing(false);
+      setEditError(null);
+    } catch (err) {
+      addToast('Failed to edit message.', 'error');
+    }
+  }, [editContent, message.content, message.id, editMessage, maxMessageLength, addToast]);
 
   const handleLongPress = useCallback(() => {
     const options: string[] = ['Reply'];
     const actions: (() => void)[] = [() => setReplyingTo(message)];
 
-    if (onPickReactionEmoji) {
+    if (onPickReactionEmoji && canAddReactions) {
       options.push('Add Reaction');
       actions.push(() => onPickReactionEmoji(message.id));
+    }
+
+    if (canPin && !message.isSystem && !message.isDeleted) {
+      options.push(pinned ? 'Unpin' : 'Pin');
+      actions.push(() => (pinned ? unpinMessage(message.id) : pinMessage(message.id)));
     }
 
     options.push('Copy Text');
@@ -122,7 +149,8 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
       ),
     );
   }, [message, isOwn, editing, canDelete, canKickAuthor, canBanAuthor, activeServer, authorDisplayName,
-      setReplyingTo, deleteMessage, kickMember, banMember, editMessage, onPickReactionEmoji]);
+      setReplyingTo, deleteMessage, kickMember, banMember, editMessage, onPickReactionEmoji,
+      canPin, pinned, pinMessage, unpinMessage]);
 
   if (message.isSystem) {
     return (
@@ -268,16 +296,23 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
             <TextInput
               style={styles.editInput}
               value={editContent}
-              onChangeText={setEditContent}
+              onChangeText={(value) => {
+                setEditContent(value);
+                if (editError && value.trim().length <= maxMessageLength) {
+                  setEditError(null);
+                }
+              }}
               onSubmitEditing={handleEditSave}
               multiline
               autoFocus
+              maxLength={maxMessageLength}
             />
+            {editError && <Text style={styles.editError}>{editError}</Text>}
             <View style={styles.editActions}>
               <Pressable onPress={handleEditSave}>
                 <Text style={styles.editSave}>Save</Text>
               </Pressable>
-              <Pressable onPress={() => { setEditContent(message.content); setEditing(false); }}>
+              <Pressable onPress={() => { setEditContent(message.content); setEditError(null); setEditing(false); }}>
                 <Text style={styles.editCancel}>Cancel</Text>
               </Pressable>
             </View>
@@ -314,7 +349,7 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
                 <Pressable
                   key={g.emoji}
                   style={[styles.reactionChip, isReacted && styles.reactionChipActive]}
-                  onPress={() => toggleReaction(message.id, g.emoji)}
+                  onPress={() => { if (canAddReactions) toggleReaction(message.id, g.emoji); }}
                 >
                   {isCustom ? (() => {
                     const eid = g.emoji.substring(7);
@@ -331,7 +366,7 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
                 </Pressable>
               );
             })}
-            {onPickReactionEmoji && (
+            {onPickReactionEmoji && canAddReactions && (
               <Pressable
                 style={styles.reactionChip}
                 onPress={() => onPickReactionEmoji(message.id)}
@@ -459,6 +494,11 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     padding: spacing.sm,
     maxHeight: 120,
+  } as TextStyle,
+  editError: {
+    color: colors.danger,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xs,
   } as TextStyle,
   editActions: {
     flexDirection: 'row',

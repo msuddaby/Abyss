@@ -37,7 +37,7 @@ public class RolesController : ControllerBase
         var roles = await _db.ServerRoles
             .Where(r => r.ServerId == serverId)
             .OrderBy(r => r.Position)
-            .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault))
+            .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault, r.DisplaySeparately))
             .ToListAsync();
         return Ok(roles);
     }
@@ -68,6 +68,7 @@ public class RolesController : ControllerBase
             Permissions = req.Permissions,
             Position = newPos,
             IsDefault = false,
+            DisplaySeparately = req.DisplaySeparately,
         };
         _db.ServerRoles.Add(role);
         await _db.SaveChangesAsync();
@@ -75,7 +76,7 @@ public class RolesController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.RoleCreated, UserId,
             targetName: role.Name);
 
-        var dto = new ServerRoleDto(role.Id, role.Name, role.Color, role.Permissions, role.Position, role.IsDefault);
+        var dto = new ServerRoleDto(role.Id, role.Name, role.Color, role.Permissions, role.Position, role.IsDefault, role.DisplaySeparately);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("RoleCreated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -98,6 +99,7 @@ public class RolesController : ControllerBase
         if (req.Name != null) role.Name = req.Name;
         if (req.Color != null) role.Color = req.Color;
         if (req.Permissions.HasValue) role.Permissions = req.Permissions.Value;
+        if (req.DisplaySeparately.HasValue) role.DisplaySeparately = req.DisplaySeparately.Value;
         // Position changes handled via reorder endpoint
 
         await _db.SaveChangesAsync();
@@ -105,7 +107,7 @@ public class RolesController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.RoleUpdated, UserId,
             targetName: role.Name);
 
-        var dto = new ServerRoleDto(role.Id, role.Name, role.Color, role.Permissions, role.Position, role.IsDefault);
+        var dto = new ServerRoleDto(role.Id, role.Name, role.Color, role.Permissions, role.Position, role.IsDefault, role.DisplaySeparately);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("RoleUpdated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -159,7 +161,7 @@ public class RolesController : ControllerBase
 
         // Broadcast all roles
         var dtos = roles.OrderBy(r => r.Position)
-            .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault))
+            .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault, r.DisplaySeparately))
             .ToList();
         // Broadcast each role update so frontend can update
         foreach (var dto in dtos)

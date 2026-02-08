@@ -21,6 +21,8 @@ export { useUnreadStore } from './stores/unreadStore.js';
 export { useDmStore } from './stores/dmStore.js';
 export { useSearchStore } from './stores/searchStore.js';
 export { useSignalRStore } from './stores/signalrStore.js';
+export { useAppConfigStore } from './stores/appConfigStore.js';
+export { useToastStore } from './stores/toastStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

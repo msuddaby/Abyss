@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
@@ -11,6 +11,7 @@ import ServerSettingsModal from './ServerSettingsModal';
 import AdminPanelModal from './AdminPanelModal';
 import ConfirmModal from './ConfirmModal';
 import EditChannelModal from './EditChannelModal';
+import ChannelPermissionsModal from './ChannelPermissionsModal';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels } = useServerStore();
@@ -34,6 +35,7 @@ export default function ChannelSidebar() {
   const [dmSearching, setDmSearching] = useState(false);
   const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
   const [channelToEdit, setChannelToEdit] = useState<Channel | null>(null);
+  const [channelToEditPermissions, setChannelToEditPermissions] = useState<Channel | null>(null);
   const [contextMenuChannel, setContextMenuChannel] = useState<Channel | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
@@ -252,8 +254,9 @@ export default function ChannelSidebar() {
     );
   }
 
-  const textChannels = channels.filter((c) => c.type === 'Text');
-  const voiceChannels = channels.filter((c) => c.type === 'Voice');
+  const visibleChannels = channels.filter((c) => canViewChannel(c));
+  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
+  const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
 
   const handleChannelClick = (channel: Channel) => {
     setActiveChannel(channel);
@@ -431,6 +434,12 @@ export default function ChannelSidebar() {
             Edit Channel
           </button>
           <button
+            className="context-menu-item"
+            onClick={() => { setChannelToEditPermissions(contextMenuChannel); setContextMenuChannel(null); }}
+          >
+            Channel Permissions
+          </button>
+          <button
             className="context-menu-item danger"
             onClick={() => { setChannelToDelete(contextMenuChannel); setContextMenuChannel(null); }}
           >
@@ -444,6 +453,14 @@ export default function ChannelSidebar() {
           channelType={channelToEdit.type}
           onSave={(name) => renameChannel(activeServer.id, channelToEdit.id, name)}
           onClose={() => setChannelToEdit(null)}
+        />
+      )}
+      {channelToEditPermissions && activeServer && (
+        <ChannelPermissionsModal
+          serverId={activeServer.id}
+          channelId={channelToEditPermissions.id}
+          channelName={channelToEditPermissions.name}
+          onClose={() => setChannelToEditPermissions(null)}
         />
       )}
       {channelToDelete && activeServer && (

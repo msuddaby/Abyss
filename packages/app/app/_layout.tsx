@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import Constants from 'expo-constants';
-import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, useServerStore, useUnreadStore } from '@abyss/shared';
+import { View } from 'react-native';
+import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, useServerStore, useUnreadStore, useAppConfigStore } from '@abyss/shared';
 import { preloadStorage } from '../src/storage';
 import { registerForPushNotifications, addNotificationResponseListener, setBadgeCount } from '../src/utils/notifications';
+import ToastHost from '../src/components/ToastHost';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -26,6 +28,7 @@ export default function RootLayout() {
 
       // Re-hydrate store state now that storage is available
       await initialize();
+      await useAppConfigStore.getState().fetchConfig().catch(() => {});
 
       setIsReady(true);
       SplashScreen.hideAsync();
@@ -95,5 +98,10 @@ export default function RootLayout() {
 
   if (!isReady) return null;
 
-  return <Slot />;
+  return (
+    <View style={{ flex: 1 }}>
+      <Slot />
+      <ToastHost />
+    </View>
+  );
 }

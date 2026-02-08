@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect } from "react";
 import {
   ensureConnected,
   getConnection,
@@ -6,63 +6,81 @@ import {
   subscribeTurnCredentials,
   useVoiceStore,
   useAuthStore,
-} from '@abyss/shared';
+} from "@abyss/shared";
 
-const STUN_URL = import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302';
+const STUN_URL =
+  import.meta.env.VITE_STUN_URL || "stun:stun.l.google.com:19302";
 let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
 let turnInitPromise: Promise<void> | null = null;
 const iceRestartInFlight: Set<string> = new Set();
 
 // All state is module-level so it's shared across hook instances
-let peers: Map<string, RTCPeerConnection> = new Map();
+const peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
-let audioElements: Map<string, HTMLAudioElement> = new Map();
-let screenVideoStreams: Map<string, MediaStream> = new Map();
-let pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+const audioElements: Map<string, HTMLAudioElement> = new Map();
+const screenVideoStreams: Map<string, MediaStream> = new Map();
+const pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegistered = false;
-let currentOutputDeviceId: string = 'default';
+let currentOutputDeviceId: string = "default";
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
-let screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
+const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 
 // Audio analysis state
 let audioContext: AudioContext | null = null;
-let analysers: Map<string, { analyser: AnalyserNode; source: MediaStreamAudioSourceNode; analysisStream: MediaStream }> = new Map();
+const analysers: Map<
+  string,
+  {
+    analyser: AnalyserNode;
+    source: MediaStreamAudioSourceNode;
+    analysisStream: MediaStream;
+  }
+> = new Map();
 let analyserInterval: ReturnType<typeof setInterval> | null = null;
 const SPEAKING_THRESHOLD = 0.015;
 const INPUT_THRESHOLD_MIN = 0.005;
 const INPUT_THRESHOLD_MAX = 0.05;
 
 function ensureAudioContext(): AudioContext {
-  if (!audioContext || audioContext.state === 'closed') {
+  if (!audioContext || audioContext.state === "closed") {
     audioContext = new AudioContext();
   }
   return audioContext;
 }
 
-function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & { setSinkId: (deviceId: string) => Promise<void> } {
-  return typeof (audio as HTMLAudioElement & { setSinkId?: (deviceId: string) => Promise<void> }).setSinkId === 'function';
+function canSetSinkId(
+  audio: HTMLAudioElement,
+): audio is HTMLAudioElement & {
+  setSinkId: (deviceId: string) => Promise<void>;
+} {
+  return (
+    typeof (
+      audio as HTMLAudioElement & {
+        setSinkId?: (deviceId: string) => Promise<void>;
+      }
+    ).setSinkId === "function"
+  );
 }
 
 function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
   if (!canSetSinkId(audio)) return;
-  const target = deviceId && deviceId !== 'default' ? deviceId : 'default';
+  const target = deviceId && deviceId !== "default" ? deviceId : "default";
   audio.setSinkId(target).catch((err) => {
-    console.warn('Failed to set audio output device:', err);
+    console.warn("Failed to set audio output device:", err);
     // Fallback to default if the stored device id is no longer valid
-    if (target !== 'default') {
-      useVoiceStore.getState().setOutputDeviceId('default');
+    if (target !== "default") {
+      useVoiceStore.getState().setOutputDeviceId("default");
     }
   });
 }
 
 export async function attemptAudioUnlock() {
-  if (audioContext && audioContext.state === 'suspended') {
+  if (audioContext && audioContext.state === "suspended") {
     try {
       await audioContext.resume();
     } catch (err) {
-      console.warn('Failed to resume audio context:', err);
+      console.warn("Failed to resume audio context:", err);
     }
   }
 
@@ -73,9 +91,9 @@ export async function attemptAudioUnlock() {
     if (!audio.srcObject) return;
     plays.push(
       audio.play().catch((err) => {
-        console.warn('Audio unlock play failed:', err);
+        console.warn("Audio unlock play failed:", err);
         failed = true;
-      })
+      }),
     );
   });
   if (plays.length > 0) {
@@ -129,9 +147,11 @@ function startAnalyserLoop() {
 
       if (currentUserId && userId === currentUserId) {
         store.setLocalInputLevel(rms);
-        if (localStream && store.voiceMode === 'voice-activity') {
+        if (localStream && store.voiceMode === "voice-activity") {
           const sensitivity = Math.min(1, Math.max(0, store.inputSensitivity));
-          const threshold = INPUT_THRESHOLD_MAX - (INPUT_THRESHOLD_MAX - INPUT_THRESHOLD_MIN) * sensitivity;
+          const threshold =
+            INPUT_THRESHOLD_MAX -
+            (INPUT_THRESHOLD_MAX - INPUT_THRESHOLD_MIN) * sensitivity;
           const enabled = !store.isMuted && rms >= threshold;
           localStream.getAudioTracks().forEach((track) => {
             track.enabled = enabled;
@@ -158,7 +178,7 @@ function cleanupAnalysers() {
     store.setSpeaking(userId, false);
   }
   analysers.clear();
-  if (audioContext && audioContext.state !== 'closed') {
+  if (audioContext && audioContext.state !== "closed") {
     audioContext.close();
     audioContext = null;
   }
@@ -173,10 +193,18 @@ export function getLocalScreenStream(): MediaStream | null {
   return screenStream;
 }
 
-function buildIceServersFromTurn(creds: { urls: string[]; username: string; credential: string }): RTCIceServer[] {
+function buildIceServersFromTurn(creds: {
+  urls: string[];
+  username: string;
+  credential: string;
+}): RTCIceServer[] {
   return [
     { urls: STUN_URL },
-    { urls: creds.urls, username: creds.username, credential: creds.credential },
+    {
+      urls: creds.urls,
+      username: creds.username,
+      credential: creds.credential,
+    },
   ];
 }
 
@@ -191,7 +219,7 @@ async function initializeTurn(): Promise<void> {
       const creds = await getTurnCredentials();
       setIceServers(buildIceServersFromTurn(creds));
     } catch (err) {
-      console.warn('Failed to fetch TURN credentials:', err);
+      console.warn("Failed to fetch TURN credentials:", err);
       turnInitPromise = null;
     }
   })();
@@ -201,7 +229,7 @@ async function initializeTurn(): Promise<void> {
 async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
   for (const [peerId, pc] of peers) {
     try {
-      if (typeof pc.setConfiguration === 'function') {
+      if (typeof pc.setConfiguration === "function") {
         pc.setConfiguration({ iceServers });
       }
     } catch (err) {
@@ -212,13 +240,17 @@ async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
 
 async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
-  if (pc.signalingState !== 'stable') return;
+  if (pc.signalingState !== "stable") return;
   iceRestartInFlight.add(peerId);
   try {
     const offer = await pc.createOffer({ iceRestart: true });
     await pc.setLocalDescription(offer);
     const conn = getConnection();
-    await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+    await conn.invoke(
+      "SendSignal",
+      peerId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
   } catch (err) {
     console.warn(`ICE restart failed for ${peerId}:`, err);
   } finally {
@@ -241,8 +273,9 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
   pc.onicecandidate = (event) => {
     if (event.candidate) {
       const conn = getConnection();
-      conn.invoke('SendSignal', peerId, JSON.stringify(event.candidate.toJSON()))
-        .catch((err) => console.error('Failed to send ICE candidate:', err));
+      conn
+        .invoke("SendSignal", peerId, JSON.stringify(event.candidate.toJSON()))
+        .catch((err) => console.error("Failed to send ICE candidate:", err));
     }
   };
 
@@ -254,9 +287,11 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
     const track = event.track;
     console.log(`Got remote ${track.kind} track from ${peerId}`);
     const stream =
-      event.streams && event.streams.length > 0 ? event.streams[0] : new MediaStream([track]);
+      event.streams && event.streams.length > 0
+        ? event.streams[0]
+        : new MediaStream([track]);
 
-    if (track.kind === 'audio') {
+    if (track.kind === "audio") {
       let audio = audioElements.get(peerId);
       if (!audio) {
         audio = new Audio();
@@ -266,14 +301,15 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       applyOutputDevice(audio, currentOutputDeviceId);
       audio.srcObject = stream;
       audio.muted = useVoiceStore.getState().isDeafened;
-      audio.play()
+      audio
+        .play()
         .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
         .catch((err) => {
-          console.error('Audio play failed:', err);
+          console.error("Audio play failed:", err);
           useVoiceStore.getState().setNeedsAudioUnlock(true);
         });
       addAnalyser(peerId, stream);
-    } else if (track.kind === 'video') {
+    } else if (track.kind === "video") {
       screenVideoStreams.set(peerId, stream);
       useVoiceStore.getState().bumpScreenStreamVersion();
     }
@@ -329,12 +365,14 @@ async function replaceLocalAudioStream(newStream: MediaStream) {
   if (!newTrack) return;
 
   for (const pc of peers.values()) {
-    const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'audio');
+    const sender = pc
+      .getSenders()
+      .find((s) => s.track && s.track.kind === "audio");
     if (sender) {
       try {
         await sender.replaceTrack(newTrack);
       } catch (err) {
-        console.warn('Failed to replace audio track:', err);
+        console.warn("Failed to replace audio track:", err);
       }
     } else {
       pc.addTrack(newTrack, newStream);
@@ -347,7 +385,9 @@ async function replaceLocalAudioStream(newStream: MediaStream) {
   localStream = newStream;
 
   const voiceState = useVoiceStore.getState();
-  const shouldEnable = !voiceState.isMuted && (voiceState.voiceMode === 'voice-activity' || voiceState.isPttActive);
+  const shouldEnable =
+    !voiceState.isMuted &&
+    (voiceState.voiceMode === "voice-activity" || voiceState.isPttActive);
   newTrack.enabled = shouldEnable;
 
   const currentUser = useAuthStore.getState().user;
@@ -361,7 +401,9 @@ async function applyPendingCandidates(peerId: string) {
   const candidates = pendingCandidates.get(peerId);
   if (pc && candidates && pc.remoteDescription) {
     for (const candidate of candidates) {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(console.error);
+      await pc
+        .addIceCandidate(new RTCIceCandidate(candidate))
+        .catch(console.error);
     }
     pendingCandidates.delete(peerId);
   }
@@ -372,9 +414,12 @@ async function startScreenShareInternal() {
   if (!voiceState.currentChannelId) return;
 
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true,
+    });
   } catch (err) {
-    console.error('Could not get display media:', err);
+    console.error("Could not get display media:", err);
     return;
   }
 
@@ -388,7 +433,7 @@ async function startScreenShareInternal() {
   // Do NOT add track to any peer connections — viewers opt-in via RequestWatchStream
   voiceState.setScreenSharing(true);
   const conn = getConnection();
-  await conn.invoke('NotifyScreenShare', voiceState.currentChannelId, true);
+  await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, true);
 }
 
 async function stopScreenShareInternal() {
@@ -403,9 +448,16 @@ async function stopScreenShareInternal() {
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await conn.invoke('SendSignal', viewerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+        await conn.invoke(
+          "SendSignal",
+          viewerId,
+          JSON.stringify({ type: "offer", sdp: offer.sdp }),
+        );
       } catch (err) {
-        console.error(`Renegotiation (stop share) failed for ${viewerId}:`, err);
+        console.error(
+          `Renegotiation (stop share) failed for ${viewerId}:`,
+          err,
+        );
       }
     }
   }
@@ -420,7 +472,7 @@ async function stopScreenShareInternal() {
   voiceState.setScreenSharing(false);
 
   if (voiceState.currentChannelId) {
-    await conn.invoke('NotifyScreenShare', voiceState.currentChannelId, false);
+    await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, false);
   }
 }
 
@@ -447,9 +499,16 @@ async function addVideoTrackForViewer(viewerUserId: string) {
   try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await conn.invoke('SendSignal', viewerUserId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+    await conn.invoke(
+      "SendSignal",
+      viewerUserId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
   } catch (err) {
-    console.error(`Renegotiation (add viewer track) failed for ${viewerUserId}:`, err);
+    console.error(
+      `Renegotiation (add viewer track) failed for ${viewerUserId}:`,
+      err,
+    );
   }
 }
 
@@ -468,9 +527,16 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
   try {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    await conn.invoke('SendSignal', viewerUserId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+    await conn.invoke(
+      "SendSignal",
+      viewerUserId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
   } catch (err) {
-    console.error(`Renegotiation (remove viewer track) failed for ${viewerUserId}:`, err);
+    console.error(
+      `Renegotiation (remove viewer track) failed for ${viewerUserId}:`,
+      err,
+    );
   }
 }
 
@@ -478,7 +544,7 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
 export async function requestWatch(sharerUserId: string) {
   const conn = getConnection();
   useVoiceStore.getState().setWatching(sharerUserId);
-  await conn.invoke('RequestWatchStream', sharerUserId);
+  await conn.invoke("RequestWatchStream", sharerUserId);
 }
 
 export async function stopWatching() {
@@ -487,7 +553,7 @@ export async function stopWatching() {
   if (!sharerUserId) return;
 
   const conn = getConnection();
-  await conn.invoke('StopWatchingStream', sharerUserId);
+  await conn.invoke("StopWatchingStream", sharerUserId);
   store.setWatching(null);
   screenVideoStreams.delete(sharerUserId);
   store.bumpScreenStreamVersion();
@@ -499,7 +565,7 @@ function setupSignalRListeners() {
 
   const conn = getConnection();
 
-  conn.on('UserJoinedVoice', async (userId: string, displayName: string) => {
+  conn.on("UserJoinedVoice", async (userId: string, displayName: string) => {
     console.log(`UserJoinedVoice: ${displayName} (${userId})`);
     useVoiceStore.getState().addParticipant(userId, displayName);
 
@@ -510,60 +576,84 @@ function setupSignalRListeners() {
     const pc = createPeerConnection(userId);
 
     // Add audio tracks only — screen track is added lazily on WatchStreamRequested
-    localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
+    localStream
+      .getTracks()
+      .forEach((track) => pc.addTrack(track, localStream!));
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     console.log(`Sending offer to ${userId}`);
-    await conn.invoke('SendSignal', userId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+    await conn.invoke(
+      "SendSignal",
+      userId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
   });
 
-  conn.on('UserLeftVoice', (userId: string) => {
+  conn.on("UserLeftVoice", (userId: string) => {
     console.log(`UserLeftVoice: ${userId}`);
     useVoiceStore.getState().removeParticipant(userId);
     closePeer(userId);
   });
 
-  conn.on('ReceiveSignal', async (fromUserId: string, signal: string) => {
+  conn.on("ReceiveSignal", async (fromUserId: string, signal: string) => {
     const data = JSON.parse(signal);
 
-    if (data.type === 'offer') {
+    if (data.type === "offer") {
       console.log(`Received offer from ${fromUserId}`);
 
       // Check if peer already exists and is usable — support renegotiation
       let pc = peers.get(fromUserId);
-      if (pc && pc.signalingState !== 'closed') {
+      if (pc && pc.signalingState !== "closed") {
         // Renegotiation: reuse existing connection
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+        );
         await applyPendingCandidates(fromUserId);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         console.log(`Sending renegotiation answer to ${fromUserId}`);
-        await conn.invoke('SendSignal', fromUserId, JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+        await conn.invoke(
+          "SendSignal",
+          fromUserId,
+          JSON.stringify({ type: "answer", sdp: answer.sdp }),
+        );
       } else {
         // New connection — audio only, screen track added lazily
         pc = createPeerConnection(fromUserId);
         if (localStream) {
-          localStream.getTracks().forEach((track) => pc!.addTrack(track, localStream!));
+          localStream
+            .getTracks()
+            .forEach((track) => pc!.addTrack(track, localStream!));
         }
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.sdp }));
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+        );
         await applyPendingCandidates(fromUserId);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         console.log(`Sending answer to ${fromUserId}`);
-        await conn.invoke('SendSignal', fromUserId, JSON.stringify({ type: 'answer', sdp: answer.sdp }));
+        await conn.invoke(
+          "SendSignal",
+          fromUserId,
+          JSON.stringify({ type: "answer", sdp: answer.sdp }),
+        );
       }
-    } else if (data.type === 'answer') {
+    } else if (data.type === "answer") {
       console.log(`Received answer from ${fromUserId}`);
       const pc = peers.get(fromUserId);
       if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+        );
         await applyPendingCandidates(fromUserId);
       }
     } else if (data.candidate) {
       const pc = peers.get(fromUserId);
       if (pc && pc.remoteDescription) {
-        await pc.addIceCandidate(new RTCIceCandidate(data)).catch(console.error);
+        await pc
+          .addIceCandidate(new RTCIceCandidate(data))
+          .catch(console.error);
       } else {
         // Buffer candidates until remote description is set
         if (!pendingCandidates.has(fromUserId)) {
@@ -574,12 +664,12 @@ function setupSignalRListeners() {
     }
   });
 
-  conn.on('VoiceChannelUsers', (users: Record<string, string>) => {
+  conn.on("VoiceChannelUsers", (users: Record<string, string>) => {
     useVoiceStore.getState().setParticipants(new Map(Object.entries(users)));
   });
 
   // Screen share events (multi-sharer)
-  conn.on('ScreenShareStarted', (userId: string, displayName: string) => {
+  conn.on("ScreenShareStarted", (userId: string, displayName: string) => {
     useVoiceStore.getState().addActiveSharer(userId, displayName);
     // Update own isScreenSharing if it's our own event
     const currentUser = useAuthStore.getState().user;
@@ -588,7 +678,7 @@ function setupSignalRListeners() {
     }
   });
 
-  conn.on('ScreenShareStopped', (userId: string) => {
+  conn.on("ScreenShareStopped", (userId: string) => {
     const store = useVoiceStore.getState();
     store.removeActiveSharer(userId);
     // If we were watching this sharer, clean up
@@ -604,25 +694,25 @@ function setupSignalRListeners() {
     }
   });
 
-  conn.on('ActiveSharers', (sharers: Record<string, string>) => {
+  conn.on("ActiveSharers", (sharers: Record<string, string>) => {
     useVoiceStore.getState().setActiveSharers(new Map(Object.entries(sharers)));
   });
 
   // Sharer receives: viewer wants to watch
-  conn.on('WatchStreamRequested', (viewerUserId: string) => {
+  conn.on("WatchStreamRequested", (viewerUserId: string) => {
     console.log(`WatchStreamRequested from ${viewerUserId}`);
     addVideoTrackForViewer(viewerUserId);
   });
 
   // Sharer receives: viewer stopped watching
-  conn.on('StopWatchingRequested', (viewerUserId: string) => {
+  conn.on("StopWatchingRequested", (viewerUserId: string) => {
     console.log(`StopWatchingRequested from ${viewerUserId}`);
     removeVideoTrackForViewer(viewerUserId);
   });
 
   // Voice session replaced (joined voice from another device)
-  conn.on('VoiceSessionReplaced', (message: string) => {
-    console.warn('Voice session replaced:', message);
+  conn.on("VoiceSessionReplaced", (message: string) => {
+    console.warn("Voice session replaced:", message);
     // Force leave voice - clean up all WebRTC state
     cleanupAll();
     useVoiceStore.getState().setCurrentChannel(null);
@@ -651,12 +741,12 @@ export function useWebRTC() {
 
   // PTT key/mouse listeners
   useEffect(() => {
-    if (!currentChannelId || voiceMode !== 'push-to-talk') {
+    if (!currentChannelId || voiceMode !== "push-to-talk") {
       setPttActive(false);
       return;
     }
 
-    const isMouseBind = pttKey.startsWith('Mouse');
+    const isMouseBind = pttKey.startsWith("Mouse");
     const mouseButton = isMouseBind ? parseInt(pttKey.slice(5), 10) : -1;
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -681,15 +771,15 @@ export function useWebRTC() {
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mouseup", onMouseUp);
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mouseup", onMouseUp);
       setPttActive(false);
     };
   }, [currentChannelId, voiceMode, pttKey, setPttActive]);
@@ -697,7 +787,7 @@ export function useWebRTC() {
   // Mute/unmute local tracks (accounts for PTT mode)
   useEffect(() => {
     if (localStream) {
-      if (voiceMode === 'push-to-talk') {
+      if (voiceMode === "push-to-talk") {
         const enabled = !isMuted && isPttActive;
         localStream.getAudioTracks().forEach((track) => {
           track.enabled = enabled;
@@ -719,17 +809,21 @@ export function useWebRTC() {
 
   // Apply output device changes to all remote audio elements
   useEffect(() => {
-    currentOutputDeviceId = outputDeviceId || 'default';
-    audioElements.forEach((audio) => applyOutputDevice(audio, currentOutputDeviceId));
+    currentOutputDeviceId = outputDeviceId || "default";
+    audioElements.forEach((audio) =>
+      applyOutputDevice(audio, currentOutputDeviceId),
+    );
   }, [outputDeviceId]);
 
-  const buildAudioConstraints = useCallback((): MediaTrackConstraints | boolean => {
+  const buildAudioConstraints = useCallback(():
+    | MediaTrackConstraints
+    | boolean => {
     const base: MediaTrackConstraints = {
       noiseSuppression,
       echoCancellation,
       autoGainControl,
     };
-    if (inputDeviceId && inputDeviceId !== 'default') {
+    if (inputDeviceId && inputDeviceId !== "default") {
       return { ...base, deviceId: { exact: inputDeviceId } };
     }
     return base;
@@ -741,15 +835,18 @@ export function useWebRTC() {
     let cancelled = false;
     (async () => {
       try {
-        const constraints: MediaStreamConstraints = { audio: buildAudioConstraints() };
-        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const constraints: MediaStreamConstraints = {
+          audio: buildAudioConstraints(),
+        };
+        const newStream =
+          await navigator.mediaDevices.getUserMedia(constraints);
         if (cancelled) {
           newStream.getTracks().forEach((track) => track.stop());
           return;
         }
         await replaceLocalAudioStream(newStream);
       } catch (err) {
-        console.error('Failed to switch microphone:', err);
+        console.error("Failed to switch microphone:", err);
       }
     })();
     return () => {
@@ -765,9 +862,9 @@ export function useWebRTC() {
       try {
         const conn = await ensureConnected();
         if (cancelled) return;
-        await conn.invoke('UpdateVoiceState', isMuted, isDeafened);
+        await conn.invoke("UpdateVoiceState", isMuted, isDeafened);
       } catch (err) {
-        console.warn('Failed to update voice state', err);
+        console.warn("Failed to update voice state", err);
       }
     })();
     return () => {
@@ -781,7 +878,9 @@ export function useWebRTC() {
     const unsubscribe = subscribeTurnCredentials((creds) => {
       const iceServers = buildIceServersFromTurn(creds);
       setIceServers(iceServers);
-      void applyIceServersToPeers(iceServers).then(() => restartIceForAllPeers());
+      void applyIceServersToPeers(iceServers).then(() =>
+        restartIceForAllPeers(),
+      );
     });
     return () => {
       unsubscribe();
@@ -793,47 +892,62 @@ export function useWebRTC() {
     setupSignalRListeners();
   }, []);
 
-  const joinVoice = useCallback(async (channelId: string) => {
-    await initializeTurn();
+  const joinVoice = useCallback(
+    async (channelId: string) => {
+      await initializeTurn();
 
-    // Leave current if any
-    if (currentChannelId) {
+      // Leave current if any
+      if (currentChannelId) {
+        const conn = getConnection();
+        await conn.invoke("LeaveVoiceChannel", currentChannelId);
+        cleanupAll();
+      }
+
+      try {
+        const constraints: MediaStreamConstraints = {
+          audio: buildAudioConstraints(),
+        };
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        console.log(
+          "Got local audio stream, tracks:",
+          localStream.getAudioTracks().length,
+        );
+      } catch (err) {
+        console.error("Could not access microphone:", err);
+        return;
+      }
+
+      // Apply current mute state to the new stream immediately
+      const voiceState = useVoiceStore.getState();
+      const shouldEnable =
+        !voiceState.isMuted &&
+        (voiceState.voiceMode === "voice-activity" || voiceState.isPttActive);
+      localStream.getAudioTracks().forEach((track) => {
+        track.enabled = shouldEnable;
+      });
+
+      // Set up audio analyser for local user's speaking indicator
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser) {
+        addAnalyser(currentUser.id, localStream);
+      }
+
+      setCurrentChannel(channelId);
       const conn = getConnection();
-      await conn.invoke('LeaveVoiceChannel', currentChannelId);
-      cleanupAll();
-    }
-
-    try {
-      const constraints: MediaStreamConstraints = { audio: buildAudioConstraints() };
-      localStream = await navigator.mediaDevices.getUserMedia(constraints);
-      console.log('Got local audio stream, tracks:', localStream.getAudioTracks().length);
-    } catch (err) {
-      console.error('Could not access microphone:', err);
-      return;
-    }
-
-    // Apply current mute state to the new stream immediately
-    const voiceState = useVoiceStore.getState();
-    const shouldEnable = !voiceState.isMuted && (voiceState.voiceMode === 'voice-activity' || voiceState.isPttActive);
-    localStream.getAudioTracks().forEach((track) => {
-      track.enabled = shouldEnable;
-    });
-
-    // Set up audio analyser for local user's speaking indicator
-    const currentUser = useAuthStore.getState().user;
-    if (currentUser) {
-      addAnalyser(currentUser.id, localStream);
-    }
-
-    setCurrentChannel(channelId);
-    const conn = getConnection();
-    await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
-  }, [buildAudioConstraints, currentChannelId, setCurrentChannel]);
+      await conn.invoke(
+        "JoinVoiceChannel",
+        channelId,
+        voiceState.isMuted,
+        voiceState.isDeafened,
+      );
+    },
+    [buildAudioConstraints, currentChannelId, setCurrentChannel],
+  );
 
   const leaveVoice = useCallback(async () => {
     if (currentChannelId) {
       const conn = getConnection();
-      await conn.invoke('LeaveVoiceChannel', currentChannelId);
+      await conn.invoke("LeaveVoiceChannel", currentChannelId);
     }
     cleanupAll();
     setCurrentChannel(null);

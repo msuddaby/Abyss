@@ -1,5 +1,5 @@
 import { View, Text, Pressable, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
-import { useServerStore, useVoiceStore, getApiBase } from '@abyss/shared';
+import { useServerStore, useVoiceStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
 import type { Channel } from '@abyss/shared';
 import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
 import Avatar from './Avatar';
@@ -22,6 +22,7 @@ export default function VoiceChannelItem({ channel, isActive, isConnected, onSel
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
+  const canConnect = hasChannelPermission(channel.permissions, Permission.Connect);
 
   return (
     <View style={[styles.container, isActive && styles.containerActive]}>
@@ -35,7 +36,7 @@ export default function VoiceChannelItem({ channel, isActive, isConnected, onSel
             <Text style={styles.leaveBtnText}>{'✕'}</Text>
           </Pressable>
         ) : (
-          <Pressable style={styles.joinBtn} onPress={onJoin}>
+          <Pressable style={[styles.joinBtn, !canConnect && styles.joinBtnDisabled]} onPress={onJoin} disabled={!canConnect}>
             <Text style={styles.joinBtnText}>{'→'}</Text>
           </Pressable>
         )}
@@ -106,6 +107,9 @@ const styles = StyleSheet.create({
   joinBtn: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
+  } as ViewStyle,
+  joinBtnDisabled: {
+    opacity: 0.5,
   } as ViewStyle,
   joinBtnText: {
     color: colors.textSecondary,

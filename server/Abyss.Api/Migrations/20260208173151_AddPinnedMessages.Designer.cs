@@ -3,6 +3,7 @@ using System;
 using Abyss.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Abyss.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260208173151_AddPinnedMessages")]
+    partial class AddPinnedMessages
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -223,30 +226,6 @@ namespace Abyss.Api.Migrations
                         .HasFilter("\"DmUser1Id\" IS NOT NULL AND \"DmUser2Id\" IS NOT NULL");
 
                     b.ToTable("Channels");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.ChannelPermissionOverride", b =>
-                {
-                    b.Property<Guid>("ChannelId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("RoleId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("Allow")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("Deny")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("ChannelId", "RoleId");
-
-                    b.HasIndex("RoleId");
-
-                    b.HasIndex("ChannelId", "RoleId")
-                        .IsUnique();
-
-                    b.ToTable("ChannelPermissionOverrides");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ChannelRead", b =>
@@ -703,9 +682,6 @@ namespace Abyss.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<bool>("DisplaySeparately")
-                        .HasColumnType("boolean");
-
                     b.Property<bool>("IsDefault")
                         .HasColumnType("boolean");
 
@@ -910,25 +886,6 @@ namespace Abyss.Api.Migrations
                     b.Navigation("DmUser2");
 
                     b.Navigation("Server");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.ChannelPermissionOverride", b =>
-                {
-                    b.HasOne("Abyss.Api.Models.Channel", "Channel")
-                        .WithMany("PermissionOverrides")
-                        .HasForeignKey("ChannelId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Abyss.Api.Models.ServerRole", "Role")
-                        .WithMany()
-                        .HasForeignKey("RoleId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Channel");
-
-                    b.Navigation("Role");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ChannelRead", b =>
@@ -1262,11 +1219,6 @@ namespace Abyss.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.Channel", b =>
-                {
-                    b.Navigation("PermissionOverrides");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Message", b =>

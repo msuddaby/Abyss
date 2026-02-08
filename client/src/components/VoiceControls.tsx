@@ -1,4 +1,5 @@
-import { useVoiceStore, useServerStore } from '@abyss/shared';
+import { useEffect } from 'react';
+import { useVoiceStore, useServerStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock } from '../hooks/useWebRTC';
 
 export default function VoiceControls() {
@@ -8,6 +9,13 @@ export default function VoiceControls() {
 
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
+  const canStream = channel ? hasChannelPermission(channel.permissions, Permission.Stream) : false;
+
+  useEffect(() => {
+    if (!canStream && isScreenSharing) {
+      stopScreenShare();
+    }
+  }, [canStream, isScreenSharing, stopScreenShare]);
 
   if (!currentChannelId) return null;
 
@@ -39,13 +47,15 @@ export default function VoiceControls() {
             {isPttActive ? '🎤' : `[${pttKey.startsWith('Mouse') ? `M${pttKey.slice(5)}` : pttKey}]`}
           </span>
         )}
-        <button
-          className={`voice-ctrl-btn ${isScreenSharing ? 'active' : ''}`}
-          onClick={isScreenSharing ? stopScreenShare : startScreenShare}
-          title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
-        >
-          🖥️
-        </button>
+        {canStream && (
+          <button
+            className={`voice-ctrl-btn ${isScreenSharing ? 'active' : ''}`}
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+            title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
+          >
+            🖥️
+          </button>
+        )}
         <button className="voice-ctrl-btn disconnect" onClick={leaveVoice} title="Disconnect">
           📞
         </button>

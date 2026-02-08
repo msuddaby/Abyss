@@ -11,12 +11,14 @@ public class NotificationService
 {
     private readonly AppDbContext _db;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly PermissionService _perms;
     private static readonly Regex MentionRegex = new(@"<@([a-zA-Z0-9-]+)>", RegexOptions.Compiled);
 
-    public NotificationService(AppDbContext db, IHttpClientFactory httpClientFactory)
+    public NotificationService(AppDbContext db, IHttpClientFactory httpClientFactory, PermissionService perms)
     {
         _db = db;
         _httpClientFactory = httpClientFactory;
+        _perms = perms;
     }
 
     public record MentionParseResult(
@@ -57,6 +59,7 @@ public class NotificationService
             var isMember = await _db.ServerMembers
                 .AnyAsync(sm => sm.ServerId == serverId && sm.UserId == userId);
             if (!isMember) continue;
+            if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
 
             notifications.Add(new Notification
             {
@@ -82,6 +85,7 @@ public class NotificationService
             foreach (var userId in memberIds)
             {
                 if (!notifiedUsers.Add(userId)) continue;
+                if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
                 notifications.Add(new Notification
                 {
                     Id = Guid.NewGuid(),
@@ -109,6 +113,7 @@ public class NotificationService
             foreach (var userId in onlineMembers)
             {
                 if (!notifiedUsers.Add(userId)) continue;
+                if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
                 notifications.Add(new Notification
                 {
                     Id = Guid.NewGuid(),
@@ -271,7 +276,14 @@ public class NotificationService
             .Select(c => new { c.Id })
             .ToListAsync();
 
-        var channelIds = channels.Select(c => c.Id).ToList();
+        var channelIds = new List<Guid>();
+        foreach (var channel in channels)
+        {
+            if (await _perms.HasChannelPermissionAsync(channel.Id, userId, Permission.ViewChannel))
+                channelIds.Add(channel.Id);
+        }
+
+        if (channelIds.Count == 0) return new List<ChannelUnreadDto>();
 
         // Get user's read timestamps
         var reads = await _db.ChannelReads
@@ -293,7 +305,7 @@ public class NotificationService
             .ToDictionaryAsync(x => x.ChannelId, x => x.Count);
 
         var result = new List<ChannelUnreadDto>();
-        foreach (var ch in channels)
+        foreach (var ch in channels.Where(c => channelIds.Contains(c.Id)))
         {
             var hasLatest = latestMessages.TryGetValue(ch.Id, out var latestAt);
             var hasRead = reads.TryGetValue(ch.Id, out var readAt);
