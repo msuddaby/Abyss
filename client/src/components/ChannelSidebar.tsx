@@ -451,7 +451,7 @@ export default function ChannelSidebar() {
         <EditChannelModal
           initialName={channelToEdit.name}
           channelType={channelToEdit.type}
-          onSave={(name) => renameChannel(activeServer.id, channelToEdit.id, name)}
+          onSave={async (name) => { await renameChannel(activeServer.id, channelToEdit.id, name); }}
           onClose={() => setChannelToEdit(null)}
         />
       )}

@@ -10,7 +10,7 @@ import { useVoiceStore } from '../stores/voiceStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
+import type { Server, ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
@@ -218,7 +218,7 @@ export function useSignalRListeners() {
         useServerStore.getState().removeServer(serverId);
       });
 
-      conn.on('ServerUpdated', (_serverId: string, server: { id: string; name: string; iconUrl?: string; ownerId: string }) => {
+      conn.on('ServerUpdated', (_serverId: string, server: Server) => {
         useServerStore.getState().updateServerLocal(server);
       });
 
