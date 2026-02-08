@@ -98,6 +98,7 @@ builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddSingleton<VoiceStateService>();
+builder.Services.AddSingleton<TurnCredentialService>();
 builder.Services.AddSingleton<ImageService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();

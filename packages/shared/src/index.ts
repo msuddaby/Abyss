@@ -8,6 +8,8 @@ export * from './types/index.js';
 // Services
 export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile } from './services/api.js';
 export { getConnection, startConnection, ensureConnected, stopConnection, resetConnection } from './services/signalr.js';
+export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
+export type { TurnCredentials } from './services/turn.js';
 
 // Stores
 export { useAuthStore } from './stores/authStore.js';
@@ -18,6 +20,7 @@ export { usePresenceStore } from './stores/presenceStore.js';
 export { useUnreadStore } from './stores/unreadStore.js';
 export { useDmStore } from './stores/dmStore.js';
 export { useSearchStore } from './stores/searchStore.js';
+export { useSignalRStore } from './stores/signalrStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

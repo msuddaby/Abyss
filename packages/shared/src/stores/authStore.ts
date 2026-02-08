@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { resetConnection } from '../services/signalr.js';
+import { clearTurnCredentials } from '../services/turn.js';
 import { getStorage } from '../storage.js';
 import type { User } from '../types/index.js';
 
 interface AuthState {
   user: User | null;
   token: string | null;
+  refreshToken: string | null;
   isAuthenticated: boolean;
   isSysadmin: boolean;
   initialized: boolean;
@@ -34,6 +36,7 @@ const getSysadminFromToken = (token: string | null): boolean => {
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: (() => { try { const u = getStorage().getItem('user'); return u ? JSON.parse(u) : null; } catch { return null; } })(),
   token: (() => { try { return getStorage().getItem('token'); } catch { return null; } })(),
+  refreshToken: (() => { try { return getStorage().getItem('refreshToken'); } catch { return null; } })(),
   isAuthenticated: (() => { try { const s = getStorage(); return !!(s.getItem('token') && s.getItem('user')); } catch { return false; } })(),
   isSysadmin: (() => { try { return getSysadminFromToken(getStorage().getItem('token')); } catch { return false; } })(),
   initialized: false,
@@ -56,7 +59,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return;
     }
 
-    set({ token: storedToken, user: savedUser, isAuthenticated: true, isSysadmin: getSysadminFromToken(storedToken) });
+    set({
+      token: storedToken,
+      refreshToken: storage.getItem('refreshToken'),
+      user: savedUser,
+      isAuthenticated: true,
+      isSysadmin: getSysadminFromToken(storedToken),
+    });
     try {
       const res = await api.get(`/auth/profile/${savedUser.id}`);
       const user = res.data;
@@ -70,28 +79,36 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   login: async (username, password) => {
     const res = await api.post('/auth/login', { username, password });
-    const { token, user } = res.data;
+    const { token, refreshToken, user } = res.data;
     const s = getStorage();
     s.setItem('token', token);
+    s.setItem('refreshToken', refreshToken);
     s.setItem('user', JSON.stringify(user));
-    set({ token, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
+    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
   },
 
   register: async (username, email, password, displayName, inviteCode) => {
     const res = await api.post('/auth/register', { username, email, password, displayName, inviteCode });
-    const { token, user } = res.data;
+    const { token, refreshToken, user } = res.data;
     const s = getStorage();
     s.setItem('token', token);
+    s.setItem('refreshToken', refreshToken);
     s.setItem('user', JSON.stringify(user));
-    set({ token, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
+    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
   },
 
   logout: () => {
     const s = getStorage();
+    const refreshToken = s.getItem('refreshToken');
+    if (refreshToken) {
+      api.post('/auth/logout', { refreshToken }).catch(() => undefined);
+    }
     s.removeItem('token');
+    s.removeItem('refreshToken');
     s.removeItem('user');
     resetConnection();
-    set({ token: null, user: null, isAuthenticated: false, isSysadmin: false, initialized: true });
+    clearTurnCredentials();
+    set({ token: null, refreshToken: null, user: null, isAuthenticated: false, isSysadmin: false, initialized: true });
   },
 
   updateProfile: async (data) => {

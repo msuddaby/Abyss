@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -23,6 +25,7 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ImageService _imageService;
     private const string InviteOnlyKey = "InviteOnly";
+    private const int DefaultRefreshTokenDays = 30;
 
     public AuthController(
         UserManager<AppUser> userManager,
@@ -75,8 +78,8 @@ public class AuthController : ControllerBase
             await _db.SaveChangesAsync();
         }
 
-        var token = _tokenService.CreateToken(user);
-        return Ok(new AuthResponse(token, ToUserDto(user)));
+        var response = await CreateAuthResponseAsync(user);
+        return Ok(response);
     }
 
     [HttpPost("login")]
@@ -90,8 +93,46 @@ public class AuthController : ControllerBase
         if (!result.Succeeded)
             return Unauthorized("Invalid credentials");
 
-        var token = _tokenService.CreateToken(user);
-        return Ok(new AuthResponse(token, ToUserDto(user)));
+        var response = await CreateAuthResponseAsync(user);
+        return Ok(response);
+    }
+
+    [HttpPost("refresh")]
+    public async Task<ActionResult<AuthResponse>> Refresh(RefreshRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)) return Unauthorized("Invalid refresh token");
+
+        var tokenHash = HashToken(request.RefreshToken);
+        var storedToken = await _db.RefreshTokens
+            .Include(rt => rt.User)
+            .FirstOrDefaultAsync(rt => rt.TokenHash == tokenHash);
+
+        if (storedToken == null || !storedToken.IsActive || storedToken.User == null)
+            return Unauthorized("Invalid refresh token");
+
+        var newRefresh = CreateRefreshToken(storedToken.User, out var newRefreshToken);
+        storedToken.RevokedAt = DateTime.UtcNow;
+        storedToken.ReplacedByTokenId = newRefresh.Id;
+
+        _db.RefreshTokens.Add(newRefresh);
+        await _db.SaveChangesAsync();
+
+        var accessToken = _tokenService.CreateToken(storedToken.User);
+        return Ok(new AuthResponse(accessToken, newRefreshToken, ToUserDto(storedToken.User)));
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(LogoutRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)) return Ok();
+
+        var tokenHash = HashToken(request.RefreshToken);
+        var storedToken = await _db.RefreshTokens.FirstOrDefaultAsync(rt => rt.TokenHash == tokenHash);
+        if (storedToken == null) return Ok();
+
+        storedToken.RevokedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+        return Ok();
     }
 
     [HttpPut("profile")]
@@ -162,5 +203,49 @@ public class AuthController : ControllerBase
         var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == InviteOnlyKey);
         if (row == null) return false;
         return bool.TryParse(row.Value, out var value) && value;
+    }
+
+    private async Task<AuthResponse> CreateAuthResponseAsync(AppUser user)
+    {
+        var refresh = CreateRefreshToken(user, out var refreshToken);
+        _db.RefreshTokens.Add(refresh);
+        await _db.SaveChangesAsync();
+
+        var accessToken = _tokenService.CreateToken(user);
+        return new AuthResponse(accessToken, refreshToken, ToUserDto(user));
+    }
+
+    private static RefreshToken CreateRefreshToken(AppUser user, out string rawToken)
+    {
+        rawToken = GenerateRefreshToken();
+        return new RefreshToken
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            TokenHash = HashToken(rawToken),
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddDays(GetRefreshTokenLifetimeDays())
+        };
+    }
+
+    private static string GenerateRefreshToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(64);
+        return Convert.ToBase64String(bytes)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
+    }
+
+    private static string HashToken(string token)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        return Convert.ToBase64String(bytes);
+    }
+
+    private static int GetRefreshTokenLifetimeDays()
+    {
+        var value = Environment.GetEnvironmentVariable("REFRESH_TOKEN_DAYS");
+        return int.TryParse(value, out var days) && days > 0 ? days : DefaultRefreshTokenDays;
     }
 }

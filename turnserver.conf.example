@@ -2,15 +2,16 @@
 # Copy to turnserver.conf and update values from your .env file:
 #   cp turnserver.conf.example turnserver.conf
 #
-# To generate the TURN user hash:
-#   turnadmin -k -u $TURN_USER -r $TURN_REALM -p $TURN_CREDENTIAL
+# Using REST API auth (ephemeral credentials):
+#   use-auth-secret + static-auth-secret must match TURN_AUTH_SECRET in your .env
 
 listening-port=3478
 listening-ip=0.0.0.0
 relay-ip=0.0.0.0
 external-ip=YOUR_PUBLIC_IP
 realm=abyss
-user=abyss:GENERATE_HASH_WITH_TURNADMIN
+use-auth-secret
+static-auth-secret=CHANGE_ME_TO_A_STRONG_SECRET
 lt-cred-mech
 fingerprint
 no-cli

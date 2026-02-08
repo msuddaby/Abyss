@@ -8,6 +8,8 @@ namespace Abyss.Api.Services;
 
 public class TokenService
 {
+    private const int DefaultAccessTokenMinutes = 15;
+
     public string CreateToken(AppUser user)
     {
         var claims = new List<Claim>
@@ -33,10 +35,16 @@ public class TokenService
             issuer: Environment.GetEnvironmentVariable("JWT_ISSUER") ?? "Abyss",
             audience: Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? "Abyss",
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(7),
+            expires: DateTime.UtcNow.AddMinutes(GetAccessTokenLifetimeMinutes()),
             signingCredentials: creds
         );
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private static int GetAccessTokenLifetimeMinutes()
+    {
+        var value = Environment.GetEnvironmentVariable("JWT_EXPIRES_MINUTES");
+        return int.TryParse(value, out var minutes) && minutes > 0 ? minutes : DefaultAccessTokenMinutes;
     }
 }

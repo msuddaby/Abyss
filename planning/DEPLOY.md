@@ -20,10 +20,12 @@ Edit `.env` with your production values:
 - **`POSTGRES_PASSWORD`** — use a strong random password
 - **`JWT_KEY`** — generate a random 64+ character string (e.g. `openssl rand -base64 48`)
 - **`TURN_EXTERNAL_IP`** — your server's public IP
-- **`TURN_CREDENTIAL`** — strong random password for TURN auth
+- **`TURN_AUTH_SECRET`** — strong random secret for TURN REST auth
+- **`TURN_URLS`** — comma-separated TURN URLs (e.g. `turn:YOUR_PUBLIC_IP:3478,turn:YOUR_PUBLIC_IP:3478?transport=tcp`)
+- **`TURN_TTL_SECONDS`** — TURN credential TTL in seconds (default 3600)
 - **`CORS_ORIGINS`** — your domain (e.g. `https://your.domain.com`)
 - **`VITE_API_URL`** — your domain (e.g. `https://your.domain.com`)
-- **`VITE_TURN_URLS`** — update with your public IP
+- (TURN credentials are now issued by the backend; no TURN secrets in frontend envs)
 
 Copy and edit the TURN config:
 
@@ -81,13 +83,7 @@ curl http://localhost:5000/health
 
 ## 5. TURN Server Setup
 
-Generate a hashed credential for turnserver.conf:
-
-```bash
-docker run --rm coturn/coturn turnadmin -k -u abyss -r abyss -p your-turn-password
-```
-
-Use the output hash in `turnserver.conf` for the `lt-cred-mech` user entry.
+Set `static-auth-secret` in `turnserver.conf` to match `TURN_AUTH_SECRET`.
 
 ## 6. Uploaded Files
 

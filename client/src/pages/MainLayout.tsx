@@ -7,7 +7,7 @@ import ScreenShareView from '../components/ScreenShareView';
 import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners } from '@abyss/shared';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore } from '@abyss/shared';
 
 export default function MainLayout() {
   const activeChannel = useServerStore((s) => s.activeChannel);
@@ -17,14 +17,27 @@ export default function MainLayout() {
   const searchIsOpen = useSearchStore((s) => s.isOpen);
   const openSearch = useSearchStore((s) => s.openSearch);
   const closeSearch = useSearchStore((s) => s.closeSearch);
+  const signalRStatus = useSignalRStore((s) => s.status);
 
   useSignalRListeners();
+
+  const showSignalRBanner = signalRStatus !== 'connected';
+  const signalRMessage = signalRStatus === 'connecting'
+    ? 'Connecting to live updates...'
+    : signalRStatus === 'reconnecting'
+      ? 'Reconnecting to live updates...'
+      : 'Live updates offline. Retrying...';
 
   return (
     <div className="main-layout">
       <ServerSidebar />
       <ChannelSidebar />
       <div className="content-area">
+        {showSignalRBanner && (
+          <div className={`signalr-status-banner ${signalRStatus}`}>
+            <span>{signalRMessage}</span>
+          </div>
+        )}
         {isDmMode && activeDmChannel ? (
           <>
             <div className="channel-header">

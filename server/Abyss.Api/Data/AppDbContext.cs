@@ -25,6 +25,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<DevicePushToken> DevicePushTokens => Set<DevicePushToken>();
     public DbSet<AppConfig> AppConfigs => Set<AppConfig>();
     public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -251,6 +252,18 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<AppConfig>()
             .HasKey(c => c.Key);
+
+        builder.Entity<RefreshToken>()
+            .HasOne(rt => rt.User)
+            .WithMany()
+            .HasForeignKey(rt => rt.UserId);
+
+        builder.Entity<RefreshToken>()
+            .HasIndex(rt => rt.TokenHash)
+            .IsUnique();
+
+        builder.Entity<RefreshToken>()
+            .HasIndex(rt => new { rt.UserId, rt.ExpiresAt });
 
         builder.Entity<InviteCode>()
             .HasIndex(i => i.Code)

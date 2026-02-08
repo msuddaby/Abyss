@@ -4,6 +4,7 @@ import type { StorageAdapter } from '@abyss/shared';
 
 const PRELOAD_KEYS = [
   'token',
+  'refreshToken',
   'user',
   'activeServerId',
   'lastChannelByServer',
@@ -14,7 +15,7 @@ const PRELOAD_KEYS = [
 ];
 
 // Keys stored in SecureStore (Keychain/EncryptedSharedPreferences)
-const SECURE_KEYS = new Set(['token']);
+const SECURE_KEYS = new Set(['token', 'refreshToken']);
 
 const cache = new Map<string, string>();
 

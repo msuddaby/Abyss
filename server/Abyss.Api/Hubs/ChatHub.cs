@@ -191,6 +191,12 @@ public class ChatHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
+    // Lightweight health check for clients.
+    public string Ping()
+    {
+        return "pong";
+    }
+
     public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)
     {
         if (attachmentIds == null)

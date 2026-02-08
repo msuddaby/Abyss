@@ -7,23 +7,21 @@ import {
 } from 'react-native-webrtc';
 import InCallManager from 'react-native-incall-manager';
 import Constants from 'expo-constants';
-import { getConnection, ensureConnected, useVoiceStore, useAuthStore } from '@abyss/shared';
+import {
+  getConnection,
+  ensureConnected,
+  getTurnCredentials,
+  subscribeTurnCredentials,
+  useVoiceStore,
+  useAuthStore,
+} from '@abyss/shared';
 
-// ICE config from app.json extras
+// ICE config (STUN from app.json extras, TURN from backend)
 const extra = Constants.expoConfig?.extra ?? {};
-const turnUrls = extra.turnUrls ? extra.turnUrls.split(',').filter(Boolean) : [];
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: extra.stunUrl || 'stun:stun.l.google.com:19302' },
-    ...(turnUrls.length > 0
-      ? [{
-          urls: turnUrls,
-          username: extra.turnUsername || '',
-          credential: extra.turnCredential || '',
-        }]
-      : []),
-  ],
-};
+const STUN_URL = extra.stunUrl || 'stun:stun.l.google.com:19302';
+let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
+let turnInitPromise: Promise<void> | null = null;
+const iceRestartInFlight: Set<string> = new Set();
 
 // Module-level state (singleton, shared across hook instances)
 let peers: Map<string, RTCPeerConnection> = new Map();
@@ -60,7 +58,7 @@ export async function stopWatching() {
 
 function createPeerConnection(peerId: string): RTCPeerConnection {
   closePeer(peerId);
-  const pc = new RTCPeerConnection(ICE_SERVERS);
+  const pc = new RTCPeerConnection({ iceServers: currentIceServers });
   peers.set(peerId, pc);
 
   (pc as any).onicecandidate = (event: any) => {
@@ -117,6 +115,7 @@ function closePeer(peerId: string) {
   remoteStreams.delete(peerId);
   screenVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
+  iceRestartInFlight.delete(peerId);
 }
 
 function cleanupAll() {
@@ -144,6 +143,67 @@ async function applyPendingCandidates(peerId: string) {
       }
     }
     pendingCandidates.delete(peerId);
+  }
+}
+
+function buildIceServersFromTurn(creds: { urls: string[]; username: string; credential: string }): RTCIceServer[] {
+  return [
+    { urls: STUN_URL },
+    { urls: creds.urls, username: creds.username, credential: creds.credential },
+  ];
+}
+
+function setIceServers(iceServers: RTCIceServer[]) {
+  currentIceServers = iceServers;
+}
+
+async function initializeTurn(): Promise<void> {
+  if (turnInitPromise) return turnInitPromise;
+  turnInitPromise = (async () => {
+    try {
+      const creds = await getTurnCredentials();
+      setIceServers(buildIceServersFromTurn(creds));
+    } catch (err) {
+      console.warn('[WebRTC] Failed to fetch TURN credentials:', err);
+      turnInitPromise = null;
+    }
+  })();
+  return turnInitPromise;
+}
+
+async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
+  for (const [peerId, pc] of peers) {
+    try {
+      const anyPc = pc as any;
+      if (typeof anyPc.setConfiguration === 'function') {
+        anyPc.setConfiguration({ iceServers });
+      }
+    } catch (err) {
+      console.warn(`[WebRTC] Failed to set ICE servers for ${peerId}:`, err);
+    }
+  }
+}
+
+async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
+  if (iceRestartInFlight.has(peerId)) return;
+  if (pc.signalingState !== 'stable') return;
+  iceRestartInFlight.add(peerId);
+  try {
+    const offer = await pc.createOffer({ iceRestart: true });
+    await pc.setLocalDescription(offer);
+    const conn = getConnection();
+    await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+  } catch (err) {
+    console.warn(`[WebRTC] ICE restart failed for ${peerId}:`, err);
+  } finally {
+    iceRestartInFlight.delete(peerId);
+  }
+}
+
+async function restartIceForAllPeers() {
+  const entries = Array.from(peers.entries());
+  for (const [peerId, pc] of entries) {
+    await restartIceForPeer(peerId, pc);
   }
 }
 
@@ -378,6 +438,19 @@ export function useWebRTC() {
 
   // Register SignalR listeners once
   useEffect(() => {
+    void initializeTurn();
+    const unsubscribe = subscribeTurnCredentials((creds) => {
+      const iceServers = buildIceServersFromTurn(creds);
+      setIceServers(iceServers);
+      void applyIceServersToPeers(iceServers).then(() => restartIceForAllPeers());
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Register SignalR listeners once
+  useEffect(() => {
     setupSignalRListeners();
   }, []);
 
@@ -387,6 +460,7 @@ export function useWebRTC() {
     // Ensure connection is started and listeners are on the active connection
     await ensureConnected();
     setupSignalRListeners();
+    await initializeTurn();
 
     // Leave current if any
     if (currentChannelId) {

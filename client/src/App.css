@@ -792,6 +792,35 @@
   overflow: hidden;
 }
 
+.signalr-status-banner {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  color: var(--text-primary);
+  background: rgba(250, 166, 26, 0.12);
+  border-bottom: 1px solid rgba(250, 166, 26, 0.35);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.signalr-status-banner.reconnecting {
+  background: rgba(250, 166, 26, 0.16);
+}
+
+.signalr-status-banner.disconnected {
+  background: rgba(231, 76, 60, 0.18);
+  border-bottom: 1px solid rgba(231, 76, 60, 0.45);
+}
+
+.signalr-status-banner.connecting {
+  background: rgba(52, 152, 219, 0.18);
+  border-bottom: 1px solid rgba(52, 152, 219, 0.45);
+}
+
 .channel-header {
   height: 48px;
   padding: 0 16px;

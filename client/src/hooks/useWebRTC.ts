@@ -1,19 +1,17 @@
 import { useCallback, useEffect } from 'react';
-import { ensureConnected, getConnection, useVoiceStore, useAuthStore } from '@abyss/shared';
+import {
+  ensureConnected,
+  getConnection,
+  getTurnCredentials,
+  subscribeTurnCredentials,
+  useVoiceStore,
+  useAuthStore,
+} from '@abyss/shared';
 
-const turnUrls = import.meta.env.VITE_TURN_URLS?.split(',') ?? [];
-const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302' },
-    ...(turnUrls.length > 0
-      ? [{
-          urls: turnUrls,
-          username: import.meta.env.VITE_TURN_USERNAME || '',
-          credential: import.meta.env.VITE_TURN_CREDENTIAL || '',
-        }]
-      : []),
-  ],
-};
+const STUN_URL = import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302';
+let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
+let turnInitPromise: Promise<void> | null = null;
+const iceRestartInFlight: Set<string> = new Set();
 
 // All state is module-level so it's shared across hook instances
 let peers: Map<string, RTCPeerConnection> = new Map();
@@ -175,9 +173,69 @@ export function getLocalScreenStream(): MediaStream | null {
   return screenStream;
 }
 
+function buildIceServersFromTurn(creds: { urls: string[]; username: string; credential: string }): RTCIceServer[] {
+  return [
+    { urls: STUN_URL },
+    { urls: creds.urls, username: creds.username, credential: creds.credential },
+  ];
+}
+
+function setIceServers(iceServers: RTCIceServer[]) {
+  currentIceServers = iceServers;
+}
+
+async function initializeTurn(): Promise<void> {
+  if (turnInitPromise) return turnInitPromise;
+  turnInitPromise = (async () => {
+    try {
+      const creds = await getTurnCredentials();
+      setIceServers(buildIceServersFromTurn(creds));
+    } catch (err) {
+      console.warn('Failed to fetch TURN credentials:', err);
+      turnInitPromise = null;
+    }
+  })();
+  return turnInitPromise;
+}
+
+async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
+  for (const [peerId, pc] of peers) {
+    try {
+      if (typeof pc.setConfiguration === 'function') {
+        pc.setConfiguration({ iceServers });
+      }
+    } catch (err) {
+      console.warn(`Failed to set ICE servers for ${peerId}:`, err);
+    }
+  }
+}
+
+async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
+  if (iceRestartInFlight.has(peerId)) return;
+  if (pc.signalingState !== 'stable') return;
+  iceRestartInFlight.add(peerId);
+  try {
+    const offer = await pc.createOffer({ iceRestart: true });
+    await pc.setLocalDescription(offer);
+    const conn = getConnection();
+    await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+  } catch (err) {
+    console.warn(`ICE restart failed for ${peerId}:`, err);
+  } finally {
+    iceRestartInFlight.delete(peerId);
+  }
+}
+
+async function restartIceForAllPeers() {
+  const entries = Array.from(peers.entries());
+  for (const [peerId, pc] of entries) {
+    await restartIceForPeer(peerId, pc);
+  }
+}
+
 function createPeerConnection(peerId: string): RTCPeerConnection {
   closePeer(peerId);
-  const pc = new RTCPeerConnection(ICE_SERVERS);
+  const pc = new RTCPeerConnection({ iceServers: currentIceServers });
   peers.set(peerId, pc);
 
   pc.onicecandidate = (event) => {
@@ -239,6 +297,7 @@ function closePeer(peerId: string) {
   screenVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
   screenTrackSenders.delete(peerId);
+  iceRestartInFlight.delete(peerId);
 }
 
 function cleanupAll() {
@@ -718,10 +777,25 @@ export function useWebRTC() {
 
   // Register SignalR listeners once (module-level flag, not per-instance)
   useEffect(() => {
+    void initializeTurn();
+    const unsubscribe = subscribeTurnCredentials((creds) => {
+      const iceServers = buildIceServersFromTurn(creds);
+      setIceServers(iceServers);
+      void applyIceServersToPeers(iceServers).then(() => restartIceForAllPeers());
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Register SignalR listeners once (module-level flag, not per-instance)
+  useEffect(() => {
     setupSignalRListeners();
   }, []);
 
   const joinVoice = useCallback(async (channelId: string) => {
+    await initializeTurn();
+
     // Leave current if any
     if (currentChannelId) {
       const conn = getConnection();
