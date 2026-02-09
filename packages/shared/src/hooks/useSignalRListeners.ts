@@ -8,8 +8,10 @@ import { useDmStore } from '../stores/dmStore.js';
 import { useMessageStore } from '../stores/messageStore.js';
 import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
+import { useToastStore } from '../stores/toastStore.js';
+import { useAppConfigStore } from '../stores/appConfigStore.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
+import type { Server, ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
@@ -85,9 +87,11 @@ export function useSignalRListeners() {
         'UserProfileUpdated', 'MemberRolesUpdated', 'MemberKicked', 'MemberBanned', 'MemberUnbanned',
         'RoleCreated', 'RoleUpdated', 'RoleDeleted',
         'EmojiCreated', 'EmojiUpdated', 'EmojiDeleted',
-        'ChannelCreated', 'ChannelDeleted', 'ServerDeleted',
+        'ChannelCreated', 'ChannelUpdated', 'ChannelDeleted', 'ChannelsReordered', 'ChannelPermissionsUpdated',
+        'ServerDeleted', 'ServerUpdated',
         'NewUnreadMessage', 'MentionReceived',
         'DmChannelCreated',
+        'Error', 'ConfigUpdated',
       ];
       for (const e of events) conn.off(e);
 
@@ -141,25 +145,19 @@ export function useSignalRListeners() {
         useServerStore.getState().updateMemberRolesLocal(userId, roles);
       });
 
-      conn.on('MemberKicked', (_serverId: string, userId: string) => {
+      conn.on('MemberKicked', (serverId: string, userId: string) => {
         const currentUser = useAuthStore.getState().user;
         if (currentUser?.id === userId) {
-          const serverId = useServerStore.getState().activeServer?.id;
-          if (serverId) {
-            useServerStore.getState().removeServer(serverId);
-          }
+          useServerStore.getState().removeServer(serverId);
         } else {
           useServerStore.getState().removeMember(userId);
         }
       });
 
-      conn.on('MemberBanned', (_serverId: string, userId: string) => {
+      conn.on('MemberBanned', (serverId: string, userId: string) => {
         const currentUser = useAuthStore.getState().user;
         if (currentUser?.id === userId) {
-          const serverId = useServerStore.getState().activeServer?.id;
-          if (serverId) {
-            useServerStore.getState().removeServer(serverId);
-          }
+          useServerStore.getState().removeServer(serverId);
         } else {
           useServerStore.getState().removeMember(userId);
         }
@@ -193,16 +191,38 @@ export function useSignalRListeners() {
         useServerStore.getState().removeEmojiLocal(emojiId);
       });
 
-      conn.on('ChannelCreated', (_serverId: string, channel: { id: string; name: string; type: 'Text' | 'Voice'; serverId: string; position: number }) => {
-        useServerStore.getState().addChannelLocal(channel);
+      const refreshChannels = async (serverId: string) => {
+        const activeServer = useServerStore.getState().activeServer;
+        if (activeServer?.id !== serverId) return;
+        await useServerStore.getState().fetchChannels(serverId);
+      };
+
+      conn.on('ChannelCreated', (serverId: string) => {
+        refreshChannels(serverId).catch(console.error);
       });
 
-      conn.on('ChannelDeleted', (_serverId: string, channelId: string) => {
-        useServerStore.getState().removeChannel(channelId);
+      conn.on('ChannelUpdated', (serverId: string) => {
+        refreshChannels(serverId).catch(console.error);
+      });
+
+      conn.on('ChannelDeleted', (serverId: string) => {
+        refreshChannels(serverId).catch(console.error);
+      });
+
+      conn.on('ChannelsReordered', (serverId: string) => {
+        refreshChannels(serverId).catch(console.error);
+      });
+
+      conn.on('ChannelPermissionsUpdated', (serverId: string) => {
+        refreshChannels(serverId).catch(console.error);
       });
 
       conn.on('ServerDeleted', (serverId: string) => {
         useServerStore.getState().removeServer(serverId);
+      });
+
+      conn.on('ServerUpdated', (_serverId: string, server: Server) => {
+        useServerStore.getState().updateServerLocal(server);
       });
 
       conn.on('DmChannelCreated', (dm: DmChannel) => {
@@ -243,6 +263,19 @@ export function useSignalRListeners() {
           } else {
             useUnreadStore.getState().incrementMention(notification.channelId, notification.serverId);
           }
+        }
+      });
+
+      conn.on('Error', (message: string) => {
+        if (message) {
+          useToastStore.getState().addToast(message, 'error');
+        }
+      });
+
+      conn.on('ConfigUpdated', (payload: { maxMessageLength: number } | number) => {
+        const value = typeof payload === 'number' ? payload : payload?.maxMessageLength;
+        if (typeof value === 'number' && value > 0) {
+          useAppConfigStore.getState().setMaxMessageLength(value);
         }
       });
 

@@ -18,6 +18,7 @@ const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
   ChannelCreated: 'Created channel',
   ChannelDeleted: 'Deleted channel',
+  ChannelUpdated: 'Updated channel',
   MemberKicked: 'Kicked',
   MemberPromoted: 'Promoted',
   MemberDemoted: 'Demoted',
@@ -28,14 +29,19 @@ const ACTION_LABELS: Record<string, string> = {
   RoleUpdated: 'Updated role',
   RoleDeleted: 'Deleted role',
   MemberRolesUpdated: 'Updated roles of',
+  MemberLeft: 'Left the server',
   EmojiCreated: 'Created emoji',
   EmojiDeleted: 'Deleted emoji',
+  ServerUpdated: 'Updated server',
+  MessagePinned: 'Pinned a message',
+  MessageUnpinned: 'Unpinned a message',
 };
 
 const ACTION_ICONS: Record<string, string> = {
   MessageDeleted: '\u{1F5D1}',
   ChannelCreated: '\u{2795}',
   ChannelDeleted: '\u{2796}',
+  ChannelUpdated: '\u{270F}',
   MemberKicked: '\u{1F6AB}',
   MemberPromoted: '\u{2B06}',
   MemberDemoted: '\u{2B07}',
@@ -46,8 +52,12 @@ const ACTION_ICONS: Record<string, string> = {
   RoleUpdated: '\u{270F}',
   RoleDeleted: '\u{274C}',
   MemberRolesUpdated: '\u{1F465}',
+  MemberLeft: '\u{1F6AA}',
   EmojiCreated: '\u{1F600}',
   EmojiDeleted: '\u{274C}',
+  ServerUpdated: '\u{270F}',
+  MessagePinned: '\u{1F4CC}',
+  MessageUnpinned: '\u{1F4CC}',
 };
 
 const PERMISSION_LABELS: { perm: number; label: string }[] = [
@@ -61,13 +71,22 @@ const PERMISSION_LABELS: { perm: number; label: string }[] = [
   { perm: Permission.ManageServer, label: 'Manage Server' },
   { perm: Permission.ManageInvites, label: 'Manage Invites' },
   { perm: Permission.ManageEmojis, label: 'Manage Emojis' },
+  { perm: Permission.ViewChannel, label: 'View Channels' },
+  { perm: Permission.ReadMessageHistory, label: 'Read Message History' },
+  { perm: Permission.SendMessages, label: 'Send Messages' },
+  { perm: Permission.AddReactions, label: 'Add Reactions' },
+  { perm: Permission.AttachFiles, label: 'Attach Files' },
+  { perm: Permission.MentionEveryone, label: 'Mention @everyone/@here' },
+  { perm: Permission.Connect, label: 'Connect (Voice)' },
+  { perm: Permission.Speak, label: 'Speak (Voice)' },
+  { perm: Permission.Stream, label: 'Stream (Screen Share)' },
 ];
 
 function formatTimestamp(dateStr: string) {
   return new Date(dateStr).toLocaleString();
 }
 
-type Tab = 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
+type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
 
 export default function ServerSettingsModal() {
   const closeModal = useUiStore((s) => s.closeModal);
@@ -84,12 +103,16 @@ export default function ServerSettingsModal() {
   const canBan = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
   const canViewAuditLog = currentMember ? hasPermission(currentMember, Permission.ViewAuditLog) : false;
   const canManageEmojis = currentMember ? hasPermission(currentMember, Permission.ManageEmojis) : false;
+  const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
   const canManageAnyMembers = canManageRoles || canKick || canBan;
 
   const serverId = activeServer?.id ?? '';
 
   // Tab state
-  const defaultTab: Tab = canManageAnyMembers ? 'members' : canManageRoles ? 'roles' : 'audit';
+  const defaultTab: Tab = canManageServer ? 'server'
+    : canManageAnyMembers ? 'members'
+    : canManageRoles ? 'roles'
+    : 'audit';
   const [tab, setTab] = useState<Tab>(defaultTab);
 
   // Audit logs
@@ -105,6 +128,7 @@ export default function ServerSettingsModal() {
   const [roleName, setRoleName] = useState('');
   const [roleColor, setRoleColor] = useState('#99aab5');
   const [rolePerms, setRolePerms] = useState(0);
+  const [roleDisplaySeparately, setRoleDisplaySeparately] = useState(false);
   const [creating, setCreating] = useState(false);
 
   // Emojis tab
@@ -112,6 +136,12 @@ export default function ServerSettingsModal() {
   const [emojiUri, setEmojiUri] = useState<string | null>(null);
   const [emojiUploading, setEmojiUploading] = useState(false);
   const [emojiError, setEmojiError] = useState('');
+
+  // Server settings
+  const [serverName, setServerName] = useState(activeServer?.name ?? '');
+  const [serverIconAsset, setServerIconAsset] = useState<{ uri: string; name: string; type?: string } | null>(null);
+  const [serverSaving, setServerSaving] = useState(false);
+  const [serverError, setServerError] = useState('');
 
   // Danger zone
   const [confirmName, setConfirmName] = useState('');
@@ -126,6 +156,14 @@ export default function ServerSettingsModal() {
     }
   }, [tab, serverId]);
 
+  useEffect(() => {
+    if (activeServer) {
+      setServerName(activeServer.name);
+      setServerIconAsset(null);
+      setServerError('');
+    }
+  }, [activeServer?.id]);
+
   const nonDefaultRoles = [...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position);
   const showEditor = creating || editingRole != null;
 
@@ -135,6 +173,7 @@ export default function ServerSettingsModal() {
     setRoleName('');
     setRoleColor('#99aab5');
     setRolePerms(0);
+    setRoleDisplaySeparately(false);
     setCreating(true);
   };
 
@@ -143,15 +182,16 @@ export default function ServerSettingsModal() {
     setRoleName(role.name);
     setRoleColor(role.color);
     setRolePerms(role.permissions);
+    setRoleDisplaySeparately(role.displaySeparately);
     setCreating(false);
   };
 
   const handleSaveRole = async () => {
     const { createRole, updateRole } = useServerStore.getState();
     if (creating) {
-      await createRole(serverId, roleName, roleColor, rolePerms);
+      await createRole(serverId, roleName, roleColor, rolePerms, roleDisplaySeparately);
     } else if (editingRole) {
-      await updateRole(serverId, editingRole.id, { name: roleName, color: roleColor, permissions: rolePerms });
+      await updateRole(serverId, editingRole.id, { name: roleName, color: roleColor, permissions: rolePerms, displaySeparately: roleDisplaySeparately });
     }
     setEditingRole(null);
     setCreating(false);
@@ -234,8 +274,47 @@ export default function ServerSettingsModal() {
     }
   };
 
+  // ─── Server settings handlers ───
+  const pickServerIcon = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 1,
+    });
+    if (!result.canceled && result.assets[0]) {
+      const asset = result.assets[0];
+      const name = asset.fileName ?? 'server-icon.png';
+      const type = asset.mimeType ?? 'image/png';
+      setServerIconAsset({ uri: asset.uri, name, type });
+      setServerError('');
+    }
+  };
+
+  const handleSaveServer = async () => {
+    if (!activeServer) return;
+    const name = serverName.trim();
+    if (!name) {
+      setServerError('Server name is required.');
+      return;
+    }
+    setServerSaving(true);
+    setServerError('');
+    try {
+      await useServerStore.getState().updateServer(serverId, {
+        name,
+        icon: serverIconAsset ?? undefined,
+      });
+      setServerIconAsset(null);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: string } })?.response?.data;
+      setServerError(typeof msg === 'string' ? msg : 'Update failed');
+    } finally {
+      setServerSaving(false);
+    }
+  };
+
   // ─── Tabs config ───
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
+    { key: 'server', label: 'Server', visible: canManageServer },
     { key: 'members', label: 'Members', visible: canManageAnyMembers },
     { key: 'roles', label: 'Roles', visible: canManageRoles },
     { key: 'emojis', label: 'Emojis', visible: canManageEmojis },
@@ -247,15 +326,67 @@ export default function ServerSettingsModal() {
   return (
     <Modal title="Server Settings" maxWidth={520}>
       {/* Tab bar */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabBar} contentContainerStyle={styles.tabBarContent}>
-        {tabs.filter((t) => t.visible).map((t) => (
-          <Pressable key={t.key} style={[styles.tab, tab === t.key && styles.tabActive]} onPress={() => setTab(t.key)}>
-            <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.label}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      <View style={styles.tabBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tabBarScroll}
+          contentContainerStyle={styles.tabBarContent}
+        >
+          {tabs.filter((t) => t.visible).map((t) => (
+            <Pressable key={t.key} style={[styles.tab, tab === t.key && styles.tabActive]} onPress={() => setTab(t.key)}>
+              <Text style={[styles.tabText, tab === t.key && styles.tabTextActive]}>{t.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
 
       {/* ─── Members Tab ─── */}
+      {tab === 'server' && canManageServer && (
+        <View>
+          <Text style={styles.editorTitle}>Server Info</Text>
+          <View style={styles.serverRow}>
+            <Pressable style={styles.serverIconButton} onPress={pickServerIcon}>
+              {(() => {
+                const iconUri = serverIconAsset?.uri
+                  ?? (activeServer?.iconUrl
+                    ? (activeServer.iconUrl.startsWith('http') ? activeServer.iconUrl : `${getApiBase()}${activeServer.iconUrl}`)
+                    : null);
+                if (iconUri) {
+                  return <Image source={{ uri: iconUri }} style={styles.serverIconImage} />;
+                }
+                return (
+                  <View style={styles.serverIconFallback}>
+                    <Text style={styles.serverIconText}>{(activeServer?.name || '?').charAt(0).toUpperCase()}</Text>
+                  </View>
+                );
+              })()}
+            </Pressable>
+            <View style={styles.serverFields}>
+              <TextInput
+                style={styles.input}
+                placeholder="Server name"
+                placeholderTextColor={colors.textMuted}
+                value={serverName}
+                onChangeText={setServerName}
+              />
+              <Pressable style={styles.smallBtn} onPress={pickServerIcon}>
+                <Text style={styles.smallBtnText}>Change Icon</Text>
+              </Pressable>
+            </View>
+          </View>
+          {serverError ? <Text style={styles.errorText}>{serverError}</Text> : null}
+          <View style={styles.actions}>
+            <Pressable
+              style={[styles.btnPrimary, (!serverName.trim() || serverSaving) && styles.btnDisabled]}
+              onPress={handleSaveServer}
+              disabled={!serverName.trim() || serverSaving}
+            >
+              <Text style={styles.btnPrimaryText}>{serverSaving ? 'Saving...' : 'Save'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
       {tab === 'members' && canManageAnyMembers && (
         <View>
           <TextInput
@@ -406,6 +537,15 @@ export default function ServerSettingsModal() {
                   placeholderTextColor={colors.textMuted}
                 />
               </View>
+              <Pressable
+                style={styles.toggleRow}
+                onPress={() => setRoleDisplaySeparately((v) => !v)}
+              >
+                <View style={[styles.checkbox, roleDisplaySeparately && styles.checkboxChecked]}>
+                  {roleDisplaySeparately && <Text style={styles.checkmark}>{'\u2713'}</Text>}
+                </View>
+                <Text style={styles.toggleLabel}>Display members separately in the online list</Text>
+              </Pressable>
               <Text style={[styles.label, { marginTop: spacing.lg }]}>Permissions</Text>
               {PERMISSION_LABELS.map(({ perm, label }) => (
                 <Pressable
@@ -612,8 +752,17 @@ const styles = StyleSheet.create({
   tabBar: {
     marginBottom: spacing.lg,
     flexGrow: 0,
+    backgroundColor: colors.bgSecondary,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.bgTertiary,
+  } as ViewStyle,
+  tabBarScroll: {
+    width: '100%',
   } as ViewStyle,
   tabBarContent: {
+    flexDirection: 'row',
     gap: spacing.xs,
   } as ViewStyle,
   tab: {
@@ -621,6 +770,8 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+    alignItems: 'center',
+    minWidth: 96,
   } as ViewStyle,
   tabActive: {
     backgroundColor: colors.bgAccent,
@@ -706,6 +857,45 @@ const styles = StyleSheet.create({
   } as TextStyle,
   btnDisabled: {
     opacity: 0.5,
+  } as ViewStyle,
+
+  // Server tab
+  serverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  serverIconButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.bgTertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  } as ViewStyle,
+  serverIconImage: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+  } as ImageStyle,
+  serverIconFallback: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.bgModifierActive,
+    alignItems: 'center',
+    justifyContent: 'center',
+  } as ViewStyle,
+  serverIconText: {
+    color: colors.textPrimary,
+    fontSize: fontSize.xl,
+    fontWeight: '700',
+  } as TextStyle,
+  serverFields: {
+    flex: 1,
+    gap: spacing.sm,
   } as ViewStyle,
 
   // Members
@@ -840,6 +1030,18 @@ const styles = StyleSheet.create({
     height: 32,
     borderRadius: borderRadius.sm,
   } as ViewStyle,
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  toggleLabel: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    flex: 1,
+  } as TextStyle,
   permRow: {
     flexDirection: 'row',
     alignItems: 'center',

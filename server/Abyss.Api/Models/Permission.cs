@@ -13,4 +13,13 @@ public enum Permission : long
     ManageInvites = 1 << 7,
     ManageEmojis = 1 << 8,
     MuteMembers = 1 << 9,
+    ViewChannel = 1 << 10,
+    ReadMessageHistory = 1 << 11,
+    SendMessages = 1 << 12,
+    AddReactions = 1 << 13,
+    AttachFiles = 1 << 14,
+    MentionEveryone = 1 << 15,
+    Connect = 1 << 16,
+    Speak = 1 << 17,
+    Stream = 1 << 18,
 }

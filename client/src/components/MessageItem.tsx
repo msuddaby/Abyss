@@ -1,85 +1,241 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { getApiBase, useAuthStore, useServerStore, useMessageStore, hasPermission, Permission, getDisplayColor, canActOn } from '@abyss/shared';
-import type { Message, ServerMember, CustomEmoji, Attachment } from '@abyss/shared';
-import UserProfileCard from './UserProfileCard';
-import Picker from '@emoji-mart/react';
-import data from '@emoji-mart/data';
+import {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+} from "react";
+import {
+  getApiBase,
+  useAuthStore,
+  useServerStore,
+  useMessageStore,
+  useAppConfigStore,
+  useToastStore,
+  hasPermission,
+  hasChannelPermission,
+  Permission,
+  getDisplayColor,
+  canActOn,
+  useDmStore,
+} from "@abyss/shared";
+import type { Message, Attachment } from "@abyss/shared";
+import UserProfileCard from "./UserProfileCard";
+import Picker from "@emoji-mart/react";
+import data from "@emoji-mart/data";
+import MarkdownIt from "markdown-it";
+import DOMPurify from "dompurify";
 
-// Matches <@userId> mentions and <:name:id> custom emojis in a single pass
-const MENTION_EMOJI_REGEX = /<@([a-zA-Z0-9-]+)>|<:([a-zA-Z0-9_]{2,32}):([a-fA-F0-9-]{36})>/g;
+type MarkdownEnv = {
+  membersById: Record<string, string>;
+  emojisById: Record<string, { name: string; imageUrl: string }>;
+  apiBase: string;
+};
 
-function renderMentions(content: string, members: ServerMember[], emojis: CustomEmoji[]): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
+// Infer types from markdown-it's internal structure
+interface Token {
+  meta: Record<string, unknown>;
+  attrIndex(name: string): number;
+  attrPush(attr: [string, string]): void;
+  attrs: Array<[string, string]> | null;
+}
 
-  type Segment = { type: 'text'; value: string } | { type: 'mention'; userId: string } | { type: 'emoji'; name: string; id: string };
-  const intermediate: Segment[] = [];
-  let match: RegExpExecArray | null;
-  const regex = new RegExp(MENTION_EMOJI_REGEX);
+type StateInline = {
+  pos: number;
+  src: string;
+  push(type: string, tag: string, nesting: number): Token;
+};
 
-  while ((match = regex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      intermediate.push({ type: 'text', value: content.slice(lastIndex, match.index) });
-    }
-    if (match[1]) {
-      intermediate.push({ type: 'mention', userId: match[1] });
-    } else if (match[2] && match[3]) {
-      intermediate.push({ type: 'emoji', name: match[2], id: match[3] });
-    }
-    lastIndex = regex.lastIndex;
+type RenderRule = NonNullable<MarkdownIt["renderer"]["rules"][string]>;
+
+const markdown = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+});
+
+markdown.validateLink = (url: string) => {
+  try {
+    const parsed = new URL(url, "http://localhost");
+    return (
+      parsed.protocol === "http:" ||
+      parsed.protocol === "https:" ||
+      parsed.protocol === "mailto:"
+    );
+  } catch {
+    return false;
   }
-  if (lastIndex < content.length) {
-    intermediate.push({ type: 'text', value: content.slice(lastIndex) });
-  }
+};
 
-  // Now process @everyone and @here within text segments
-  let key = 0;
-  for (const seg of intermediate) {
-    if (seg.type === 'mention') {
-      const member = members.find((m) => m.userId === seg.userId);
-      const displayName = member?.user.displayName ?? 'Unknown';
-      parts.push(
-        <span key={key++} className="mention mention-user">@{displayName}</span>
-      );
-    } else if (seg.type === 'emoji') {
-      const emoji = emojis.find((e) => e.id === seg.id);
-      if (emoji) {
-        parts.push(
-          <img key={key++} src={`${getApiBase()}${emoji.imageUrl}`} alt={`:${seg.name}:`} title={`:${seg.name}:`} className="custom-emoji" />
-        );
-      } else {
-        parts.push(<span key={key++}>:{seg.name}:</span>);
+markdown.inline.ruler.after(
+  "backticks",
+  "mentions",
+  (state: StateInline, silent: boolean) => {
+    const start = state.pos;
+    const src = state.src;
+    const ch = src.charAt(start);
+
+    if (ch === "<") {
+      const mentionMatch = src.slice(start).match(/^<@([a-zA-Z0-9-]+)>/);
+      if (mentionMatch) {
+        if (!silent) {
+          const token = state.push("mention_user", "", 0);
+          token.meta = { userId: mentionMatch[1] };
+        }
+        state.pos += mentionMatch[0].length;
+        return true;
       }
-    } else {
-      // Split text on @everyone and @here
-      const textParts = seg.value.split(/(@everyone|@here)/g);
-      for (const tp of textParts) {
-        if (tp === '@everyone') {
-          parts.push(<span key={key++} className="mention mention-everyone">@everyone</span>);
-        } else if (tp === '@here') {
-          parts.push(<span key={key++} className="mention mention-here">@here</span>);
-        } else if (tp) {
-          parts.push(<span key={key++}>{tp}</span>);
+      const emojiMatch = src
+        .slice(start)
+        .match(/^<:([a-zA-Z0-9_]{2,32}):([a-fA-F0-9-]{36})>/);
+      if (emojiMatch) {
+        if (!silent) {
+          const token = state.push("custom_emoji", "", 0);
+          token.meta = { name: emojiMatch[1], id: emojiMatch[2] };
+        }
+        state.pos += emojiMatch[0].length;
+        return true;
+      }
+    }
+
+    if (ch === "@") {
+      const special = src.startsWith("@everyone", start)
+        ? "@everyone"
+        : src.startsWith("@here", start)
+          ? "@here"
+          : null;
+      if (special) {
+        const end = start + special.length;
+        const next = src.charAt(end);
+        if (!next || !/[A-Za-z0-9_]/.test(next)) {
+          if (!silent) {
+            const token = state.push("mention_special", "", 0);
+            token.meta = { label: special };
+          }
+          state.pos = end;
+          return true;
         }
       }
     }
-  }
 
-  return parts;
+    return false;
+  },
+);
+
+markdown.renderer.rules.mention_user = ((
+  tokens,
+  idx,
+  _options,
+  env: MarkdownEnv,
+) => {
+  const userId = tokens[idx].meta.userId as string;
+  const displayName = env.membersById[userId] ?? "Unknown";
+  return `<span class="mention mention-user">@${markdown.utils.escapeHtml(displayName)}</span>`;
+}) as RenderRule;
+
+markdown.renderer.rules.mention_special = ((
+  tokens,
+  idx,
+  _options,
+  _env: MarkdownEnv,
+) => {
+  const label = tokens[idx].meta.label as string;
+  const cls = label === "@everyone" ? "mention-everyone" : "mention-here";
+  return `<span class="mention ${cls}">${label}</span>`;
+}) as RenderRule;
+
+markdown.renderer.rules.custom_emoji = ((
+  tokens,
+  idx,
+  _options,
+  env: MarkdownEnv,
+) => {
+  const { name, id } = tokens[idx].meta as { name: string; id: string };
+  const emoji = env.emojisById[id];
+  if (!emoji) {
+    return markdown.utils.escapeHtml(`:${name}:`);
+  }
+  const src = `${env.apiBase}${emoji.imageUrl}`;
+  const safeName = markdown.utils.escapeHtml(emoji.name);
+  return `<img class="custom-emoji" src="${src}" alt=":${safeName}:" title=":${safeName}:" />`;
+}) as RenderRule;
+
+markdown.renderer.rules.link_open = ((
+  tokens,
+  idx,
+  options,
+  _env: MarkdownEnv,
+  self,
+) => {
+  const token = tokens[idx];
+  const targetIndex = token.attrIndex("target");
+  if (targetIndex < 0) {
+    token.attrPush(["target", "_blank"]);
+  } else {
+    token.attrs![targetIndex][1] = "_blank";
+  }
+  const relIndex = token.attrIndex("rel");
+  if (relIndex < 0) {
+    token.attrPush(["rel", "noopener noreferrer"]);
+  } else {
+    token.attrs![relIndex][1] = "noopener noreferrer";
+  }
+  return self.renderToken(tokens, idx, options);
+}) as RenderRule;
+
+function renderMarkdownSafe(content: string, env: MarkdownEnv) {
+  const raw = markdown.render(content, env);
+  return DOMPurify.sanitize(raw, {
+    ALLOWED_TAGS: [
+      "p",
+      "br",
+      "strong",
+      "em",
+      "del",
+      "code",
+      "pre",
+      "ul",
+      "ol",
+      "li",
+      "blockquote",
+      "h1",
+      "h2",
+      "h3",
+      "h4",
+      "h5",
+      "h6",
+      "a",
+      "span",
+      "img",
+    ],
+    ALLOWED_ATTR: ["href", "title", "target", "rel", "class", "src", "alt"],
+    FORBID_TAGS: [
+      "style",
+      "script",
+      "iframe",
+      "object",
+      "embed",
+      "link",
+      "meta",
+    ],
+    FORBID_ATTR: ["style", "onerror", "onload", "onclick", "onmouseover"],
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|\/)/i,
+  });
 }
 
 function formatTime(dateStr: string) {
   const d = new Date(dateStr);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDate(dateStr: string) {
   const d = new Date(dateStr);
   const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === today.toDateString()) return "Today";
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString();
 }
 
@@ -97,15 +253,41 @@ function groupReactions(message: Message) {
   return groups;
 }
 
-export default function MessageItem({ message, grouped, contextMenuOpen, setContextMenuMessageId, onScrollToMessage }: { message: Message; grouped?: boolean; contextMenuOpen: boolean; setContextMenuMessageId: (id: string | null) => void; onScrollToMessage?: (id: string) => void }) {
-  const [profileCard, setProfileCard] = useState<{ x: number; y: number } | null>(null);
+export default function MessageItem({
+  message,
+  grouped,
+  contextMenuOpen,
+  setContextMenuMessageId,
+  onScrollToMessage,
+}: {
+  message: Message;
+  grouped?: boolean;
+  contextMenuOpen: boolean;
+  setContextMenuMessageId: (id: string | null) => void;
+  onScrollToMessage?: (id: string) => void;
+}) {
+  const [profileCard, setProfileCard] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [editError, setEditError] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
-  const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null);
-  const [pickerStyle, setPickerStyle] = useState<React.CSSProperties | null>(null);
-  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
+  const [pickerAnchor, setPickerAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [pickerStyle, setPickerStyle] = useState<React.CSSProperties | null>(
+    null,
+  );
+  const [contextMenuPos, setContextMenuPos] = useState<{
+    x: number;
+    y: number;
+  }>({ x: 0, y: 0 });
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(
+    null,
+  );
   const editInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
@@ -114,22 +296,73 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
   const activeServer = useServerStore((s) => s.activeServer);
+  const activeChannel = useServerStore((s) => s.activeChannel);
+  const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
+  const addToast = useToastStore((s) => s.addToast);
   const { kickMember, banMember } = useServerStore();
-  const { editMessage, deleteMessage, toggleReaction, setReplyingTo } = useMessageStore();
+  const {
+    editMessage,
+    deleteMessage,
+    toggleReaction,
+    setReplyingTo,
+    pinMessage,
+    unpinMessage,
+    isPinned,
+  } = useMessageStore();
+  const isDmMode = useDmStore((s) => s.isDmMode);
 
   const isOwn = currentUser?.id === message.authorId;
   const currentMember = members.find((m) => m.userId === currentUser?.id);
-  const canManageMessages = currentMember ? hasPermission(currentMember, Permission.ManageMessages) : false;
+  const canManageMessages = currentMember
+    ? hasPermission(currentMember, Permission.ManageMessages)
+    : false;
   const canDelete = isOwn || canManageMessages;
+  const canPin = isDmMode || canManageMessages;
+  const canAddReactions = isDmMode
+    ? true
+    : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
+  const membersById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const m of members) {
+      map[m.userId] = m.user.displayName;
+    }
+    return map;
+  }, [members]);
+  const emojisById = useMemo(() => {
+    const map: Record<string, { name: string; imageUrl: string }> = {};
+    for (const e of emojis) {
+      map[e.id] = { name: e.name, imageUrl: e.imageUrl };
+    }
+    return map;
+  }, [emojis]);
+  const markdownEnv = useMemo(
+    () => ({
+      membersById,
+      emojisById,
+      apiBase: getApiBase(),
+    }),
+    [membersById, emojisById],
+  );
+  const renderedContent = useMemo(
+    () =>
+      message.content ? renderMarkdownSafe(message.content, markdownEnv) : "",
+    [message.content, markdownEnv],
+  );
 
   // Use live member data when available, fall back to stale message snapshot
-  const authorDisplayName = authorMember?.user.displayName ?? message.author.displayName;
-  const authorAvatarUrl = authorMember?.user.avatarUrl ?? message.author.avatarUrl;
+  const authorDisplayName =
+    authorMember?.user.displayName ?? message.author.displayName;
+  const authorAvatarUrl =
+    authorMember?.user.avatarUrl ?? message.author.avatarUrl;
 
-  const canKickPerm = currentMember ? hasPermission(currentMember, Permission.KickMembers) : false;
-  const canBanPerm = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
+  const canKickPerm = currentMember
+    ? hasPermission(currentMember, Permission.KickMembers)
+    : false;
+  const canBanPerm = currentMember
+    ? hasPermission(currentMember, Permission.BanMembers)
+    : false;
 
   useEffect(() => {
     if (editing) {
@@ -144,8 +377,8 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
         setShowPicker(false);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showPicker]);
 
   const updatePickerPosition = useCallback(() => {
@@ -167,7 +400,9 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     } else {
       top = Math.max(margin, window.innerHeight - rect.height - margin);
     }
-    setPickerStyle((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }));
+    setPickerStyle((prev) =>
+      prev && prev.left === left && prev.top === top ? prev : { left, top },
+    );
   }, [showPicker, pickerAnchor]);
 
   useLayoutEffect(() => {
@@ -178,18 +413,18 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     if (!showPicker || !pickerRef.current) return;
     const ro = new ResizeObserver(() => updatePickerPosition());
     ro.observe(pickerRef.current);
-    window.addEventListener('resize', updatePickerPosition);
+    window.addEventListener("resize", updatePickerPosition);
     return () => {
       ro.disconnect();
-      window.removeEventListener('resize', updatePickerPosition);
+      window.removeEventListener("resize", updatePickerPosition);
     };
   }, [showPicker, updatePickerPosition]);
 
   useEffect(() => {
     if (!contextMenuOpen) return;
     const handleClick = () => setContextMenuMessageId(null);
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
   }, [contextMenuOpen, setContextMenuMessageId]);
 
   useLayoutEffect(() => {
@@ -209,17 +444,18 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
       setContextMenuPos({ x: left, y: top });
     }
-  }, [contextMenuOpen, contextMenuPos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contextMenuOpen]);
 
   useEffect(() => {
     if (!previewAttachment) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === "Escape") {
         setPreviewAttachment(null);
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [previewAttachment]);
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -230,8 +466,10 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
 
   // Admin action conditions for context menu
   const showAdminActions = !isOwn && authorMember && currentMember;
-  const canKickAuthor = canKickPerm && showAdminActions && canActOn(currentMember!, authorMember!);
-  const canBanAuthor = canBanPerm && showAdminActions && canActOn(currentMember!, authorMember!);
+  const canKickAuthor =
+    canKickPerm && showAdminActions && canActOn(currentMember!, authorMember!);
+  const canBanAuthor =
+    canBanPerm && showAdminActions && canActOn(currentMember!, authorMember!);
 
   const handleKick = async () => {
     if (!activeServer) return;
@@ -259,18 +497,29 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
 
   const handleEditSave = async () => {
     const trimmed = editContent.trim();
-    if (trimmed && trimmed !== message.content) {
-      await editMessage(message.id, trimmed);
+    if (trimmed.length > maxMessageLength) {
+      setEditError(`Message must be 1-${maxMessageLength} characters.`);
+      addToast(`Message must be 1-${maxMessageLength} characters.`, "error");
+      return;
     }
-    setEditing(false);
+    try {
+      if (trimmed && trimmed !== message.content) {
+        await editMessage(message.id, trimmed);
+      }
+      setEditing(false);
+      setEditError(null);
+    } catch {
+      addToast("Failed to edit message.", "error");
+    }
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       e.preventDefault();
       handleEditSave();
-    } else if (e.key === 'Escape') {
+    } else if (e.key === "Escape") {
       setEditContent(message.content);
+      setEditError(null);
       setEditing(false);
     }
   };
@@ -279,9 +528,20 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     deleteMessage(message.id);
   };
 
+  const handlePinToggle = () => {
+    if (isPinned(message.channelId, message.id)) {
+      unpinMessage(message.id);
+    } else {
+      pinMessage(message.id);
+    }
+  };
+
   const openPicker = (e?: React.MouseEvent<HTMLElement>) => {
+    if (!canAddReactions) return;
     const target = e?.currentTarget as HTMLElement | null;
-    const rect = target?.getBoundingClientRect() ?? messageRef.current?.getBoundingClientRect();
+    const rect =
+      target?.getBoundingClientRect() ??
+      messageRef.current?.getBoundingClientRect();
     if (rect) {
       setPickerAnchor({ x: rect.right, y: rect.top });
     } else {
@@ -290,21 +550,27 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
     setShowPicker(true);
   };
 
-  const customEmojiCategory = emojis.length > 0 ? [{
-    id: 'custom',
-    name: 'Server Emojis',
-    emojis: emojis.map((e) => ({
-      id: `custom-${e.id}`,
-      name: e.name,
-      keywords: [e.name],
-      skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
-    })),
-  }] : [];
+  const customEmojiCategory =
+    emojis.length > 0
+      ? [
+          {
+            id: "custom",
+            name: "Server Emojis",
+            emojis: emojis.map((e) => ({
+              id: `custom-${e.id}`,
+              name: e.name,
+              keywords: [e.name],
+              skins: [{ src: `${getApiBase()}${e.imageUrl}` }],
+            })),
+          },
+        ]
+      : [];
 
   const handleEmojiSelect = (emoji: { native?: string; id?: string }) => {
+    if (!canAddReactions) return;
     if (emoji.native) {
       toggleReaction(message.id, emoji.native);
-    } else if (emoji.id?.startsWith('custom-')) {
+    } else if (emoji.id?.startsWith("custom-")) {
       const emojiId = emoji.id.substring(7);
       toggleReaction(message.id, `custom:${emojiId}`);
     }
@@ -312,25 +578,59 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
   };
 
   const handleReactionClick = (emoji: string) => {
+    if (!canAddReactions) return;
     toggleReaction(message.id, emoji);
   };
+
+  if (message.isSystem) {
+    return (
+      <div className="message-item system-message">
+        <div className="system-message-content">
+          <span className="system-message-icon">●</span>
+          <span className="system-message-text">
+            <strong>{authorDisplayName}</strong> {message.content}
+          </span>
+          <span className="system-message-time">
+            {formatDate(message.createdAt)} at {formatTime(message.createdAt)}
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   if (message.isDeleted) {
     return (
       <div className="message-item message-deleted">
         <div className="message-avatar" onClick={handleAuthorClick}>
           {authorAvatarUrl ? (
-            <img src={authorAvatarUrl.startsWith('http') ? authorAvatarUrl : `${getApiBase()}${authorAvatarUrl}`} alt={authorDisplayName} />
+            <img
+              src={
+                authorAvatarUrl.startsWith("http")
+                  ? authorAvatarUrl
+                  : `${getApiBase()}${authorAvatarUrl}`
+              }
+              alt={authorDisplayName}
+            />
           ) : (
             <span>{authorDisplayName.charAt(0).toUpperCase()}</span>
           )}
         </div>
         <div className="message-body">
           <div className="message-header">
-            <span className="message-author clickable" onClick={handleAuthorClick} style={authorColor ? { color: authorColor } : undefined}>{authorDisplayName}</span>
-            <span className="message-time">{formatDate(message.createdAt)} at {formatTime(message.createdAt)}</span>
+            <span
+              className="message-author clickable"
+              onClick={handleAuthorClick}
+              style={authorColor ? { color: authorColor } : undefined}
+            >
+              {authorDisplayName}
+            </span>
+            <span className="message-time">
+              {formatDate(message.createdAt)} at {formatTime(message.createdAt)}
+            </span>
           </div>
-          <div className="message-content message-deleted-text">This message has been deleted</div>
+          <div className="message-content message-deleted-text">
+            This message has been deleted
+          </div>
         </div>
         {profileCard && (
           <UserProfileCard
@@ -345,42 +645,84 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
 
   const reactionGroups = groupReactions(message);
 
-  const isMentioned = currentUser && (
-    message.content.includes(`<@${currentUser.id}>`) ||
-    message.content.includes('@everyone') ||
-    message.content.includes('@here')
-  );
+  const isMentioned =
+    currentUser &&
+    (message.content.includes(`<@${currentUser.id}>`) ||
+      message.content.includes("@everyone") ||
+      message.content.includes("@here"));
 
   return (
-    <div ref={messageRef} className={`message-item${grouped ? ' message-grouped' : ''}${isMentioned ? ' message-mentioned' : ''}${message.replyTo ? ' message-has-reply' : ''}`} onContextMenu={handleContextMenu}>
+    <div
+      ref={messageRef}
+      className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}`}
+      onContextMenu={handleContextMenu}
+    >
       {message.replyTo && (
-        <div className="reply-reference" onClick={() => !message.replyTo!.isDeleted && onScrollToMessage?.(message.replyTo!.id)}>
+        <div
+          className="reply-reference"
+          onClick={() =>
+            !message.replyTo!.isDeleted &&
+            onScrollToMessage?.(message.replyTo!.id)
+          }
+        >
           <div className="reply-reference-line" />
           <div className="reply-reference-avatar">
             {message.replyTo.author.avatarUrl ? (
-              <img src={message.replyTo.author.avatarUrl.startsWith('http') ? message.replyTo.author.avatarUrl : `${getApiBase()}${message.replyTo.author.avatarUrl}`} alt={message.replyTo.author.displayName} />
+              <img
+                src={
+                  message.replyTo.author.avatarUrl.startsWith("http")
+                    ? message.replyTo.author.avatarUrl
+                    : `${getApiBase()}${message.replyTo.author.avatarUrl}`
+                }
+                alt={message.replyTo.author.displayName}
+              />
             ) : (
-              <span>{message.replyTo.author.displayName.charAt(0).toUpperCase()}</span>
+              <span>
+                {message.replyTo.author.displayName.charAt(0).toUpperCase()}
+              </span>
             )}
           </div>
-          <span className="reply-reference-author" style={(() => { const m = members.find((m) => m.userId === message.replyTo!.authorId); return m ? { color: getDisplayColor(m) } : undefined; })()}>
+          <span
+            className="reply-reference-author"
+            style={(() => {
+              const m = members.find(
+                (m) => m.userId === message.replyTo!.authorId,
+              );
+              return m ? { color: getDisplayColor(m) } : undefined;
+            })()}
+          >
             {message.replyTo.author.displayName}
           </span>
           {message.replyTo.isDeleted ? (
-            <span className="reply-reference-content reply-deleted">Original message was deleted</span>
+            <span className="reply-reference-content reply-deleted">
+              Original message was deleted
+            </span>
           ) : (
-            <span className="reply-reference-content">{message.replyTo.content.length > 100 ? message.replyTo.content.slice(0, 100) + '...' : message.replyTo.content}</span>
+            <span className="reply-reference-content">
+              {message.replyTo.content.length > 100
+                ? message.replyTo.content.slice(0, 100) + "..."
+                : message.replyTo.content}
+            </span>
           )}
         </div>
       )}
       {grouped ? (
         <div className="message-avatar-gutter">
-          <span className="message-time-inline">{formatTime(message.createdAt)}</span>
+          <span className="message-time-inline">
+            {formatTime(message.createdAt)}
+          </span>
         </div>
       ) : (
         <div className="message-avatar clickable" onClick={handleAuthorClick}>
           {message.author.avatarUrl ? (
-            <img src={message.author.avatarUrl.startsWith('http') ? message.author.avatarUrl : `${getApiBase()}${message.author.avatarUrl}`} alt={message.author.displayName} />
+            <img
+              src={
+                message.author.avatarUrl.startsWith("http")
+                  ? message.author.avatarUrl
+                  : `${getApiBase()}${message.author.avatarUrl}`
+              }
+              alt={message.author.displayName}
+            />
           ) : (
             <span>{message.author.displayName.charAt(0).toUpperCase()}</span>
           )}
@@ -389,31 +731,59 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
       <div className="message-body">
         {!grouped && (
           <div className="message-header">
-            <span className="message-author clickable" onClick={handleAuthorClick} style={authorColor ? { color: authorColor } : undefined}>{message.author.displayName}</span>
-            <span className="message-time">{formatDate(message.createdAt)} at {formatTime(message.createdAt)}</span>
-            {message.editedAt && <span className="message-edited-label">(edited)</span>}
+            <span
+              className="message-author clickable"
+              onClick={handleAuthorClick}
+              style={authorColor ? { color: authorColor } : undefined}
+            >
+              {message.author.displayName}
+            </span>
+            <span className="message-time">
+              {formatDate(message.createdAt)} at {formatTime(message.createdAt)}
+            </span>
+            {message.editedAt && (
+              <span className="message-edited-label">(edited)</span>
+            )}
           </div>
         )}
-        {grouped && message.editedAt && <span className="message-edited-label">(edited)</span>}
+        {grouped && message.editedAt && (
+          <span className="message-edited-label">(edited)</span>
+        )}
         {editing ? (
-          <input
-            ref={editInputRef}
-            className="message-edit-input"
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
-            onKeyDown={handleEditKeyDown}
-            onBlur={handleEditSave}
-          />
+          <div className="message-edit-wrapper">
+            <input
+              ref={editInputRef}
+              className="message-edit-input"
+              value={editContent}
+              onChange={(e) => {
+                setEditContent(e.target.value);
+                if (
+                  editError &&
+                  e.target.value.trim().length <= maxMessageLength
+                ) {
+                  setEditError(null);
+                }
+              }}
+              onKeyDown={handleEditKeyDown}
+              onBlur={handleEditSave}
+            />
+            {editError && <div className="message-edit-error">{editError}</div>}
+          </div>
         ) : (
           <>
-            {message.content && <div className="message-content">{renderMentions(message.content, members, emojis)}</div>}
+            {message.content && (
+              <div
+                className="message-content message-markdown"
+                dangerouslySetInnerHTML={{ __html: renderedContent }}
+              />
+            )}
           </>
         )}
         {message.attachments?.length > 0 && (
           <div className="message-attachments">
             {message.attachments.map((att) => (
               <div key={att.id} className="attachment">
-                {att.contentType.startsWith('image/') ? (
+                {att.contentType.startsWith("image/") ? (
                   <img
                     src={`${getApiBase()}${att.filePath}`}
                     alt={att.fileName}
@@ -421,7 +791,11 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
                     onClick={() => handleImagePreview(att)}
                   />
                 ) : (
-                  <a href={`${getApiBase()}${att.filePath}`} target="_blank" rel="noopener noreferrer">
+                  <a
+                    href={`${getApiBase()}${att.filePath}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     {att.fileName}
                   </a>
                 )}
@@ -434,34 +808,86 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
             {reactionGroups.map((g) => (
               <button
                 key={g.emoji}
-                className={`reaction-button${currentUser && g.userIds.includes(currentUser.id) ? ' reacted' : ''}`}
+                className={`reaction-button${currentUser && g.userIds.includes(currentUser.id) ? " reacted" : ""}`}
                 onClick={() => handleReactionClick(g.emoji)}
+                disabled={!canAddReactions}
+                title={
+                  !canAddReactions
+                    ? "No permission to add reactions"
+                    : undefined
+                }
               >
-                <span className="reaction-emoji">{g.emoji.startsWith('custom:') ? (() => {
-                  const eid = g.emoji.substring(7);
-                  const ce = emojis.find((e) => e.id === eid);
-                  return ce ? <img src={`${getApiBase()}${ce.imageUrl}`} alt={`:${ce.name}:`} className="custom-emoji-reaction" /> : '?';
-                })() : g.emoji}</span>
+                <span className="reaction-emoji">
+                  {g.emoji.startsWith("custom:")
+                    ? (() => {
+                        const eid = g.emoji.substring(7);
+                        const ce = emojis.find((e) => e.id === eid);
+                        return ce ? (
+                          <img
+                            src={`${getApiBase()}${ce.imageUrl}`}
+                            alt={`:${ce.name}:`}
+                            className="custom-emoji-reaction"
+                          />
+                        ) : (
+                          "?"
+                        );
+                      })()
+                    : g.emoji}
+                </span>
                 <span className="reaction-count">{g.count}</span>
               </button>
             ))}
-            <button className="reaction-button reaction-add" onClick={(e) => openPicker(e)}>+</button>
+            {canAddReactions && (
+              <button
+                className="reaction-button reaction-add"
+                onClick={(e) => openPicker(e)}
+              >
+                +
+              </button>
+            )}
           </div>
         )}
       </div>
       <div className="message-actions">
-        <button onClick={() => setReplyingTo(message)} title="Reply">&#8617;</button>
-        <button onClick={(e) => openPicker(e)} title="Add Reaction">&#128578;</button>
+        <button onClick={() => setReplyingTo(message)} title="Reply">
+          &#8617;
+        </button>
+        {canAddReactions && (
+          <button onClick={(e) => openPicker(e)} title="Add Reaction">
+            &#128578;
+          </button>
+        )}
         {isOwn && !editing && (
-          <button onClick={() => { setEditContent(message.content); setEditing(true); }} title="Edit">&#9998;</button>
+          <button
+            onClick={() => {
+              setEditContent(message.content);
+              setEditing(true);
+            }}
+            title="Edit"
+          >
+            &#9998;
+          </button>
         )}
         {canDelete && !editing && (
-          <button onClick={handleDelete} title="Delete">&#128465;</button>
+          <button onClick={handleDelete} title="Delete">
+            &#128465;
+          </button>
         )}
       </div>
       {showPicker && (
-        <div className="emoji-picker-container" ref={pickerRef} style={pickerStyle ?? undefined}>
-          <Picker data={data} custom={customEmojiCategory} onEmojiSelect={handleEmojiSelect} theme="dark" previewPosition="none" skinTonePosition="none" />
+        <div
+          className="emoji-picker-container"
+          ref={pickerRef}
+          style={pickerStyle ?? undefined}
+        >
+          <Picker
+            data={data}
+            custom={customEmojiCategory}
+            onEmojiSelect={handleEmojiSelect}
+            theme="dark"
+            previewPosition="none"
+            skinTonePosition="none"
+          />
         </div>
       )}
       {profileCard && (
@@ -472,29 +898,91 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
         />
       )}
       {contextMenuOpen && (
-        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
-          <button className="context-menu-item" onClick={() => { setReplyingTo(message); setContextMenuMessageId(null); }}>Reply</button>
-          <button className="context-menu-item" onClick={(e) => { openPicker(e); setContextMenuMessageId(null); }}>Add Reaction</button>
+        <div
+          ref={contextMenuRef}
+          className="context-menu"
+          style={{ left: contextMenuPos.x, top: contextMenuPos.y }}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              setReplyingTo(message);
+              setContextMenuMessageId(null);
+            }}
+          >
+            Reply
+          </button>
+          {canAddReactions && (
+            <button
+              className="context-menu-item"
+              onClick={(e) => {
+                openPicker(e);
+                setContextMenuMessageId(null);
+              }}
+            >
+              Add Reaction
+            </button>
+          )}
+          {canPin && (
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                handlePinToggle();
+                setContextMenuMessageId(null);
+              }}
+            >
+              {isPinned(message.channelId, message.id)
+                ? "Unpin Message"
+                : "Pin Message"}
+            </button>
+          )}
           {isOwn && !editing && (
-            <button className="context-menu-item" onClick={() => { setEditContent(message.content); setEditing(true); setContextMenuMessageId(null); }}>Edit Message</button>
+            <button
+              className="context-menu-item"
+              onClick={() => {
+                setEditContent(message.content);
+                setEditing(true);
+                setContextMenuMessageId(null);
+              }}
+            >
+              Edit Message
+            </button>
           )}
           {canDelete && !editing && (
-            <button className="context-menu-item danger" onClick={() => { handleDelete(); setContextMenuMessageId(null); }}>Delete Message</button>
+            <button
+              className="context-menu-item danger"
+              onClick={() => {
+                handleDelete();
+                setContextMenuMessageId(null);
+              }}
+            >
+              Delete Message
+            </button>
           )}
           {(canKickAuthor || canBanAuthor) && (
             <div className="context-menu-separator" />
           )}
           {canKickAuthor && (
-            <button className="context-menu-item danger" onClick={handleKick}>Kick</button>
+            <button className="context-menu-item danger" onClick={handleKick}>
+              Kick
+            </button>
           )}
           {canBanAuthor && (
-            <button className="context-menu-item danger" onClick={handleBan}>Ban</button>
+            <button className="context-menu-item danger" onClick={handleBan}>
+              Ban
+            </button>
           )}
         </div>
       )}
       {previewAttachment && (
-        <div className="modal-overlay image-preview-overlay" onClick={handleClosePreview}>
-          <div className="image-preview-modal" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay image-preview-overlay"
+          onClick={handleClosePreview}
+        >
+          <div
+            className="image-preview-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <img
               src={`${getApiBase()}${previewAttachment.filePath}`}
               alt={previewAttachment.fileName}
@@ -508,7 +996,9 @@ export default function MessageItem({ message, grouped, contextMenuOpen, setCont
               >
                 Download
               </a>
-              <button className="btn-secondary" onClick={handleClosePreview}>Close</button>
+              <button className="btn-secondary" onClick={handleClosePreview}>
+                Close
+              </button>
             </div>
           </div>
         </div>

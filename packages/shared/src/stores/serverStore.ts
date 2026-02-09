@@ -8,6 +8,7 @@ import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, Cu
 type VoiceChannelUsersMap = Map<string, Map<string, VoiceUserState>>;
 // channelId -> Set<userId> of active screen sharers
 type VoiceChannelSharersMap = Map<string, Set<string>>;
+type UploadFile = { uri: string; name: string; type?: string } | { name: string; type?: string; size?: number };
 
 interface ServerState {
   servers: Server[];
@@ -21,15 +22,19 @@ interface ServerState {
   voiceChannelUsers: VoiceChannelUsersMap;
   voiceChannelSharers: VoiceChannelSharersMap;
   fetchServers: () => Promise<void>;
+  fetchChannels: (serverId: string) => Promise<Channel[]>;
   setActiveServer: (server: Server) => Promise<void>;
   setActiveChannel: (channel: Channel | null) => void;
   createServer: (name: string) => Promise<Server>;
+  updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
   createChannel: (serverId: string, name: string, type: 'Text' | 'Voice') => Promise<Channel>;
+  renameChannel: (serverId: string, channelId: string, name: string) => Promise<Channel>;
+  reorderChannels: (serverId: string, type: 'Text' | 'Voice', channelIds: string[]) => Promise<void>;
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
   fetchRoles: (serverId: string) => Promise<void>;
-  createRole: (serverId: string, name: string, color: string, permissions: number) => Promise<ServerRole>;
-  updateRole: (serverId: string, roleId: string, data: { name?: string; color?: string; permissions?: number }) => Promise<ServerRole>;
+  createRole: (serverId: string, name: string, color: string, permissions: number, displaySeparately: boolean) => Promise<ServerRole>;
+  updateRole: (serverId: string, roleId: string, data: { name?: string; color?: string; permissions?: number; displaySeparately?: boolean }) => Promise<ServerRole>;
   deleteRole: (serverId: string, roleId: string) => Promise<void>;
   reorderRoles: (serverId: string, roleIds: string[]) => Promise<void>;
   updateMemberRoles: (serverId: string, userId: string, roleIds: string[]) => Promise<void>;
@@ -37,6 +42,7 @@ interface ServerState {
   banMember: (serverId: string, userId: string, reason?: string) => Promise<void>;
   unbanMember: (serverId: string, userId: string) => Promise<void>;
   kickMember: (serverId: string, userId: string) => Promise<void>;
+  leaveServer: (serverId: string) => Promise<void>;
   deleteChannel: (serverId: string, channelId: string) => Promise<void>;
   deleteServer: (serverId: string) => Promise<void>;
   fetchAuditLogs: (serverId: string) => Promise<AuditLog[]>;
@@ -51,6 +57,9 @@ interface ServerState {
   removeServer: (serverId: string) => void;
   removeMember: (userId: string) => void;
   addChannelLocal: (channel: Channel) => void;
+  updateChannelLocal: (channel: Channel) => void;
+  setChannelsLocal: (channels: Channel[]) => void;
+  updateServerLocal: (server: Server) => void;
   addRoleLocal: (role: ServerRole) => void;
   updateRoleLocal: (role: ServerRole) => void;
   removeRoleLocal: (roleId: string) => void;
@@ -106,12 +115,20 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
   },
 
+  fetchChannels: async (serverId) => {
+    const res = await api.get(`/servers/${serverId}/channels`);
+    const channels: Channel[] = res.data;
+    set((s) => {
+      const activeChannel = s.activeChannel ? channels.find((c) => c.id === s.activeChannel?.id) ?? null : null;
+      return { channels, activeChannel };
+    });
+    return channels;
+  },
+
   setActiveServer: async (server) => {
     set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map() });
     getStorage().setItem('activeServerId', server.id);
-    const res = await api.get(`/servers/${server.id}/channels`);
-    const channels: Channel[] = res.data;
-    set({ channels });
+    const channels = await get().fetchChannels(server.id);
 
     const lastChannelId = getLastChannelMap()[server.id];
     if (lastChannelId) {
@@ -143,11 +160,70 @@ export const useServerStore = create<ServerState>((set, get) => ({
     return server;
   },
 
+  updateServer: async (serverId, data) => {
+    const formData = new FormData();
+    if (data.name !== undefined) formData.append('name', data.name);
+    if (data.removeIcon) formData.append('removeIcon', 'true');
+    if (data.icon) formData.append('icon', data.icon as any);
+    if (data.joinLeaveMessagesEnabled !== undefined) formData.append('joinLeaveMessagesEnabled', String(data.joinLeaveMessagesEnabled));
+    if (data.joinLeaveChannelId !== undefined && data.joinLeaveChannelId !== null) formData.append('joinLeaveChannelId', data.joinLeaveChannelId);
+
+    const res = await api.patch(`/servers/${serverId}`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    const server: Server = res.data;
+    set((s) => ({
+      servers: s.servers.map((sv) => (sv.id === server.id ? server : sv)),
+      activeServer: s.activeServer?.id === server.id ? server : s.activeServer,
+    }));
+    return server;
+  },
+
   createChannel: async (serverId, name, type) => {
     const res = await api.post(`/servers/${serverId}/channels`, { name, type });
     const channel = res.data;
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] });
     return channel;
+  },
+
+  renameChannel: async (serverId, channelId, name) => {
+    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name });
+    const channel = res.data;
+    set((s) => ({
+      channels: s.channels.map((c) => (c.id === channelId ? channel : c)),
+      activeChannel: s.activeChannel?.id === channelId ? channel : s.activeChannel,
+    }));
+    return channel;
+  },
+
+  reorderChannels: async (serverId, type, channelIds) => {
+    const prevChannels = get().channels;
+    const prevActive = get().activeChannel;
+
+    const updatedChannels = prevChannels.map((channel) => {
+      if (channel.type !== type) return channel;
+      const nextIndex = channelIds.indexOf(channel.id);
+      return nextIndex === -1 ? channel : { ...channel, position: nextIndex };
+    });
+
+    const nextChannels = [...updatedChannels].sort((a, b) => {
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      return a.position - b.position;
+    });
+
+    const nextActive = prevActive
+      ? nextChannels.find((c) => c.id === prevActive.id) || prevActive
+      : prevActive;
+
+    set({ channels: nextChannels, activeChannel: nextActive });
+
+    try {
+      await api.patch(`/servers/${serverId}/channels/reorder`, { type, channelIds });
+    } catch (err) {
+      console.error('Failed to reorder channels', err);
+      set({ channels: prevChannels, activeChannel: prevActive });
+      throw err;
+    }
   },
 
   joinServer: async (code) => {
@@ -176,8 +252,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
   },
 
-  createRole: async (serverId, name, color, permissions) => {
-    const res = await api.post(`/servers/${serverId}/roles`, { name, color, permissions });
+  createRole: async (serverId, name, color, permissions, displaySeparately) => {
+    const res = await api.post(`/servers/${serverId}/roles`, { name, color, permissions, displaySeparately });
     const role: ServerRole = res.data;
     set((s) => s.roles.some((r) => r.id === role.id) ? s : { roles: [...s.roles, role] });
     return role;
@@ -223,6 +299,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   kickMember: async (serverId, userId) => {
     await api.delete(`/servers/${serverId}/members/${userId}`);
+  },
+
+  leaveServer: async (serverId) => {
+    await api.delete(`/servers/${serverId}/leave`);
+    get().removeServer(serverId);
   },
 
   deleteChannel: async (serverId, channelId) => {
@@ -359,6 +440,24 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   addChannelLocal: (channel) =>
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] }),
+
+  updateChannelLocal: (channel) =>
+    set((s) => ({
+      channels: s.channels.map((c) => (c.id === channel.id ? channel : c)),
+      activeChannel: s.activeChannel?.id === channel.id ? channel : s.activeChannel,
+    })),
+
+  setChannelsLocal: (channels) =>
+    set((s) => ({
+      channels,
+      activeChannel: s.activeChannel ? channels.find((c) => c.id === s.activeChannel!.id) || null : null,
+    })),
+
+  updateServerLocal: (server) =>
+    set((s) => ({
+      servers: s.servers.map((sv) => (sv.id === server.id ? server : sv)),
+      activeServer: s.activeServer?.id === server.id ? server : s.activeServer,
+    })),
 
   addRoleLocal: (role) =>
     set((s) => s.roles.some((r) => r.id === role.id) ? s : { roles: [...s.roles, role] }),

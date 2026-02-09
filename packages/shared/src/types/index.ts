@@ -18,6 +18,8 @@ export interface Server {
   name: string;
   iconUrl?: string;
   ownerId: string;
+  joinLeaveMessagesEnabled: boolean;
+  joinLeaveChannelId?: string | null;
 }
 
 export interface Channel {
@@ -26,6 +28,7 @@ export interface Channel {
   type: 'Text' | 'Voice';
   serverId: string;
   position: number;
+  permissions?: number;
 }
 
 export interface ServerRole {
@@ -35,6 +38,7 @@ export interface ServerRole {
   permissions: number;
   position: number;
   isDefault: boolean;
+  displaySeparately: boolean;
 }
 
 export interface ServerMember {
@@ -82,9 +86,16 @@ export interface Message {
   attachments: Attachment[];
   editedAt?: string;
   isDeleted: boolean;
+  isSystem: boolean;
   reactions: Reaction[];
   replyToMessageId?: string;
   replyTo?: ReplyReference;
+}
+
+export interface PinnedMessage {
+  message: Message;
+  pinnedAt: string;
+  pinnedBy: User;
 }
 
 export interface Reaction {
@@ -190,6 +201,7 @@ export interface InviteCode {
 
 export interface AdminSettings {
   inviteOnly: boolean;
+  maxMessageLength: number;
   codes: InviteCode[];
 }
 
@@ -204,12 +216,31 @@ export const Permission = {
   ManageInvites: 1 << 7,
   ManageEmojis: 1 << 8,
   MuteMembers: 1 << 9,
+  ViewChannel: 1 << 10,
+  ReadMessageHistory: 1 << 11,
+  SendMessages: 1 << 12,
+  AddReactions: 1 << 13,
+  AttachFiles: 1 << 14,
+  MentionEveryone: 1 << 15,
+  Connect: 1 << 16,
+  Speak: 1 << 17,
+  Stream: 1 << 18,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {
   if (member.isOwner) return true;
   const combined = member.roles.reduce((acc, r) => acc | r.permissions, 0);
   return (combined & perm) === perm;
+}
+
+export function hasChannelPermission(channelPermissions: number | undefined, perm: number): boolean {
+  if (channelPermissions == null) return false;
+  return (channelPermissions & perm) === perm;
+}
+
+export function canViewChannel(channel: Channel): boolean {
+  if (!channel.serverId) return true;
+  return hasChannelPermission(channel.permissions, Permission.ViewChannel);
 }
 
 export function getDisplayColor(member: ServerMember): string | undefined {

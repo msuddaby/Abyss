@@ -1,7 +1,8 @@
 import { View, Text, Pressable, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
-import { useServerStore, useVoiceStore } from '@abyss/shared';
+import { useServerStore, useVoiceStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
 import type { Channel } from '@abyss/shared';
 import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
+import Avatar from './Avatar';
 
 interface VoiceChannelItemProps {
   channel: Channel;
@@ -15,11 +16,13 @@ interface VoiceChannelItemProps {
 export default function VoiceChannelItem({ channel, isActive, isConnected, onSelect, onJoin, onLeave }: VoiceChannelItemProps) {
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
+  const members = useServerStore((s) => s.members);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
 
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
+  const canConnect = hasChannelPermission(channel.permissions, Permission.Connect);
 
   return (
     <View style={[styles.container, isActive && styles.containerActive]}>
@@ -33,7 +36,7 @@ export default function VoiceChannelItem({ channel, isActive, isConnected, onSel
             <Text style={styles.leaveBtnText}>{'✕'}</Text>
           </Pressable>
         ) : (
-          <Pressable style={styles.joinBtn} onPress={onJoin}>
+          <Pressable style={[styles.joinBtn, !canConnect && styles.joinBtnDisabled]} onPress={onJoin} disabled={!canConnect}>
             <Text style={styles.joinBtnText}>{'→'}</Text>
           </Pressable>
         )}
@@ -43,10 +46,14 @@ export default function VoiceChannelItem({ channel, isActive, isConnected, onSel
           {participants.map(([userId, state]) => {
             const isSpeaking = speakingUsers.has(userId);
             const isSharing = channelSharers?.has(userId);
+            const targetMember = members.find((m) => m.userId === userId);
+            const avatarUrl = targetMember?.user?.avatarUrl
+              ? (targetMember.user.avatarUrl.startsWith('http') ? targetMember.user.avatarUrl : `${getApiBase()}${targetMember.user.avatarUrl}`)
+              : undefined;
             return (
               <View key={userId} style={styles.participant}>
-                <View style={[styles.avatar, isSpeaking && styles.avatarSpeaking]}>
-                  <Text style={styles.avatarText}>{state.displayName.charAt(0).toUpperCase()}</Text>
+                <View style={[styles.avatarWrapper, isSpeaking && styles.avatarSpeaking]}>
+                  <Avatar uri={avatarUrl} name={state.displayName} size={20} />
                 </View>
                 <Text style={styles.participantName} numberOfLines={1}>{state.displayName}</Text>
                 {(state.isMuted || state.isDeafened) && (
@@ -101,6 +108,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   } as ViewStyle,
+  joinBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
   joinBtnText: {
     color: colors.textSecondary,
     fontSize: fontSize.md,
@@ -124,23 +134,15 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     paddingVertical: 2,
   } as ViewStyle,
-  avatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.bgAccent,
-    alignItems: 'center',
-    justifyContent: 'center',
+  avatarWrapper: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
   } as ViewStyle,
   avatarSpeaking: {
     borderWidth: 2,
     borderColor: colors.success,
   } as ViewStyle,
-  avatarText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '600',
-  } as TextStyle,
   participantName: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,

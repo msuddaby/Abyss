@@ -53,6 +53,7 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
       </div>
       <div className="profile-card-body">
         <div className="profile-card-name">{user.displayName}</div>
+        <div className="profile-card-status">{user.status || ''}</div>
         <div className="profile-card-username">@{user.username}</div>
         {nonDefaultRoles.length > 0 && (
           <div className="profile-card-roles">

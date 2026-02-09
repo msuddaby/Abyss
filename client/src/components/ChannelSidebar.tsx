@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission } from '@abyss/shared';
-import type { DmChannel, User } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
 import InviteModal from './InviteModal';
@@ -9,9 +9,12 @@ import VoiceControls from './VoiceControls';
 import UserSettingsModal from './UserSettingsModal';
 import ServerSettingsModal from './ServerSettingsModal';
 import AdminPanelModal from './AdminPanelModal';
+import ConfirmModal from './ConfirmModal';
+import EditChannelModal from './EditChannelModal';
+import ChannelPermissionsModal from './ChannelPermissionsModal';
 
 export default function ChannelSidebar() {
-  const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel } = useServerStore();
+  const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels } = useServerStore();
   const { joinChannel, leaveChannel, fetchMessages, currentChannelId } = useMessageStore();
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const { joinVoice, leaveVoice } = useWebRTC();
@@ -30,8 +33,17 @@ export default function ChannelSidebar() {
   const [dmSearchQuery, setDmSearchQuery] = useState('');
   const [dmSearchResults, setDmSearchResults] = useState<User[]>([]);
   const [dmSearching, setDmSearching] = useState(false);
+  const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
+  const [channelToEdit, setChannelToEdit] = useState<Channel | null>(null);
+  const [channelToEditPermissions, setChannelToEditPermissions] = useState<Channel | null>(null);
+  const [contextMenuChannel, setContextMenuChannel] = useState<Channel | null>(null);
+  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
+  const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
+  const [dragType, setDragType] = useState<'Text' | 'Voice' | null>(null);
   const dmSearchTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dmSearchInputRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const currentMember = members.find((m) => m.userId === user?.id);
   const canManageChannels = currentMember ? hasPermission(currentMember, Permission.ManageChannels) : false;
@@ -56,6 +68,47 @@ export default function ChannelSidebar() {
       switchChannel().catch(console.error);
     }
   }, [activeChannel]);
+
+  useEffect(() => {
+    if (!contextMenuChannel) return;
+    const handleClick = () => setContextMenuChannel(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenuChannel(null);
+    };
+    document.addEventListener('click', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('click', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [contextMenuChannel]);
+
+  useEffect(() => {
+    if (!contextMenuChannel || !contextMenuRef.current) return;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = contextMenuPos.x;
+    let top = contextMenuPos.y;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    if (top + rect.height > window.innerHeight - margin) {
+      top = window.innerHeight - rect.height - margin;
+    }
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
+      setContextMenuPos({ x: left, y: top });
+    }
+  }, [contextMenuChannel, contextMenuPos]);
+
+  const handleChannelContextMenu = (channel: Channel) => (e: React.MouseEvent) => {
+    if (!canManageChannels) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setContextMenuChannel(channel);
+  };
 
   // DM mode rendering
   if (isDmMode) {
@@ -203,10 +256,11 @@ export default function ChannelSidebar() {
     );
   }
 
-  const textChannels = channels.filter((c) => c.type === 'Text');
-  const voiceChannels = channels.filter((c) => c.type === 'Voice');
+  const visibleChannels = channels.filter((c) => canViewChannel(c));
+  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
+  const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
 
-  const handleChannelClick = (channel: typeof channels[0]) => {
+  const handleChannelClick = (channel: Channel) => {
     setActiveChannel(channel);
   };
 
@@ -216,6 +270,63 @@ export default function ChannelSidebar() {
 
   const handleVoiceLeave = async () => {
     await leaveVoice();
+  };
+
+  const handleDragStart = (channel: Channel, type: 'Text' | 'Voice') => (e: React.DragEvent) => {
+    if (!canManageChannels) return;
+    setDraggingChannelId(channel.id);
+    setDragType(type);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', channel.id);
+  };
+
+  const handleDragOver = (channel: Channel, type: 'Text' | 'Voice') => (e: React.DragEvent) => {
+    if (!canManageChannels || dragType !== type) return;
+    e.preventDefault();
+    setDragOverChannelId(channel.id);
+  };
+
+  const handleDrop = (channel: Channel, type: 'Text' | 'Voice') => async (e: React.DragEvent) => {
+    if (!canManageChannels || dragType !== type) return;
+    e.preventDefault();
+
+    const draggedId = draggingChannelId;
+    if (!draggedId || draggedId === channel.id || !activeServer) {
+      setDraggingChannelId(null);
+      setDragOverChannelId(null);
+      setDragType(null);
+      return;
+    }
+
+    const list = type === 'Text' ? textChannels : voiceChannels;
+    const fromIndex = list.findIndex((c) => c.id === draggedId);
+    const toIndex = list.findIndex((c) => c.id === channel.id);
+    if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
+      setDraggingChannelId(null);
+      setDragOverChannelId(null);
+      setDragType(null);
+      return;
+    }
+
+    const next = [...list];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+
+    try {
+      await reorderChannels(activeServer.id, type, next.map((c) => c.id));
+    } catch {
+      // errors handled in store
+    } finally {
+      setDraggingChannelId(null);
+      setDragOverChannelId(null);
+      setDragType(null);
+    }
+  };
+
+  const handleDragEnd = () => {
+    setDraggingChannelId(null);
+    setDragOverChannelId(null);
+    setDragType(null);
   };
 
   return (
@@ -245,7 +356,16 @@ export default function ChannelSidebar() {
               const hasUnread = unread?.hasUnread && activeChannel?.id !== channel.id;
               const mentionCount = unread?.mentionCount || 0;
               return (
-                <div key={channel.id} className="channel-item-wrapper">
+                <div
+                  key={channel.id}
+                  className={`channel-item-wrapper${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+                  draggable={canManageChannels}
+                  onDragStart={handleDragStart(channel, 'Text')}
+                  onDragOver={handleDragOver(channel, 'Text')}
+                  onDrop={handleDrop(channel, 'Text')}
+                  onDragEnd={handleDragEnd}
+                  onContextMenu={handleChannelContextMenu(channel)}
+                >
                   {hasUnread && <div className="channel-unread-dot" />}
                   <button
                     className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}${hasUnread ? ' unread' : ''}`}
@@ -257,13 +377,6 @@ export default function ChannelSidebar() {
                       <span className="mention-badge">{mentionCount}</span>
                     )}
                   </button>
-                  {canManageChannels && (
-                    <button
-                      className="channel-delete-btn"
-                      onClick={(e) => { e.stopPropagation(); deleteChannel(activeServer.id, channel.id); }}
-                      title="Delete Channel"
-                    >&times;</button>
-                  )}
                 </div>
               );
             })}
@@ -273,15 +386,25 @@ export default function ChannelSidebar() {
           <div className="channel-category">
             <span className="category-label">Voice Channels</span>
             {voiceChannels.map((channel) => (
-              <VoiceChannel
+              <div
                 key={channel.id}
-                channel={channel}
-                isActive={activeChannel?.id === channel.id}
-                isConnected={voiceChannelId === channel.id}
-                onSelect={() => handleChannelClick(channel)}
-                onJoin={() => handleVoiceJoin(channel.id)}
-                onLeave={handleVoiceLeave}
-              />
+                className={`channel-item-wrapper voice${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+                draggable={canManageChannels}
+                onDragStart={handleDragStart(channel, 'Voice')}
+                onDragOver={handleDragOver(channel, 'Voice')}
+                onDrop={handleDrop(channel, 'Voice')}
+                onDragEnd={handleDragEnd}
+                onContextMenu={handleChannelContextMenu(channel)}
+              >
+                <VoiceChannel
+                  channel={channel}
+                  isActive={activeChannel?.id === channel.id}
+                  isConnected={voiceChannelId === channel.id}
+                  onSelect={() => handleChannelClick(channel)}
+                  onJoin={() => handleVoiceJoin(channel.id)}
+                  onLeave={handleVoiceLeave}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -302,6 +425,54 @@ export default function ChannelSidebar() {
         <ServerSettingsModal
           serverId={activeServer.id}
           onClose={() => setShowServerSettings(false)}
+        />
+      )}
+      {contextMenuChannel && (
+        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
+          <button
+            className="context-menu-item"
+            onClick={() => { setChannelToEdit(contextMenuChannel); setContextMenuChannel(null); }}
+          >
+            Edit Channel
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => { setChannelToEditPermissions(contextMenuChannel); setContextMenuChannel(null); }}
+          >
+            Channel Permissions
+          </button>
+          <button
+            className="context-menu-item danger"
+            onClick={() => { setChannelToDelete(contextMenuChannel); setContextMenuChannel(null); }}
+          >
+            Delete Channel
+          </button>
+        </div>
+      )}
+      {channelToEdit && activeServer && (
+        <EditChannelModal
+          initialName={channelToEdit.name}
+          channelType={channelToEdit.type}
+          onSave={async (name) => { await renameChannel(activeServer.id, channelToEdit.id, name); }}
+          onClose={() => setChannelToEdit(null)}
+        />
+      )}
+      {channelToEditPermissions && activeServer && (
+        <ChannelPermissionsModal
+          serverId={activeServer.id}
+          channelId={channelToEditPermissions.id}
+          channelName={channelToEditPermissions.name}
+          onClose={() => setChannelToEditPermissions(null)}
+        />
+      )}
+      {channelToDelete && activeServer && (
+        <ConfirmModal
+          title={`Delete ${channelToDelete.type} Channel`}
+          message={`Delete ${channelToDelete.type === 'Text' ? '#' : ''}${channelToDelete.type === 'Voice' ? 'voice ' : ''}${channelToDelete.name}? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => deleteChannel(activeServer.id, channelToDelete.id)}
+          onClose={() => setChannelToDelete(null)}
         />
       )}
     </div>

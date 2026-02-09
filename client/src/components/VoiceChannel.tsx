@@ -1,4 +1,4 @@
-import { useServerStore, useVoiceStore, useAuthStore, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasPermission, hasChannelPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import type { Channel } from '@abyss/shared';
 
 interface Props {
@@ -16,6 +16,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const members = useServerStore((s) => s.members);
   const currentUser = useAuthStore((s) => s.user);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
+  const canConnect = hasChannelPermission(channel.permissions, Permission.Connect);
 
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
@@ -42,10 +43,12 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
         <button className="voice-action-btn leave" onClick={onLeave} title="Disconnect">
           ✕
         </button>
-      ) : (
+      ) : canConnect ? (
         <button className="voice-action-btn join" onClick={onJoin} title="Join Voice">
           →
         </button>
+      ) : (
+        <span className="voice-action-lock" title="No permission to connect">🔒</span>
       )}
       {participants.length > 0 && (
         <div className="voice-participants">
@@ -53,10 +56,15 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
             const targetMember = members.find((m) => m.userId === userId);
             const canActOnMember = !!(currentMember && targetMember && canActOn(currentMember, targetMember));
             const showModeration = canModerateVoice && canActOnMember;
+            const avatarUrl = targetMember?.user?.avatarUrl
+              ? (targetMember.user.avatarUrl.startsWith('http') ? targetMember.user.avatarUrl : `${getApiBase()}${targetMember.user.avatarUrl}`)
+              : null;
 
             return (
               <div key={userId} className="voice-participant">
-                <span className={`participant-avatar${speakingUsers.has(userId) ? ' speaking' : ''}`}>{state.displayName.charAt(0).toUpperCase()}</span>
+                <span className={`participant-avatar${speakingUsers.has(userId) ? ' speaking' : ''}`}>
+                  {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
+                </span>
                 <span className="participant-name">{state.displayName}</span>
                 <div className="voice-participant-right">
                   {channelSharers?.has(userId) && <span className="live-badge">LIVE</span>}

@@ -225,6 +225,30 @@ namespace Abyss.Api.Migrations
                     b.ToTable("Channels");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.ChannelPermissionOverride", b =>
+                {
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("RoleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Allow")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Deny")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ChannelId", "RoleId");
+
+                    b.HasIndex("RoleId");
+
+                    b.HasIndex("ChannelId", "RoleId")
+                        .IsUnique();
+
+                    b.ToTable("ChannelPermissionOverrides");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.ChannelRead", b =>
                 {
                     b.Property<Guid>("ChannelId")
@@ -410,6 +434,9 @@ namespace Abyss.Api.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsSystem")
+                        .HasColumnType("boolean");
+
                     b.Property<Guid?>("ReplyToMessageId")
                         .HasColumnType("uuid");
 
@@ -467,6 +494,32 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("UserId", "ServerId", "IsRead");
 
                     b.ToTable("Notifications");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.PinnedMessage", b =>
+                {
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("PinnedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PinnedById")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("ChannelId", "MessageId");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("PinnedById");
+
+                    b.HasIndex("ChannelId", "PinnedAt");
+
+                    b.ToTable("PinnedMessages");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Reaction", b =>
@@ -544,6 +597,12 @@ namespace Abyss.Api.Migrations
 
                     b.Property<string>("IconUrl")
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("JoinLeaveChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("JoinLeaveMessagesEnabled")
+                        .HasColumnType("boolean");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -643,6 +702,9 @@ namespace Abyss.Api.Migrations
                     b.Property<string>("Color")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<bool>("DisplaySeparately")
+                        .HasColumnType("boolean");
 
                     b.Property<bool>("IsDefault")
                         .HasColumnType("boolean");
@@ -850,6 +912,25 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Server");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.ChannelPermissionOverride", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.Channel", "Channel")
+                        .WithMany("PermissionOverrides")
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Abyss.Api.Models.ServerRole", "Role")
+                        .WithMany()
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Channel");
+
+                    b.Navigation("Role");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.ChannelRead", b =>
                 {
                     b.HasOne("Abyss.Api.Models.Channel", "Channel")
@@ -986,6 +1067,33 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Server");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.PinnedMessage", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.Channel", "Channel")
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Abyss.Api.Models.Message", "Message")
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Abyss.Api.Models.AppUser", "PinnedBy")
+                        .WithMany()
+                        .HasForeignKey("PinnedById")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Channel");
+
+                    b.Navigation("Message");
+
+                    b.Navigation("PinnedBy");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Reaction", b =>
@@ -1154,6 +1262,11 @@ namespace Abyss.Api.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.Channel", b =>
+                {
+                    b.Navigation("PermissionOverrides");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Message", b =>

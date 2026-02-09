@@ -97,6 +97,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddScoped<SystemMessageService>();
 builder.Services.AddSingleton<VoiceStateService>();
 builder.Services.AddSingleton<TurnCredentialService>();
 builder.Services.AddSingleton<ImageService>();

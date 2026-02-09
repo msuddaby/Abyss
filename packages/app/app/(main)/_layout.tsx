@@ -18,6 +18,7 @@ import UserSettingsModal from '../../src/components/UserSettingsModal';
 import ServerSettingsModal from '../../src/components/ServerSettingsModal';
 import UserProfileCard from '../../src/components/UserProfileCard';
 import SearchPanel from '../../src/components/SearchPanel';
+import PinnedMessagesModal from '../../src/components/PinnedMessagesModal';
 import { useUiStore } from '../../src/stores/uiStore';
 import { colors } from '../../src/theme/tokens';
 
@@ -43,6 +44,9 @@ export default function MainLayout() {
       {activeModal === 'serverSettings' && <ServerSettingsModal />}
       {activeModal === 'userProfile' && <UserProfileCard userId={modalProps.userId} />}
       {activeModal === 'search' && <SearchPanel />}
+      {activeModal === 'pins' && modalProps.channelId && (
+        <PinnedMessagesModal channelId={modalProps.channelId} />
+      )}
     </>
   );
 

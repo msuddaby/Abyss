@@ -1,15 +1,23 @@
-import { useEffect, useState } from 'react';
-import { useServerStore, useDmStore, useUnreadStore } from '@abyss/shared';
+import { useEffect, useState, useRef } from 'react';
+import { useServerStore, useDmStore, useUnreadStore, useAuthStore, getApiBase, hasPermission, Permission } from '@abyss/shared';
 import CreateServerModal from './CreateServerModal';
 import JoinServerModal from './JoinServerModal';
+import ServerSettingsModal from './ServerSettingsModal';
+import ConfirmModal from './ConfirmModal';
 
 export default function ServerSidebar() {
-  const { servers, activeServer, fetchServers, setActiveServer } = useServerStore();
+  const { servers, activeServer, fetchServers, setActiveServer, leaveServer, members } = useServerStore();
   const { isDmMode, enterDmMode, exitDmMode, fetchDmChannels } = useDmStore();
   const serverUnreads = useUnreadStore((s) => s.serverUnreads);
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
+  const currentUser = useAuthStore((s) => s.user);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
+  const [serverToEdit, setServerToEdit] = useState<typeof servers[number] | null>(null);
+  const [serverToLeave, setServerToLeave] = useState<typeof servers[number] | null>(null);
+  const [contextMenuServer, setContextMenuServer] = useState<typeof servers[number] | null>(null);
+  const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchServers();
@@ -36,6 +44,60 @@ export default function ServerSidebar() {
     setActiveServer(server);
   };
 
+  const currentMember = members.find((m) => m.userId === currentUser?.id);
+  const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
+  const isOwner = currentMember?.isOwner ?? false;
+
+  useEffect(() => {
+    if (!contextMenuServer) return;
+    const handleClick = () => setContextMenuServer(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenuServer(null);
+    };
+    document.addEventListener('click', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('click', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [contextMenuServer]);
+
+  useEffect(() => {
+    if (!contextMenuServer || !contextMenuRef.current) return;
+
+    requestAnimationFrame(() => {
+      if (!contextMenuRef.current) return;
+      const rect = contextMenuRef.current.getBoundingClientRect();
+      const margin = 8;
+      let left = contextMenuPos.x;
+      let top = contextMenuPos.y;
+      if (left + rect.width > window.innerWidth - margin) {
+        left = window.innerWidth - rect.width - margin;
+      }
+      if (top + rect.height > window.innerHeight - margin) {
+        top = window.innerHeight - rect.height - margin;
+      }
+      if (left < margin) left = margin;
+      if (top < margin) top = margin;
+      if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
+        setContextMenuPos({ x: left, y: top });
+      }
+    });
+  }, [contextMenuServer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleServerContextMenu = (server: typeof servers[0]) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuPos({ x: e.clientX, y: e.clientY });
+    setContextMenuServer(server);
+  };
+
+  const handleEditServer = async (server: typeof servers[0]) => {
+    exitDmMode();
+    await setActiveServer(server);
+    setServerToEdit(server);
+  };
+
   return (
     <div className="server-sidebar">
       <div className="server-list">
@@ -60,7 +122,7 @@ export default function ServerSidebar() {
           const hasUnread = unread?.hasUnread && activeServer?.id !== server.id;
           const mentionCount = unread?.mentionCount || 0;
           return (
-            <div key={server.id} className="server-icon-wrapper">
+            <div key={server.id} className="server-icon-wrapper" onContextMenu={handleServerContextMenu(server)}>
               {hasUnread && <div className="server-unread-dot" />}
               <button
                 className={`server-icon ${activeServer?.id === server.id ? 'active' : ''}`}
@@ -68,7 +130,7 @@ export default function ServerSidebar() {
                 title={server.name}
               >
                 {server.iconUrl ? (
-                  <img src={server.iconUrl} alt={server.name} />
+                  <img src={server.iconUrl.startsWith('http') ? server.iconUrl : `${getApiBase()}${server.iconUrl}`} alt={server.name} />
                 ) : (
                   <span>{server.name.charAt(0).toUpperCase()}</span>
                 )}
@@ -90,6 +152,45 @@ export default function ServerSidebar() {
       </div>
       {showCreate && <CreateServerModal onClose={() => setShowCreate(false)} />}
       {showJoin && <JoinServerModal onClose={() => setShowJoin(false)} />}
+      {serverToEdit && (
+        <ServerSettingsModal
+          serverId={serverToEdit.id}
+          onClose={() => setServerToEdit(null)}
+        />
+      )}
+      {contextMenuServer && (
+        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
+          {(((contextMenuServer.id === activeServer?.id) && (canManageServer || isOwner)) || contextMenuServer.ownerId === currentUser?.id) && (
+            <button
+              className="context-menu-item"
+              onClick={() => { const server = contextMenuServer; setContextMenuServer(null); if (server) handleEditServer(server); }}
+            >
+              Server Settings
+            </button>
+          )}
+          {contextMenuServer.ownerId !== currentUser?.id && (
+            <button
+              className="context-menu-item danger"
+              onClick={() => { setServerToLeave(contextMenuServer); setContextMenuServer(null); }}
+            >
+              Leave Server
+            </button>
+          )}
+        </div>
+      )}
+      {serverToLeave && (
+        <ConfirmModal
+          title={`Leave ${serverToLeave.name}?`}
+          message={`You will lose access to ${serverToLeave.name}.`}
+          confirmLabel="Leave"
+          danger
+          onConfirm={async () => {
+            await leaveServer(serverToLeave.id);
+            setServerToLeave(null);
+          }}
+          onClose={() => setServerToLeave(null)}
+        />
+      )}
     </div>
   );
 }

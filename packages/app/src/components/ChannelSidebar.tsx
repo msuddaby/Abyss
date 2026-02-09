@@ -3,7 +3,7 @@ import { View, Text, Pressable, ScrollView, Alert, StyleSheet, type ViewStyle, t
 import {
   useServerStore, useMessageStore, useVoiceStore, useAuthStore,
   useUnreadStore, useDmStore, usePresenceStore,
-  getApiBase, hasPermission, Permission,
+  getApiBase, hasPermission, Permission, canViewChannel,
 } from '@abyss/shared';
 import type { DmChannel } from '@abyss/shared';
 import ChannelItem from './ChannelItem';
@@ -132,8 +132,9 @@ export default function ChannelSidebar() {
   }
 
   // ── Server Mode ──
-  const textChannels = channels.filter((c) => c.type === 'Text');
-  const voiceChannels = channels.filter((c) => c.type === 'Voice');
+  const visibleChannels = channels.filter((c) => canViewChannel(c));
+  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
+  const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
 
   const handleChannelPress = (channel: typeof channels[0]) => {
     setActiveChannel(channel);

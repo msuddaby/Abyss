@@ -19,12 +19,16 @@ public class ServersController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly IHubContext<ChatHub> _hub;
+    private readonly ImageService _imageService;
+    private readonly SystemMessageService _systemMessages;
 
-    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub)
+    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages)
     {
         _db = db;
         _perms = perms;
         _hub = hub;
+        _imageService = imageService;
+        _systemMessages = systemMessages;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -35,7 +39,7 @@ public class ServersController : ControllerBase
         var servers = await _db.ServerMembers
             .Where(sm => sm.UserId == UserId)
             .Select(sm => sm.Server)
-            .Select(s => new ServerDto(s.Id, s.Name, s.IconUrl, s.OwnerId))
+            .Select(s => new ServerDto(s.Id, s.Name, s.IconUrl, s.OwnerId, s.JoinLeaveMessagesEnabled, s.JoinLeaveChannelId))
             .ToListAsync();
         return Ok(servers);
     }
@@ -57,9 +61,19 @@ public class ServersController : ControllerBase
             Id = Guid.NewGuid(),
             ServerId = server.Id,
             Name = "@everyone",
-            Permissions = 0,
+            Permissions = (long)(
+                Permission.ViewChannel |
+                Permission.ReadMessageHistory |
+                Permission.SendMessages |
+                Permission.AddReactions |
+                Permission.AttachFiles |
+                Permission.MentionEveryone |
+                Permission.Connect |
+                Permission.Speak |
+                Permission.Stream),
             Position = 0,
             IsDefault = true,
+            DisplaySeparately = false,
         };
         _db.ServerRoles.Add(everyoneRole);
 
@@ -71,17 +85,93 @@ public class ServersController : ControllerBase
         });
 
         // Create default text channel
-        _db.Channels.Add(new Channel
+        var generalChannel = new Channel
         {
             Id = Guid.NewGuid(),
             Name = "general",
             Type = ChannelType.Text,
             ServerId = server.Id,
             Position = 0,
-        });
+        };
+        _db.Channels.Add(generalChannel);
+        server.JoinLeaveMessagesEnabled = true;
+        server.JoinLeaveChannelId = generalChannel.Id;
 
         await _db.SaveChangesAsync();
-        return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId));
+        return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId));
+    }
+
+    [HttpPatch("{serverId}")]
+    public async Task<ActionResult<ServerDto>> UpdateServer(Guid serverId, [FromForm] UpdateServerRequest req)
+    {
+        if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageServer)) return Forbid();
+
+        var server = await _db.Servers.FindAsync(serverId);
+        if (server == null) return NotFound();
+
+        var didChange = false;
+
+        if (req.Name != null)
+        {
+            var trimmed = req.Name.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed)) return BadRequest("Server name is required.");
+            if (!string.Equals(server.Name, trimmed, StringComparison.Ordinal))
+            {
+                server.Name = trimmed;
+                didChange = true;
+            }
+        }
+
+        if (req.RemoveIcon == true)
+        {
+            if (!string.IsNullOrEmpty(server.IconUrl))
+            {
+                server.IconUrl = null;
+                didChange = true;
+            }
+        }
+        else if (req.Icon != null)
+        {
+            if (req.Icon.Length == 0) return BadRequest("No file");
+            if (req.Icon.Length > 5 * 1024 * 1024) return BadRequest("File too large (max 5MB)");
+            server.IconUrl = await _imageService.ProcessAvatarAsync(req.Icon);
+            didChange = true;
+        }
+
+        if (req.JoinLeaveMessagesEnabled.HasValue || req.JoinLeaveChannelId.HasValue)
+        {
+            if (req.JoinLeaveMessagesEnabled.HasValue &&
+                server.JoinLeaveMessagesEnabled != req.JoinLeaveMessagesEnabled.Value)
+            {
+                server.JoinLeaveMessagesEnabled = req.JoinLeaveMessagesEnabled.Value;
+                didChange = true;
+            }
+
+            if (req.JoinLeaveChannelId.HasValue)
+            {
+                var channelId = req.JoinLeaveChannelId.Value;
+                var channel = await _db.Channels.FirstOrDefaultAsync(c =>
+                    c.Id == channelId &&
+                    c.ServerId == serverId &&
+                    c.Type == ChannelType.Text);
+                if (channel == null) return BadRequest("Join/leave channel must be a text channel in this server.");
+
+                if (server.JoinLeaveChannelId != channelId)
+                {
+                    server.JoinLeaveChannelId = channelId;
+                    didChange = true;
+                }
+            }
+        }
+
+        if (!didChange) return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId));
+
+        await _db.SaveChangesAsync();
+        await _perms.LogAsync(serverId, AuditAction.ServerUpdated, UserId, targetName: server.Name);
+
+        var dto = new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId);
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("ServerUpdated", serverId.ToString(), dto);
+        return Ok(dto);
     }
 
     [HttpGet("{serverId}/channels")]
@@ -92,10 +182,26 @@ public class ServersController : ControllerBase
 
         var channels = await _db.Channels
             .Where(c => c.ServerId == serverId)
-            .OrderBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position))
+            .OrderBy(c => c.Type)
+            .ThenBy(c => c.Position)
             .ToListAsync();
-        return Ok(channels);
+
+        var result = new List<ChannelDto>();
+        foreach (var channel in channels)
+        {
+            var perms = await _perms.GetChannelPermissionsAsync(channel.Id, UserId);
+            if ((perms & (long)Permission.ViewChannel) != (long)Permission.ViewChannel) continue;
+
+            result.Add(new ChannelDto(
+                channel.Id,
+                channel.Name,
+                channel.Type.ToString(),
+                channel.ServerId,
+                channel.Position,
+                perms & PermissionService.ChannelPermissionMask));
+        }
+
+        return Ok(result);
     }
 
     [HttpPost("{serverId}/channels")]
@@ -103,9 +209,12 @@ public class ServersController : ControllerBase
     {
         if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
 
-        var maxPos = await _db.Channels.Where(c => c.ServerId == serverId).MaxAsync(c => (int?)c.Position) ?? -1;
         if (!Enum.TryParse<ChannelType>(req.Type, ignoreCase: true, out var channelType))
             return BadRequest("Invalid channel type");
+
+        var maxPos = await _db.Channels
+            .Where(c => c.ServerId == serverId && c.Type == channelType)
+            .MaxAsync(c => (int?)c.Position) ?? -1;
 
         var channel = new Channel
         {
@@ -126,6 +235,119 @@ public class ServersController : ControllerBase
         return Ok(dto);
     }
 
+    [HttpPatch("{serverId}/channels/{channelId}")]
+    public async Task<ActionResult<ChannelDto>> UpdateChannel(Guid serverId, Guid channelId, UpdateChannelRequest req)
+    {
+        if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
+        if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest("Channel name is required.");
+
+        var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId && c.ServerId == serverId);
+        if (channel == null) return NotFound();
+
+        channel.Name = req.Name.Trim();
+        await _db.SaveChangesAsync();
+
+        await _perms.LogAsync(serverId, AuditAction.ChannelUpdated, UserId,
+            targetName: $"#{channel.Name}", details: channel.Type.ToString());
+
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position);
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelUpdated", serverId.ToString(), dto);
+        return Ok(dto);
+    }
+
+    [HttpGet("{serverId}/channels/{channelId}/permissions")]
+    public async Task<ActionResult<ChannelPermissionsDto>> GetChannelPermissions(Guid serverId, Guid channelId)
+    {
+        if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
+
+        var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId && c.ServerId == serverId);
+        if (channel == null) return NotFound();
+
+        var overrides = await _db.ChannelPermissionOverrides
+            .Where(o => o.ChannelId == channelId)
+            .Select(o => new ChannelPermissionOverrideDto(o.RoleId, o.Allow, o.Deny))
+            .ToListAsync();
+
+        return Ok(new ChannelPermissionsDto(overrides));
+    }
+
+    [HttpPut("{serverId}/channels/{channelId}/permissions")]
+    public async Task<ActionResult> UpdateChannelPermissions(Guid serverId, Guid channelId, ChannelPermissionsDto dto)
+    {
+        if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
+
+        var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId && c.ServerId == serverId);
+        if (channel == null) return NotFound();
+
+        var overrides = dto.Overrides ?? new List<ChannelPermissionOverrideDto>();
+        var roleIds = overrides.Select(o => o.RoleId).Distinct().ToList();
+
+        var roles = await _db.ServerRoles
+            .Where(r => r.ServerId == serverId && roleIds.Contains(r.Id))
+            .Select(r => r.Id)
+            .ToListAsync();
+
+        if (roles.Count != roleIds.Count) return BadRequest("One or more roles are invalid.");
+
+        var existing = await _db.ChannelPermissionOverrides
+            .Where(o => o.ChannelId == channelId)
+            .ToListAsync();
+
+        _db.ChannelPermissionOverrides.RemoveRange(existing);
+
+        foreach (var ov in overrides)
+        {
+            _db.ChannelPermissionOverrides.Add(new ChannelPermissionOverride
+            {
+                ChannelId = channelId,
+                RoleId = ov.RoleId,
+                Allow = ov.Allow & PermissionService.ChannelPermissionMask,
+                Deny = ov.Deny & PermissionService.ChannelPermissionMask,
+            });
+        }
+
+        await _db.SaveChangesAsync();
+
+        await _hub.Clients.Group($"server:{serverId}")
+            .SendAsync("ChannelPermissionsUpdated", serverId.ToString(), channelId.ToString());
+
+        return Ok();
+    }
+
+    [HttpPatch("{serverId}/channels/reorder")]
+    public async Task<IActionResult> ReorderChannels(Guid serverId, ReorderChannelsRequest req)
+    {
+        if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
+        if (!Enum.TryParse<ChannelType>(req.Type, ignoreCase: true, out var channelType))
+            return BadRequest("Invalid channel type");
+
+        var channels = await _db.Channels
+            .Where(c => c.ServerId == serverId && c.Type == channelType)
+            .ToListAsync();
+
+        if (req.ChannelIds.Count != channels.Count) return BadRequest("Channel list does not match server channels.");
+
+        var position = 0;
+        foreach (var channelId in req.ChannelIds)
+        {
+            var channel = channels.FirstOrDefault(c => c.Id == channelId);
+            if (channel == null) return BadRequest("Channel list contains invalid channel.");
+            channel.Position = position++;
+        }
+
+        await _db.SaveChangesAsync();
+
+        var allChannels = await _db.Channels
+            .Where(c => c.ServerId == serverId)
+            .OrderBy(c => c.Type)
+            .ThenBy(c => c.Position)
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null))
+            .ToListAsync();
+
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);
+        return Ok();
+    }
+
     [HttpGet("{serverId}/members")]
     public async Task<ActionResult<List<ServerMemberDto>>> GetMembers(Guid serverId)
     {
@@ -144,7 +366,7 @@ public class ServersController : ControllerBase
             sm.UserId,
             new UserDto(sm.User.Id, sm.User.UserName!, sm.User.DisplayName, sm.User.AvatarUrl, sm.User.Status, sm.User.Bio),
             sm.IsOwner,
-            sm.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault)).ToList(),
+            sm.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault, mr.Role.DisplaySeparately)).ToList(),
             sm.JoinedAt)).ToList();
         return Ok(dtos);
     }
@@ -211,7 +433,7 @@ public class ServersController : ControllerBase
 
         // Fetch updated roles for broadcast
         var updatedMember = await _perms.GetMemberAsync(serverId, userId);
-        var roleDtos = updatedMember!.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault)).ToArray();
+        var roleDtos = updatedMember!.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault, mr.Role.DisplaySeparately)).ToArray();
         await _hub.Clients.Group($"server:{serverId}").SendAsync("MemberRolesUpdated", serverId.ToString(), userId, roleDtos);
 
         return Ok();
@@ -236,6 +458,42 @@ public class ServersController : ControllerBase
             targetId: userId, targetName: targetUser?.DisplayName);
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("MemberKicked", serverId.ToString(), userId);
+        await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false);
+        return Ok();
+    }
+
+    [HttpDelete("{serverId}/leave")]
+    public async Task<IActionResult> LeaveServer(Guid serverId)
+    {
+        var member = await _perms.GetMemberAsync(serverId, UserId);
+        if (member == null) return NotFound();
+        if (member.IsOwner) return BadRequest("Server owner cannot leave.");
+
+        _db.ServerMemberRoles.RemoveRange(_db.ServerMemberRoles.Where(smr => smr.ServerId == serverId && smr.UserId == UserId));
+        _db.ServerMembers.Remove(member);
+        await _db.SaveChangesAsync();
+
+        var targetUser = await _db.Users.FindAsync(UserId);
+        await _perms.LogAsync(serverId, AuditAction.MemberLeft, UserId, targetId: UserId, targetName: targetUser?.DisplayName);
+
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("MemberKicked", serverId.ToString(), UserId);
+        await _hub.Clients.Group($"server:{serverId}").SendAsync("UserOffline", UserId);
+
+        await _systemMessages.SendMemberJoinLeaveAsync(serverId, UserId, joined: false);
+
+        List<string> userConnections;
+        lock (ChatHub._lock)
+        {
+            userConnections = ChatHub._connections
+                .Where(c => c.Value == UserId)
+                .Select(c => c.Key)
+                .ToList();
+        }
+        foreach (var connectionId in userConnections)
+        {
+            await _hub.Groups.RemoveFromGroupAsync(connectionId, $"server:{serverId}");
+        }
+
         return Ok();
     }
 
@@ -252,6 +510,20 @@ public class ServersController : ControllerBase
         {
             var textCount = await _db.Channels.CountAsync(c => c.ServerId == serverId && c.Type == ChannelType.Text);
             if (textCount <= 1) return BadRequest("Cannot delete the last text channel.");
+        }
+
+        if (channel.Type == ChannelType.Text)
+        {
+            var server = await _db.Servers.FindAsync(serverId);
+            if (server != null && server.JoinLeaveChannelId == channelId)
+            {
+                var replacement = await _db.Channels
+                    .Where(c => c.ServerId == serverId && c.Type == ChannelType.Text && c.Id != channelId)
+                    .OrderBy(c => c.Position)
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync();
+                server.JoinLeaveChannelId = replacement;
+            }
         }
 
         _db.Channels.Remove(channel);
@@ -321,7 +593,20 @@ public class ServersController : ControllerBase
         if (channelId.HasValue && !textChannelIds.Contains(channelId.Value))
             return BadRequest("Channel not in this server.");
 
-        var targetChannels = channelId.HasValue ? new List<Guid> { channelId.Value } : textChannelIds;
+        var allowedChannelIds = new List<Guid>();
+        foreach (var textChannelId in textChannelIds)
+        {
+            if (!await _perms.HasChannelPermissionAsync(textChannelId, UserId, Permission.ViewChannel)) continue;
+            if (!await _perms.HasChannelPermissionAsync(textChannelId, UserId, Permission.ReadMessageHistory)) continue;
+            allowedChannelIds.Add(textChannelId);
+        }
+
+        if (channelId.HasValue && !allowedChannelIds.Contains(channelId.Value))
+            return Forbid();
+
+        var targetChannels = channelId.HasValue ? new List<Guid> { channelId.Value } : allowedChannelIds;
+        if (targetChannels.Count == 0)
+            return Ok(new SearchResponseDto(new List<SearchResultDto>(), 0));
 
         var query = _db.Messages
             .Where(m => targetChannels.Contains(m.ChannelId) && !m.IsDeleted)
@@ -351,7 +636,7 @@ public class ServersController : ControllerBase
                     new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
                     m.ChannelId, m.CreatedAt,
                     m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
-                    m.EditedAt, m.IsDeleted,
+                    m.EditedAt, m.IsDeleted, m.IsSystem,
                     new List<ReactionDto>(), null, null),
                 m.Channel.Name ?? ""))
             .ToListAsync();
@@ -362,6 +647,8 @@ public class ServersController : ControllerBase
     [HttpGet("{serverId}/audit-logs")]
     public async Task<ActionResult<List<AuditLogDto>>> GetAuditLogs(Guid serverId, [FromQuery] int limit = 50)
     {
+        //TODO: pagination would be nice here
+        limit = Math.Clamp(limit, 1, 100);
         if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ViewAuditLog)) return Forbid();
 
         var logs = await _db.AuditLogs

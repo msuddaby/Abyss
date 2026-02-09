@@ -7,6 +7,8 @@ public class Server
     public string? IconUrl { get; set; }
     public string OwnerId { get; set; } = string.Empty;
     public AppUser Owner { get; set; } = null!;
+    public bool JoinLeaveMessagesEnabled { get; set; } = true;
+    public Guid? JoinLeaveChannelId { get; set; }
     public ICollection<ServerMember> Members { get; set; } = new List<ServerMember>();
     public ICollection<Channel> Channels { get; set; } = new List<Channel>();
     public ICollection<ServerRole> Roles { get; set; } = new List<ServerRole>();

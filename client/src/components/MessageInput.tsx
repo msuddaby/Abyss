@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
-import { useMessageStore, useServerStore, useDmStore, uploadFile, getApiBase, getConnection } from "@abyss/shared";
+import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 
@@ -60,6 +60,8 @@ export default function MessageInput() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<{ x: number; y: number } | null>(null);
   const [emojiPickerStyle, setEmojiPickerStyle] = useState<React.CSSProperties | null>(null);
+  const [contentLength, setContentLength] = useState(0);
+  const [inputError, setInputError] = useState<string | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,9 +80,14 @@ export default function MessageInput() {
   const emojis = useServerStore((s) => s.emojis);
   const isDmMode = useDmStore((s) => s.isDmMode);
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
+  const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
+  const addToast = useToastStore((s) => s.addToast);
 
   const effectiveChannelId = isDmMode ? activeDmChannel?.id : activeChannel?.id;
   const isChannelActive = !!effectiveChannelId;
+  const canSendMessages = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
+  const canAttachFiles = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
+  const canMentionEveryone = isDmMode ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
 
   const customEmojiCategory = useMemo(() =>
     emojis.length > 0 ? [{
@@ -100,9 +107,9 @@ export default function MessageInput() {
     const q = mentionQuery.toLowerCase();
     const opts: MentionOption[] = [];
     if (!isDmMode) {
-      if ("everyone".startsWith(q))
+      if (canMentionEveryone && "everyone".startsWith(q))
         opts.push({ id: "everyone", label: "@everyone", type: "everyone" });
-      if ("here".startsWith(q))
+      if (canMentionEveryone && "here".startsWith(q))
         opts.push({ id: "here", label: "@here", type: "here" });
     }
     if (!isDmMode) {
@@ -116,7 +123,7 @@ export default function MessageInput() {
       }
     }
     return opts.slice(0, 10);
-  }, [mentionQuery, members, isDmMode]);
+  }, [mentionQuery, members, isDmMode, canMentionEveryone]);
 
   const emojiOptions = useMemo<EmojiOption[]>(() => {
     if (emojiQuery === null) return [];
@@ -177,8 +184,16 @@ export default function MessageInput() {
     }
   }, [showEmojiPicker, emojiPickerAnchor, emojiPickerStyle]);
 
+  useEffect(() => {
+    if (contentLength > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+    } else if (inputError) {
+      setInputError(null);
+    }
+  }, [contentLength, maxMessageLength, inputError]);
+
   const handleTyping = () => {
-    if (!effectiveChannelId) return;
+    if (!effectiveChannelId || !canSendMessages) return;
     const conn = getConnection();
     conn.invoke("UserTyping", effectiveChannelId).catch(() => {});
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
@@ -237,6 +252,12 @@ export default function MessageInput() {
       editorRef.current.innerHTML = '';
     }
     const raw = extractRawContent(editorRef.current);
+    setContentLength(raw.length);
+    if (raw.length > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+    } else if (inputError) {
+      setInputError(null);
+    }
     setIsEmpty(!raw.trim());
     handleTyping();
     detectTriggers();
@@ -387,7 +408,7 @@ export default function MessageInput() {
         setMentionIndex((prev) => (prev - 1 + mentionOptions.length) % mentionOptions.length);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
         e.preventDefault();
         insertMention(mentionOptions[mentionIndex]);
         return;
@@ -410,7 +431,7 @@ export default function MessageInput() {
         setEmojiIndex((prev) => (prev - 1 + emojiOptions.length) % emojiOptions.length);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) {
         e.preventDefault();
         insertEmoji(emojiOptions[emojiIndex]);
         return;
@@ -428,8 +449,14 @@ export default function MessageInput() {
       setReplyingTo(null);
       return;
     }
-    // Enter sends the message (prevent newline in contentEditable)
+    // Enter sends; Shift+Enter inserts newline
     if (e.key === 'Enter') {
+      if (e.shiftKey) {
+        e.preventDefault();
+        document.execCommand('insertLineBreak');
+        requestAnimationFrame(() => handleInput());
+        return;
+      }
       e.preventDefault();
       handleSubmit();
     }
@@ -442,6 +469,10 @@ export default function MessageInput() {
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canAttachFiles) {
+      addToast('You do not have permission to attach files in this channel.', 'error');
+      return;
+    }
     const selected = Array.from(e.target.files || []);
     setFiles((prev) => [...prev, ...selected]);
     selected.forEach((file) => {
@@ -462,9 +493,22 @@ export default function MessageInput() {
 
   const handleSubmit = async () => {
     if (!editorRef.current || !effectiveChannelId || sending) return;
+    if (!canSendMessages) {
+      addToast('You do not have permission to send messages in this channel.', 'error');
+      return;
+    }
+    if (files.length > 0 && !canAttachFiles) {
+      addToast('You do not have permission to attach files in this channel.', 'error');
+      return;
+    }
 
     const content = extractRawContent(editorRef.current);
     if (!content.trim() && files.length === 0) return;
+    if (content.length > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+      addToast(`Message must be 1-${maxMessageLength} characters.`, 'error');
+      return;
+    }
 
     setSending(true);
     try {
@@ -476,14 +520,17 @@ export default function MessageInput() {
       await sendMessage(effectiveChannelId, content, attachmentIds, replyingTo?.id);
       editorRef.current.innerHTML = '';
       setIsEmpty(true);
+      setContentLength(0);
       setFiles([]);
       setPreviews([]);
       setMentionQuery(null);
       setEmojiQuery(null);
       triggerRef.current = null;
       setReplyingTo(null);
+      setInputError(null);
     } catch (err) {
       console.error("Failed to send message:", err);
+      addToast('Failed to send message.', 'error');
     } finally {
       setSending(false);
     }
@@ -566,25 +613,31 @@ export default function MessageInput() {
         </div>
       )}
       <form className="message-input-form" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-        <button
-          type="button"
-          className="attach-btn"
-          onClick={() => fileInputRef.current?.click()}
-        >
-          +
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={handleFileSelect}
-        />
+        {canAttachFiles && (
+          <>
+            <button
+              type="button"
+              className="attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!canSendMessages}
+              title="Attach"
+            >
+              +
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={handleFileSelect}
+            />
+          </>
+        )}
         <div
           ref={editorRef}
           className={`message-input${isEmpty ? ' empty' : ''}`}
-          contentEditable={isChannelActive}
+          contentEditable={isChannelActive && canSendMessages}
           suppressContentEditableWarning
           onInput={handleInput}
           onKeyDown={handleKeyDown}
@@ -593,7 +646,7 @@ export default function MessageInput() {
             isDmMode && activeDmChannel
               ? `Message @${activeDmChannel.otherUser.displayName}`
               : activeChannel
-                ? `Message #${activeChannel.name}`
+                ? (canSendMessages ? `Message #${activeChannel.name}` : `You do not have permission to send messages`)
                 : "Select a channel"
           }
           role="textbox"
@@ -617,11 +670,17 @@ export default function MessageInput() {
         <button
           type="submit"
           className="send-btn"
-          disabled={sending || (isEmpty && files.length === 0)}
+          disabled={!canSendMessages || sending || (isEmpty && files.length === 0) || contentLength > maxMessageLength}
         >
           Send
         </button>
       </form>
+      <div className="message-input-meta">
+        <span className={`message-input-count${contentLength > maxMessageLength ? ' over' : ''}`}>
+          {contentLength}/{maxMessageLength}
+        </span>
+        {inputError && <span className="message-input-error">{inputError}</span>}
+      </div>
     </div>
   );
 }

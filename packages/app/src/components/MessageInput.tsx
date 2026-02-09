@@ -6,8 +6,8 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
-  useMessageStore, useServerStore, useDmStore,
-  api, getApiBase, getConnection,
+  useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore,
+  api, getApiBase, getConnection, hasChannelPermission, Permission,
 } from '@abyss/shared';
 import EmojiPicker, { type EmojiSelection } from './EmojiPicker';
 import { colors, spacing, fontSize, borderRadius } from '../theme/tokens';
@@ -33,9 +33,11 @@ export default function MessageInput() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [cursorPos, setCursorPos] = useState(0);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
 
   const inputRef = useRef<TextInput>(null);
   const typingTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const addToast = useToastStore((s) => s.addToast);
 
   const sendMessage = useMessageStore((s) => s.sendMessage);
   const replyingTo = useMessageStore((s) => s.replyingTo);
@@ -45,8 +47,12 @@ export default function MessageInput() {
   const emojis = useServerStore((s) => s.emojis);
   const isDmMode = useDmStore((s) => s.isDmMode);
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
+  const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
 
   const effectiveChannelId = isDmMode ? activeDmChannel?.id : activeChannel?.id;
+  const canSendMessages = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
+  const canAttachFiles = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
+  const canMentionEveryone = isDmMode ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
 
   // Focus input when replying
   useEffect(() => {
@@ -68,9 +74,9 @@ export default function MessageInput() {
     const q = mentionQuery.toLowerCase();
     const opts: MentionOption[] = [];
     if (!isDmMode) {
-      if ('everyone'.startsWith(q))
+      if (canMentionEveryone && 'everyone'.startsWith(q))
         opts.push({ id: 'everyone', label: '@everyone', type: 'everyone' });
-      if ('here'.startsWith(q))
+      if (canMentionEveryone && 'here'.startsWith(q))
         opts.push({ id: 'here', label: '@here', type: 'here' });
       for (const m of members) {
         if (
@@ -82,7 +88,7 @@ export default function MessageInput() {
       }
     }
     return opts.slice(0, 10);
-  }, [mentionQuery, members, isDmMode]);
+  }, [mentionQuery, members, isDmMode, canMentionEveryone]);
 
   // Custom emoji autocomplete
   const emojiOptions = useMemo<EmojiAutocompleteOption[]>(() => {
@@ -132,21 +138,34 @@ export default function MessageInput() {
   const handleChangeText = useCallback((value: string) => {
     setText(value);
     detectTriggers(value, cursorPos + (value.length - text.length));
+    if (value.length > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+    } else if (inputError) {
+      setInputError(null);
+    }
 
     // Typing indicator
-    if (effectiveChannelId) {
+    if (effectiveChannelId && canSendMessages) {
       const conn = getConnection();
       conn.invoke('UserTyping', effectiveChannelId).catch(() => {});
       if (typingTimeout.current) clearTimeout(typingTimeout.current);
       typingTimeout.current = setTimeout(() => {}, 3000);
     }
-  }, [effectiveChannelId, detectTriggers, cursorPos, text.length]);
+  }, [effectiveChannelId, detectTriggers, cursorPos, text.length, maxMessageLength, inputError, canSendMessages]);
 
   const handleSelectionChange = useCallback((e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
     const pos = e.nativeEvent.selection.end;
     setCursorPos(pos);
     detectTriggers(text, pos);
   }, [text, detectTriggers]);
+
+  useEffect(() => {
+    if (text.length > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+    } else if (inputError) {
+      setInputError(null);
+    }
+  }, [text.length, maxMessageLength, inputError]);
 
   const insertMention = useCallback((option: MentionOption) => {
     const textBefore = text.slice(0, cursorPos);
@@ -192,6 +211,10 @@ export default function MessageInput() {
   }, [text, cursorPos]);
 
   const handlePickImage = useCallback(async () => {
+    if (!canAttachFiles) {
+      addToast('You do not have permission to attach files in this channel.', 'error');
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsMultipleSelection: true,
@@ -204,7 +227,7 @@ export default function MessageInput() {
       type: a.mimeType || 'image/jpeg',
     }));
     setFiles((prev) => [...prev, ...newFiles]);
-  }, []);
+  }, [addToast, canAttachFiles]);
 
   const removeFile = useCallback((index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
@@ -212,7 +235,20 @@ export default function MessageInput() {
 
   const handleSubmit = useCallback(async () => {
     if (!effectiveChannelId || sending) return;
+    if (!canSendMessages) {
+      addToast('You do not have permission to send messages in this channel.', 'error');
+      return;
+    }
+    if (files.length > 0 && !canAttachFiles) {
+      addToast('You do not have permission to attach files in this channel.', 'error');
+      return;
+    }
     if (!text.trim() && files.length === 0) return;
+    if (text.length > maxMessageLength) {
+      setInputError(`Message must be 1-${maxMessageLength} characters.`);
+      addToast(`Message must be 1-${maxMessageLength} characters.`, 'error');
+      return;
+    }
 
     setSending(true);
     try {
@@ -235,20 +271,22 @@ export default function MessageInput() {
       setMentionQuery(null);
       setEmojiQuery(null);
       setReplyingTo(null);
+      setInputError(null);
     } catch (err) {
       console.error('Failed to send message:', err);
+      addToast('Failed to send message.', 'error');
     } finally {
       setSending(false);
     }
-  }, [effectiveChannelId, sending, text, files, sendMessage, replyingTo, setReplyingTo]);
+  }, [effectiveChannelId, sending, text, files, sendMessage, replyingTo, setReplyingTo, maxMessageLength, addToast, canSendMessages, canAttachFiles]);
 
   const placeholder = isDmMode && activeDmChannel
     ? `Message @${activeDmChannel.otherUser.displayName}`
     : activeChannel
-      ? `Message #${activeChannel.name}`
+      ? (canSendMessages ? `Message #${activeChannel.name}` : 'You do not have permission to send messages')
       : 'Select a channel';
 
-  const canSend = (text.trim().length > 0 || files.length > 0) && !sending;
+  const canSend = canSendMessages && (text.trim().length > 0 || files.length > 0) && !sending;
 
   return (
     <View style={styles.container}>
@@ -316,7 +354,7 @@ export default function MessageInput() {
 
       {/* Input row */}
       <View style={styles.inputRow}>
-        <Pressable style={styles.attachBtn} onPress={handlePickImage}>
+        <Pressable style={[styles.attachBtn, !canAttachFiles && styles.attachBtnDisabled]} onPress={handlePickImage} disabled={!canAttachFiles || !canSendMessages}>
           <Text style={styles.attachBtnText}>+</Text>
         </Pressable>
         <TextInput
@@ -328,8 +366,8 @@ export default function MessageInput() {
           placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
           multiline
-          maxLength={4000}
-          editable={!!effectiveChannelId}
+          maxLength={maxMessageLength}
+          editable={!!effectiveChannelId && canSendMessages}
         />
         <Pressable style={styles.emojiBtn} onPress={() => setShowEmojiPicker(true)}>
           <Text style={styles.emojiBtnText}>😊</Text>
@@ -347,6 +385,9 @@ export default function MessageInput() {
           <Text style={[styles.sendBtnText, !canSend && styles.sendBtnTextDisabled]}>Send</Text>
         </Pressable>
       </View>
+      {inputError && (
+        <Text style={styles.inputError}>{inputError}</Text>
+      )}
 
       {/* Emoji picker modal */}
       <EmojiPicker
@@ -455,6 +496,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   } as ViewStyle,
+  attachBtnDisabled: {
+    opacity: 0.5,
+  } as ViewStyle,
   attachBtnText: {
     color: colors.textSecondary,
     fontSize: fontSize.xl,
@@ -470,6 +514,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     maxHeight: 120,
     minHeight: 36,
+  } as TextStyle,
+  inputError: {
+    color: colors.danger,
+    fontSize: fontSize.sm,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xs,
   } as TextStyle,
   emojiBtn: {
     width: 36,

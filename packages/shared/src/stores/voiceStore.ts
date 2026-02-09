@@ -72,7 +72,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   noiseSuppression: (() => { try { const v = getStorage().getItem('noiseSuppression'); return v === null ? true : v === 'true'; } catch { return true; } })(),
   echoCancellation: (() => { try { const v = getStorage().getItem('echoCancellation'); return v === null ? true : v === 'true'; } catch { return true; } })(),
   autoGainControl: (() => { try { const v = getStorage().getItem('autoGainControl'); return v === null ? true : v === 'true'; } catch { return true; } })(),
-  inputSensitivity: (() => { try { const v = getStorage().getItem('inputSensitivity'); return v ? Number(v) : 0.78; } catch { return 0.78; } })(),
+  inputSensitivity: (() => { try { const v = getStorage().getItem('inputSensitivity'); return v ? Number(v) : 1; } catch { return 1; } })(),
   localInputLevel: 0,
   needsAudioUnlock: false,
 

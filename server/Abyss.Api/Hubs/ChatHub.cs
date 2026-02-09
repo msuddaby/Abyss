@@ -17,8 +17,11 @@ public class ChatHub : Hub
     private readonly PermissionService _perms;
     private readonly NotificationService _notifications;
 
-    private const int MaxMessageLength = 4000;
+    private const int DefaultMaxMessageLength = 4000;
+    private const int MaxMessageLengthUpperBound = 10000;
     private const int MaxAttachmentsPerMessage = 10;
+    private const int MaxPinnedMessagesPerChannel = 50;
+    private const string MaxMessageLengthKey = "MaxMessageLength";
 
     // Track online users: connectionId -> userId
     internal static readonly Dictionary<string, string> _connections = new();
@@ -40,11 +43,31 @@ public class ChatHub : Hub
         if (channel.Type == ChannelType.DM)
             return channel.DmUser1Id == UserId || channel.DmUser2Id == UserId;
         if (channel.ServerId.HasValue)
-            return await _perms.IsMemberAsync(channel.ServerId.Value, UserId);
+            return await _perms.HasChannelPermissionAsync(channel.Id, UserId, Permission.ViewChannel);
         return false;
     }
 
-    private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, out string normalized, out string? error)
+    private async Task<List<string>> GetUserIdsWithChannelPermission(Guid channelId, Permission perm)
+    {
+        var channel = await _db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == channelId);
+        if (channel?.ServerId == null) return new List<string>();
+
+        var memberIds = await _db.ServerMembers
+            .Where(sm => sm.ServerId == channel.ServerId)
+            .Select(sm => sm.UserId)
+            .ToListAsync();
+
+        var allowed = new List<string>();
+        foreach (var userId in memberIds)
+        {
+            if (await _perms.HasChannelPermissionAsync(channelId, userId, perm))
+                allowed.Add(userId);
+        }
+
+        return allowed;
+    }
+
+    private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, int maxMessageLength, out string normalized, out string? error)
     {
         error = null;
         normalized = content;
@@ -59,32 +82,101 @@ public class ChatHub : Hub
         {
             if (attachmentCount == 0)
             {
-                error = $"Message must be 1-{MaxMessageLength} characters";
+                error = $"Message must be 1-{maxMessageLength} characters";
                 return false;
             }
 
             normalized = string.Empty;
         }
 
-        if (normalized.Length > MaxMessageLength)
+        if (normalized.Length > maxMessageLength)
         {
-            error = $"Message must be 1-{MaxMessageLength} characters";
+            error = $"Message must be 1-{maxMessageLength} characters";
             return false;
         }
 
         return true;
     }
 
-    private static bool TryValidateMessageForEdit(string newContent, out string? error)
+    private static bool TryValidateMessageForEdit(string newContent, int maxMessageLength, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(newContent) || newContent.Length > MaxMessageLength)
+        if (string.IsNullOrWhiteSpace(newContent) || newContent.Length > maxMessageLength)
         {
-            error = $"Message must be 1-{MaxMessageLength} characters";
+            error = $"Message must be 1-{maxMessageLength} characters";
             return false;
         }
 
         return true;
+    }
+
+    private async Task<int> GetMaxMessageLengthAsync()
+    {
+        var row = await _db.AppConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.Key == MaxMessageLengthKey);
+        if (row == null || string.IsNullOrWhiteSpace(row.Value)) return DefaultMaxMessageLength;
+        return int.TryParse(row.Value, out var value)
+            ? Math.Clamp(value, 1, MaxMessageLengthUpperBound)
+            : DefaultMaxMessageLength;
+    }
+
+    private async Task SendSystemMessageAsync(Channel channel, string authorId, string content)
+    {
+        var message = new Message
+        {
+            Id = Guid.NewGuid(),
+            Content = content,
+            AuthorId = authorId,
+            ChannelId = channel.Id,
+            CreatedAt = DateTime.UtcNow,
+            IsSystem = true,
+        };
+
+        _db.Messages.Add(message);
+
+        if (channel.Type == ChannelType.DM)
+        {
+            channel.LastMessageAt = message.CreatedAt;
+        }
+
+        await _db.SaveChangesAsync();
+
+        var author = await _db.Users.FindAsync(authorId);
+        if (author == null) return;
+
+        var authorDto = new UserDto(author.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio);
+        var messageDto = new MessageDto(
+            message.Id,
+            message.Content,
+            message.AuthorId,
+            authorDto,
+            message.ChannelId,
+            message.CreatedAt,
+            new List<AttachmentDto>(),
+            null,
+            false,
+            true,
+            new List<ReactionDto>(),
+            null,
+            null);
+
+        await Clients.Group($"channel:{channel.Id}").SendAsync("ReceiveMessage", messageDto);
+
+        if (channel.Type == ChannelType.DM)
+        {
+            var recipientId = channel.DmUser1Id == authorId ? channel.DmUser2Id : channel.DmUser1Id;
+            if (!string.IsNullOrEmpty(recipientId))
+            {
+                await Clients.Group($"user:{recipientId}").SendAsync("NewUnreadMessage", channel.Id.ToString(), (string?)null);
+            }
+        }
+        else if (channel.ServerId.HasValue)
+        {
+            var recipients = await GetUserIdsWithChannelPermission(channel.Id, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("NewUnreadMessage", channel.Id.ToString(), channel.ServerId.ToString());
+            }
+        }
     }
 
     public override async Task OnConnectedAsync()
@@ -167,9 +259,17 @@ public class ChatHub : Hub
                 {
                     if (wasSharing)
                     {
-                        await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", voiceChannel.Value.ToString(), UserId);
+                        var recipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
+                        foreach (var userId in recipients)
+                        {
+                            await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", voiceChannel.Value.ToString(), UserId);
+                        }
                     }
-                    await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId);
+                    var leftRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
+                    foreach (var userId in leftRecipients)
+                    {
+                        await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId);
+                    }
                 }
             }
         }
@@ -189,6 +289,11 @@ public class ChatHub : Hub
     // Text messaging
     public async Task JoinChannel(string channelId)
     {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var channel = await _db.Channels.FindAsync(channelGuid);
+        if (channel == null) return;
+        if (!await CanAccessChannel(channel)) return;
+
         await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
@@ -211,7 +316,8 @@ public class ChatHub : Hub
             return;
         }
 
-        if (!TryNormalizeAndValidateMessageForSend(content, attachmentIds.Count, out var normalizedContent, out var error))
+        var maxMessageLength = await GetMaxMessageLengthAsync();
+        if (!TryNormalizeAndValidateMessageForSend(content, attachmentIds.Count, maxMessageLength, out var normalizedContent, out var error))
         {
             await Clients.Caller.SendAsync("Error", error);
             return;
@@ -221,6 +327,29 @@ public class ChatHub : Hub
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
+        if (channel.Type != ChannelType.DM)
+        {
+            if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.SendMessages))
+            {
+                await Clients.Caller.SendAsync("Error", "You do not have permission to send messages in this channel.");
+                return;
+            }
+
+            if (attachmentIds.Count > 0 &&
+                !await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.AttachFiles))
+            {
+                await Clients.Caller.SendAsync("Error", "You do not have permission to attach files in this channel.");
+                return;
+            }
+
+            var mentionParse = _notifications.ParseMentions(normalizedContent);
+            if ((mentionParse.HasEveryone || mentionParse.HasHere) &&
+                !await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.MentionEveryone))
+            {
+                await Clients.Caller.SendAsync("Error", "You do not have permission to mention @everyone or @here.");
+                return;
+            }
+        }
 
         // Validate reply target
         Guid? replyToGuid = null;
@@ -279,7 +408,7 @@ public class ChatHub : Hub
             }
         }
 
-        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, new List<ReactionDto>(), replyToGuid, replyDto);
+        var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, false, new List<ReactionDto>(), replyToGuid, replyDto);
 
         await Clients.Group($"channel:{channelId}").SendAsync("ReceiveMessage", messageDto);
 
@@ -308,8 +437,12 @@ public class ChatHub : Hub
         }
         else if (channel.ServerId.HasValue)
         {
-            // Server channel: broadcast unread indicator to all server members
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("NewUnreadMessage", channelId, channel.ServerId.ToString());
+            // Server channel: broadcast unread indicator to users who can view the channel
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("NewUnreadMessage", channelId, channel.ServerId.ToString());
+            }
 
             // Process mentions and send targeted notifications
             HashSet<string> onlineUserIds;
@@ -326,28 +459,32 @@ public class ChatHub : Hub
             // Reply notification: if replying to someone else who wasn't already notified
             if (replyToGuid.HasValue && replyDto != null && replyDto.AuthorId != UserId && !notifiedUserIds.Contains(replyDto.AuthorId))
             {
-                var replyNotification = new Notification
+                if (await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel))
                 {
-                    Id = Guid.NewGuid(),
-                    UserId = replyDto.AuthorId,
-                    MessageId = message.Id,
-                    ChannelId = channelGuid,
-                    ServerId = channel.ServerId,
-                    Type = NotificationType.ReplyMention,
-                    CreatedAt = DateTime.UtcNow,
-                };
-                _db.Notifications.Add(replyNotification);
-                await _db.SaveChangesAsync();
+                    var replyNotification = new Notification
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = replyDto.AuthorId,
+                        MessageId = message.Id,
+                        ChannelId = channelGuid,
+                        ServerId = channel.ServerId,
+                        Type = NotificationType.ReplyMention,
+                        CreatedAt = DateTime.UtcNow,
+                    };
+                    _db.Notifications.Add(replyNotification);
+                    await _db.SaveChangesAsync();
 
-                var replyNotifDto = new NotificationDto(replyNotification.Id, replyNotification.MessageId, replyNotification.ChannelId, replyNotification.ServerId, replyNotification.Type.ToString(), replyNotification.CreatedAt);
-                await Clients.Group($"user:{replyDto.AuthorId}").SendAsync("MentionReceived", replyNotifDto);
+                    var replyNotifDto = new NotificationDto(replyNotification.Id, replyNotification.MessageId, replyNotification.ChannelId, replyNotification.ServerId, replyNotification.Type.ToString(), replyNotification.CreatedAt);
+                    await Clients.Group($"user:{replyDto.AuthorId}").SendAsync("MentionReceived", replyNotifDto);
+                }
             }
         }
     }
 
     public async Task EditMessage(string messageId, string newContent)
     {
-        if (!TryValidateMessageForEdit(newContent, out var error))
+        var maxMessageLength = await GetMaxMessageLengthAsync();
+        if (!TryValidateMessageForEdit(newContent, maxMessageLength, out var error))
         {
             await Clients.Caller.SendAsync("Error", error);
             return;
@@ -355,7 +492,7 @@ public class ChatHub : Hub
 
         if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.FindAsync(msgGuid);
-        if (message == null || message.AuthorId != UserId || message.IsDeleted) return;
+        if (message == null || message.AuthorId != UserId || message.IsDeleted || message.IsSystem) return;
 
         message.Content = newContent;
         message.EditedAt = DateTime.UtcNow;
@@ -368,7 +505,10 @@ public class ChatHub : Hub
     {
         if (!Guid.TryParse(messageId, out var msgGuid)) return;
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
-        if (message == null) return;
+        if (message == null || message.IsSystem) return;
+
+        var pinned = await _db.PinnedMessages.FirstOrDefaultAsync(pm =>
+            pm.ChannelId == message.ChannelId && pm.MessageId == message.Id);
 
         var isAuthor = message.AuthorId == UserId;
 
@@ -392,9 +532,18 @@ public class ChatHub : Hub
         }
 
         message.IsDeleted = true;
+        if (pinned != null)
+        {
+            _db.PinnedMessages.Remove(pinned);
+        }
         await _db.SaveChangesAsync();
 
         await Clients.Group($"channel:{message.ChannelId}").SendAsync("MessageDeleted", message.Id.ToString());
+
+        if (pinned != null)
+        {
+            await Clients.Group($"channel:{message.ChannelId}").SendAsync("MessageUnpinned", message.ChannelId.ToString(), message.Id.ToString());
+        }
     }
 
     // Reactions
@@ -404,6 +553,11 @@ public class ChatHub : Hub
         var message = await _db.Messages.Include(m => m.Channel).FirstOrDefaultAsync(m => m.Id == msgGuid);
         if (message == null || message.IsDeleted) return;
         if (!await CanAccessChannel(message.Channel)) return;
+        if (message.Channel.Type != ChannelType.DM &&
+            !await _perms.HasChannelPermissionAsync(message.Channel.Id, UserId, Permission.AddReactions))
+        {
+            return;
+        }
 
         // Validate custom emoji exists in this server (only for server channels)
         if (emoji.StartsWith("custom:") && message.Channel.ServerId.HasValue)
@@ -438,6 +592,123 @@ public class ChatHub : Hub
             var dto = new ReactionDto(reaction.Id, reaction.MessageId, reaction.UserId, reaction.Emoji);
             await Clients.Group($"channel:{message.ChannelId}").SendAsync("ReactionAdded", dto);
         }
+    }
+
+    // Pins
+    public async Task PinMessage(string messageId)
+    {
+        if (!Guid.TryParse(messageId, out var msgGuid)) return;
+
+        var message = await _db.Messages
+            .Include(m => m.Channel)
+            .Include(m => m.Author)
+            .Include(m => m.Attachments)
+            .Include(m => m.Reactions)
+            .Include(m => m.ReplyToMessage).ThenInclude(r => r!.Author)
+            .FirstOrDefaultAsync(m => m.Id == msgGuid);
+        if (message == null || message.IsDeleted || message.IsSystem) return;
+        if (!await CanAccessChannel(message.Channel)) return;
+
+        if (message.Channel.Type != ChannelType.DM)
+        {
+            if (!message.Channel.ServerId.HasValue) return;
+            if (!await _perms.HasPermissionAsync(message.Channel.ServerId.Value, UserId, Permission.ManageMessages)) return;
+        }
+
+        var existing = await _db.PinnedMessages.FirstOrDefaultAsync(pm =>
+            pm.ChannelId == message.ChannelId && pm.MessageId == message.Id);
+        if (existing != null) return;
+
+        var pinCount = await _db.PinnedMessages.CountAsync(pm => pm.ChannelId == message.ChannelId);
+        if (pinCount >= MaxPinnedMessagesPerChannel)
+        {
+            await Clients.Caller.SendAsync("Error", $"Maximum {MaxPinnedMessagesPerChannel} pinned messages per channel.");
+            return;
+        }
+
+        var pin = new PinnedMessage
+        {
+            ChannelId = message.ChannelId,
+            MessageId = message.Id,
+            PinnedById = UserId,
+            PinnedAt = DateTime.UtcNow,
+        };
+        _db.PinnedMessages.Add(pin);
+        await _db.SaveChangesAsync();
+
+        var pinnedBy = await _db.Users.FindAsync(UserId);
+        if (pinnedBy == null) return;
+
+        var messageDto = new MessageDto(
+            message.Id,
+            message.Content,
+            message.AuthorId,
+            new UserDto(message.Author.Id, message.Author.UserName!, message.Author.DisplayName, message.Author.AvatarUrl, message.Author.Status, message.Author.Bio),
+            message.ChannelId,
+            message.CreatedAt,
+            message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
+            message.EditedAt,
+            message.IsDeleted,
+            message.IsSystem,
+            message.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+            message.ReplyToMessageId,
+            message.ReplyToMessage == null ? null : new ReplyReferenceDto(
+                message.ReplyToMessage.Id,
+                message.ReplyToMessage.IsDeleted ? "" : message.ReplyToMessage.Content,
+                message.ReplyToMessage.AuthorId,
+                new UserDto(message.ReplyToMessage.Author.Id, message.ReplyToMessage.Author.UserName!, message.ReplyToMessage.Author.DisplayName, message.ReplyToMessage.Author.AvatarUrl, message.ReplyToMessage.Author.Status, message.ReplyToMessage.Author.Bio),
+                message.ReplyToMessage.IsDeleted
+            )
+        );
+
+        var pinDto = new PinnedMessageDto(
+            messageDto,
+            pin.PinnedAt,
+            new UserDto(pinnedBy.Id, pinnedBy.UserName!, pinnedBy.DisplayName, pinnedBy.AvatarUrl, pinnedBy.Status, pinnedBy.Bio)
+        );
+
+        await Clients.Group($"channel:{message.ChannelId}").SendAsync("MessagePinned", pinDto);
+
+        if (message.Channel.ServerId.HasValue)
+        {
+            await _perms.LogAsync(message.Channel.ServerId.Value, AuditAction.MessagePinned, UserId,
+                targetId: message.AuthorId, targetName: message.Author.DisplayName);
+        }
+
+        await SendSystemMessageAsync(message.Channel, UserId, "pinned a message to this channel.");
+    }
+
+    public async Task UnpinMessage(string messageId)
+    {
+        if (!Guid.TryParse(messageId, out var msgGuid)) return;
+
+        var pinned = await _db.PinnedMessages
+            .Include(pm => pm.Message).ThenInclude(m => m.Channel)
+            .Include(pm => pm.Message).ThenInclude(m => m.Author)
+            .FirstOrDefaultAsync(pm => pm.MessageId == msgGuid);
+        if (pinned == null) return;
+
+        var channel = pinned.Message.Channel;
+        if (!await CanAccessChannel(channel)) return;
+
+        if (channel.Type != ChannelType.DM)
+        {
+            if (!channel.ServerId.HasValue) return;
+            if (!await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageMessages)) return;
+        }
+
+        _db.PinnedMessages.Remove(pinned);
+        await _db.SaveChangesAsync();
+
+        await Clients.Group($"channel:{channel.Id}").SendAsync("MessageUnpinned", channel.Id.ToString(), messageId);
+
+        if (channel.ServerId.HasValue)
+        {
+            await _perms.LogAsync(channel.ServerId.Value, AuditAction.MessageUnpinned, UserId,
+                targetId: pinned.Message.AuthorId, targetName: pinned.Message.Author.DisplayName);
+        }
+
+        await SendSystemMessageAsync(channel, UserId, "unpinned a message from this channel.");
     }
 
     // Typing indicator
@@ -477,7 +748,13 @@ public class ChatHub : Hub
             .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
             .Select(c => c.Id)
             .ToListAsync();
-        return _voiceState.GetUsersForChannels(channelIds);
+        var allowedChannelIds = new List<Guid>();
+        foreach (var channelId in channelIds)
+        {
+            if (await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ViewChannel))
+                allowedChannelIds.Add(channelId);
+        }
+        return _voiceState.GetUsersForChannels(allowedChannelIds);
     }
 
     // Voice channels
@@ -488,7 +765,8 @@ public class ChatHub : Hub
         // Membership check
         var voiceChannel = await _db.Channels.FindAsync(channelGuid);
         if (voiceChannel == null || !voiceChannel.ServerId.HasValue) return;
-        if (!await _perms.IsMemberAsync(voiceChannel.ServerId.Value, UserId)) return;
+        if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Connect)) return;
+        var canSpeak = await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Speak);
 
         // Enforce single voice session: if user is already in voice, notify other sessions to disconnect
         var currentChannel = _voiceState.GetUserChannel(UserId);
@@ -519,13 +797,26 @@ public class ChatHub : Hub
             {
                 if (wasSharing)
                 {
-                    await Clients.Group($"server:{prevChannel.ServerId}").SendAsync("ScreenShareStoppedInChannel", currentChannel.Value.ToString(), UserId);
+                    var recipients = await GetUserIdsWithChannelPermission(currentChannel.Value, Permission.ViewChannel);
+                    foreach (var userId in recipients)
+                    {
+                        await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", currentChannel.Value.ToString(), UserId);
+                    }
                 }
-                await Clients.Group($"server:{prevChannel.ServerId}").SendAsync("VoiceUserLeftChannel", currentChannel.Value.ToString(), UserId);
+                var leftRecipients = await GetUserIdsWithChannelPermission(currentChannel.Value, Permission.ViewChannel);
+                foreach (var userId in leftRecipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", currentChannel.Value.ToString(), UserId);
+                }
             }
         }
 
-        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, isMuted, isDeafened, Context.ConnectionId);
+        var effectiveMuted = isMuted || !canSpeak;
+        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened);
+        if (!canSpeak)
+        {
+            _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);
+        }
         await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
 
         // Send current participants to the joining user
@@ -546,8 +837,12 @@ public class ChatHub : Hub
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel?.ServerId != null)
         {
-            var state = new VoiceUserStateDto(DisplayName, isMuted, isDeafened, false, false);
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state);
+            var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state);
+            }
         }
     }
 
@@ -556,13 +851,19 @@ public class ChatHub : Hub
         var channelId = _voiceState.GetUserChannel(UserId);
         if (!channelId.HasValue) return;
 
-        var updated = _voiceState.UpdateUserState(channelId.Value, UserId, isMuted, isDeafened);
+        var canSpeak = await _perms.HasChannelPermissionAsync(channelId.Value, UserId, Permission.Speak);
+        var effectiveMuted = isMuted || !canSpeak;
+        var updated = _voiceState.UpdateUserState(channelId.Value, UserId, effectiveMuted, isDeafened, canSpeak ? null : true, null);
         if (updated == null) return;
 
         var channel = await _db.Channels.FindAsync(channelId.Value);
         if (channel?.ServerId != null)
         {
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), UserId, updated);
+            var recipients = await GetUserIdsWithChannelPermission(channelId.Value, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), UserId, updated);
+            }
         }
     }
 
@@ -579,7 +880,11 @@ public class ChatHub : Hub
         var updated = _voiceState.UpdateUserState(channelId.Value, targetUserId, isMuted, isDeafened, isMuted, isDeafened);
         if (updated == null) return;
 
-        await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), targetUserId, updated);
+        var recipients = await GetUserIdsWithChannelPermission(channelId.Value, Permission.ViewChannel);
+        foreach (var userId in recipients)
+        {
+            await Clients.Group($"user:{userId}").SendAsync("VoiceUserStateUpdated", channelId.Value.ToString(), targetUserId, updated);
+        }
     }
 
     public async Task LeaveVoiceChannel(string channelId)
@@ -604,9 +909,17 @@ public class ChatHub : Hub
         {
             if (wasSharing)
             {
-                await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+                var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+                foreach (var userId in recipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+                }
             }
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("VoiceUserLeftChannel", channelId, UserId);
+            var leftRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in leftRecipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", channelId, UserId);
+            }
         }
     }
 
@@ -616,19 +929,27 @@ public class ChatHub : Hub
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null || !channel.ServerId.HasValue) return;
-        if (!await _perms.IsMemberAsync(channel.ServerId.Value, UserId)) return;
+        if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Stream)) return;
 
         if (isSharing)
         {
             _voiceState.AddScreenSharer(channelGuid, UserId, DisplayName);
             await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStarted", UserId, DisplayName);
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStartedInChannel", channelId, UserId);
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("ScreenShareStartedInChannel", channelId, UserId);
+            }
         }
         else
         {
             _voiceState.RemoveScreenSharer(channelGuid, UserId);
             await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
-            await Clients.Group($"server:{channel.ServerId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+            }
         }
     }
 
@@ -705,13 +1026,20 @@ public class ChatHub : Hub
             .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
             .Select(c => c.Id)
             .ToListAsync();
-        return _voiceState.GetSharersForChannels(channelIds);
+        var allowedChannelIds = new List<Guid>();
+        foreach (var channelId in channelIds)
+        {
+            if (await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ViewChannel))
+                allowedChannelIds.Add(channelId);
+        }
+        return _voiceState.GetSharersForChannels(allowedChannelIds);
     }
 
     // Mark a channel as read for the current user
     public async Task MarkChannelRead(string channelId)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.ViewChannel)) return;
         await _notifications.MarkChannelRead(UserId, channelGuid);
     }
 

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
-import { useServerStore, useDmStore, useUnreadStore } from '@abyss/shared';
+import { useServerStore, useDmStore, useUnreadStore, getApiBase } from '@abyss/shared';
 import Avatar from './Avatar';
 import Badge from './Badge';
 import { useUiStore } from '../stores/uiStore';
@@ -73,6 +73,10 @@ export default function ServerSidebar() {
           const mentionCount = unread?.mentionCount || 0;
           const isActive = activeServer?.id === server.id;
 
+          const iconUri = server.iconUrl
+            ? (server.iconUrl.startsWith('http') ? server.iconUrl : `${getApiBase()}${server.iconUrl}`)
+            : undefined;
+
           return (
             <View key={server.id} style={styles.iconWrapper}>
               {hasUnread && <Badge dot style={styles.unreadDot} />}
@@ -81,7 +85,7 @@ export default function ServerSidebar() {
                 onPress={() => handleServerPress(server)}
               >
                 <Avatar
-                  uri={server.iconUrl}
+                  uri={iconUri}
                   name={server.name}
                   size={48}
                 />

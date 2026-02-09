@@ -54,17 +54,9 @@ export default function SearchPanel() {
         messages,
         currentChannelId: channel.id,
         hasMore: true,
+        hasNewer: true,
+        highlightedMessageId: result.message.id,
         loading: false,
-      });
-
-      // Scroll to and highlight the target message after render
-      requestAnimationFrame(() => {
-        const el = document.querySelector(`[data-message-id="${result.message.id}"]`);
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el.classList.add('message-highlight');
-          setTimeout(() => el.classList.remove('message-highlight'), 2000);
-        }
       });
     } catch (e) {
       console.error('Failed to jump to message', e);

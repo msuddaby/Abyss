@@ -10,4 +10,5 @@ public class ServerRole
     public long Permissions { get; set; }
     public int Position { get; set; }
     public bool IsDefault { get; set; }
+    public bool DisplaySeparately { get; set; }
 }

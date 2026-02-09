@@ -16,7 +16,12 @@ public enum AuditAction
     RoleDeleted,
     MemberRolesUpdated,
     EmojiCreated,
-    EmojiDeleted
+    EmojiDeleted,
+    ChannelUpdated,
+    ServerUpdated,
+    MemberLeft,
+    MessagePinned,
+    MessageUnpinned
 }
 
 public class AuditLog

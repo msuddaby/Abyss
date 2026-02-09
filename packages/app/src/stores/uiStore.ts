@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 type ModalType = 'createServer' | 'joinServer' | 'createChannel' | 'invite'
-  | 'userSettings' | 'serverSettings' | 'userProfile' | 'search' | null;
+  | 'userSettings' | 'serverSettings' | 'userProfile' | 'search' | 'pins' | null;
 
 interface UiState {
   leftDrawerOpen: boolean;
