@@ -469,7 +469,7 @@ function AttachmentMedia({ att }: { att: Attachment }) {
         return;
       }
       if (video && (video as WebkitHTMLVideoElement).webkitEnterFullscreen) {
-        (video as WebkitHTMLVideoElement).webkitEnterFullscreen();
+        (video as WebkitHTMLVideoElement).webkitEnterFullscreen?.();
       }
     } else {
       document.exitFullscreen?.().catch(() => {});
