@@ -80,11 +80,25 @@ api.interceptors.response.use(
 
 export default api;
 
-export async function uploadFile(file: File): Promise<{ id: string; url: string; fileName: string; contentType: string; size: number }> {
+export async function uploadFile(
+  file: File,
+  options?: { serverId?: string; channelId?: string },
+  onProgress?: (percent: number) => void,
+): Promise<{ id: string; url: string; fileName: string; contentType: string; size: number }> {
   const formData = new FormData();
   formData.append('file', file);
+  if (options?.serverId) formData.append('serverId', options.serverId);
+  if (options?.channelId) formData.append('channelId', options.channelId);
   const res = await api.post('/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (evt) => {
+      if (!onProgress) return;
+      const total = evt.total ?? 0;
+      if (total > 0) {
+        const percent = Math.min(100, Math.round((evt.loaded / total) * 100));
+        onProgress(percent);
+      }
+    },
   });
   return res.data;
 }

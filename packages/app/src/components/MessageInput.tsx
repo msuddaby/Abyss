@@ -42,6 +42,7 @@ export default function MessageInput() {
   const sendMessage = useMessageStore((s) => s.sendMessage);
   const replyingTo = useMessageStore((s) => s.replyingTo);
   const setReplyingTo = useMessageStore((s) => s.setReplyingTo);
+  const activeServer = useServerStore((s) => s.activeServer);
   const activeChannel = useServerStore((s) => s.activeChannel);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
@@ -260,6 +261,12 @@ export default function MessageInput() {
           name: file.name,
           type: file.type,
         } as unknown as Blob);
+        if (!isDmMode && activeServer?.id) {
+          formData.append('serverId', activeServer.id);
+        }
+        if (effectiveChannelId) {
+          formData.append('channelId', effectiveChannelId);
+        }
         const res = await api.post('/upload', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });

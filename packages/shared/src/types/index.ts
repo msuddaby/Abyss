@@ -110,6 +110,7 @@ export interface Attachment {
   messageId: string;
   fileName: string;
   filePath: string;
+  posterPath?: string | null;
   contentType: string;
   size: number;
 }

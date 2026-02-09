@@ -86,6 +86,7 @@ User uploads file
 MediaValidator.ValidateUploadAsync()
    ↓
 Is image? → ImageMagick processing (re-encode to WebP, strip metadata)
+Is video? → Store original + ffmpeg poster thumbnail (WebP)
    ↓
 Is other? → Copy to disk with validated extension
    ↓
@@ -110,12 +111,15 @@ Validate attachment exists
    ↓
 Revalidate extension is still allowed
    ↓
-Set security headers:
+ If audio/video:
+  - X-Content-Type-Options: nosniff
+  - Content-Disposition: inline
+  - Range-enabled streaming with real MIME type
+ Else:
   - X-Content-Type-Options: nosniff
   - Content-Security-Policy: sandbox; default-src 'none';
   - Content-Disposition: attachment (force download)
-   ↓
-Serve as application/octet-stream
+  - Serve as application/octet-stream
 ```
 
 ## Security Features

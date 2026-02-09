@@ -635,7 +635,7 @@ public class ServersController : ControllerBase
                     m.Id, m.Content, m.AuthorId,
                     new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
                     m.ChannelId, m.CreatedAt,
-                    m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
+                    m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
                     m.EditedAt, m.IsDeleted, m.IsSystem,
                     new List<ReactionDto>(), null, null),
                 m.Channel.Name ?? ""))

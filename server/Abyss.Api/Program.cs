@@ -101,6 +101,7 @@ builder.Services.AddScoped<SystemMessageService>();
 builder.Services.AddSingleton<VoiceStateService>();
 builder.Services.AddSingleton<TurnCredentialService>();
 builder.Services.AddSingleton<ImageService>();
+builder.Services.AddSingleton<VideoPosterService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();

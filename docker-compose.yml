@@ -27,6 +27,7 @@ services:
       - "5000:5000"
     volumes:
       - ./data/uploads:/app/wwwroot/uploads
+      - ./data/uploads-files:/app/uploads
     env_file:
       - .env
     healthcheck:

@@ -50,7 +50,8 @@ function getTextBeforeCursor(): { text: string; node: Text; offset: number } | n
 
 export default function MessageInput() {
   const [files, setFiles] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
+  const [previews, setPreviews] = useState<Array<string | null>>([]);
+  const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
   const [sending, setSending] = useState(false);
   const [isEmpty, setIsEmpty] = useState(true);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export default function MessageInput() {
   const sendMessage = useMessageStore((s) => s.sendMessage);
   const replyingTo = useMessageStore((s) => s.replyingTo);
   const setReplyingTo = useMessageStore((s) => s.setReplyingTo);
+  const activeServer = useServerStore((s) => s.activeServer);
   const activeChannel = useServerStore((s) => s.activeChannel);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
@@ -101,6 +103,17 @@ export default function MessageInput() {
       })),
     }] : [],
   [emojis]);
+
+  const formatFileSize = (size: number) => {
+    if (!size && size !== 0) return "";
+    if (size < 1024) return `${size} B`;
+    const kb = size / 1024;
+    if (kb < 1024) return `${kb.toFixed(1)} KB`;
+    const mb = kb / 1024;
+    if (mb < 1024) return `${mb.toFixed(1)} MB`;
+    const gb = mb / 1024;
+    return `${gb.toFixed(1)} GB`;
+  };
 
   const mentionOptions = useMemo<MentionOption[]>(() => {
     if (mentionQuery === null) return [];
@@ -475,20 +488,39 @@ export default function MessageInput() {
     }
     const selected = Array.from(e.target.files || []);
     setFiles((prev) => [...prev, ...selected]);
-    selected.forEach((file) => {
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          setPreviews((prev) => [...prev, ev.target?.result as string]);
-        };
-        reader.readAsDataURL(file);
-      }
+    const newPreviews = selected.map((file) => (file.type.startsWith("image/") ? "" : null));
+    setPreviews((prev) => {
+      const start = prev.length;
+      const next = [...prev, ...newPreviews];
+      selected.forEach((file, i) => {
+        if (file.type.startsWith("image/")) {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            setPreviews((curr) => {
+              const updated = [...curr];
+              updated[start + i] = ev.target?.result as string;
+              return updated;
+            });
+          };
+          reader.readAsDataURL(file);
+        }
+      });
+      return next;
     });
   };
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
     setPreviews((prev) => prev.filter((_, i) => i !== index));
+    setUploadProgress((prev) => {
+      const next: Record<number, number> = {};
+      Object.entries(prev).forEach(([key, value]) => {
+        const idx = Number(key);
+        if (idx === index) return;
+        next[idx > index ? idx - 1 : idx] = value;
+      });
+      return next;
+    });
   };
 
   const handleSubmit = async () => {
@@ -513,8 +545,19 @@ export default function MessageInput() {
     setSending(true);
     try {
       const attachmentIds: string[] = [];
-      for (const file of files) {
-        const result = await uploadFile(file);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadProgress((prev) => ({ ...prev, [i]: 0 }));
+        const result = await uploadFile(
+          file,
+          {
+            serverId: isDmMode ? undefined : activeServer?.id,
+            channelId: effectiveChannelId ?? undefined,
+          },
+          (percent) => {
+          setUploadProgress((prev) => ({ ...prev, [i]: percent }));
+          },
+        );
         attachmentIds.push(result.id);
       }
       await sendMessage(effectiveChannelId, content, attachmentIds, replyingTo?.id);
@@ -523,6 +566,7 @@ export default function MessageInput() {
       setContentLength(0);
       setFiles([]);
       setPreviews([]);
+      setUploadProgress({});
       setMentionQuery(null);
       setEmojiQuery(null);
       triggerRef.current = null;
@@ -561,16 +605,32 @@ export default function MessageInput() {
           <button className="reply-bar-close" onClick={() => setReplyingTo(null)}>&times;</button>
         </div>
       )}
-      {previews.length > 0 && (
+      {files.length > 0 && (
         <div className="file-previews">
-          {previews.map((preview, i) => (
-            <div key={i} className="file-preview">
-              <img src={preview} alt="preview" />
-              <button className="remove-file" onClick={() => removeFile(i)}>
-                x
-              </button>
-            </div>
-          ))}
+          {files.map((file, i) => {
+            const preview = previews[i];
+            const progress = uploadProgress[i];
+            return (
+              <div key={i} className="file-preview">
+                {preview ? (
+                  <img src={preview} alt={file.name} />
+                ) : (
+                  <div className="file-preview-generic">
+                    <span className="file-preview-name">{file.name}</span>
+                    <span className="file-preview-size">{formatFileSize(file.size)}</span>
+                  </div>
+                )}
+                {typeof progress === "number" && sending && (
+                  <div className="file-preview-progress">
+                    <div className="file-preview-progress-bar" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
+                <button className="remove-file" onClick={() => removeFile(i)}>
+                  x
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       {emojiQuery !== null && emojiOptions.length > 0 && (
@@ -627,7 +687,7 @@ export default function MessageInput() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/*,audio/*"
               multiple
               hidden
               onChange={handleFileSelect}

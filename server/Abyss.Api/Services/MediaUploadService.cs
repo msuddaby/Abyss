@@ -5,12 +5,14 @@ public class MediaUploadService
     private readonly ImageService _imageService;
     private readonly MediaValidator _mediaValidator;
     private readonly MediaConfig _mediaConfig;
+    private readonly VideoPosterService _videoPosterService;
 
-    public MediaUploadService(ImageService imageService, MediaValidator mediaValidator, MediaConfig mediaConfig)
+    public MediaUploadService(ImageService imageService, MediaValidator mediaValidator, MediaConfig mediaConfig, VideoPosterService videoPosterService)
     {
         _imageService = imageService;
         _mediaValidator = mediaValidator;
         _mediaConfig = mediaConfig;
+        _videoPosterService = videoPosterService;
     }
 
     public record MediaUploadResult(
@@ -18,12 +20,15 @@ public class MediaUploadService
         long Size,
         string ContentType,
         string? DetectedMimeType,
-        bool IsImage
+        bool IsImage,
+        string? PosterPath
     );
 
     public async Task<(bool IsValid, string? ErrorMessage, MediaUploadResult? Result)> StoreAttachmentAsync(
         IFormFile file,
-        Guid attachmentId
+        Guid attachmentId,
+        Guid? serverId,
+        Guid? channelId
     )
     {
         var validation = await _mediaValidator.ValidateUploadAsync(file);
@@ -32,23 +37,29 @@ public class MediaUploadService
 
         var ext = Path.GetExtension(file.FileName);
         var isImage = validation.Category == "image";
+        var isVideo = validation.Category == "video";
+        var subdir = BuildAttachmentSubdir(serverId, channelId);
 
         string url;
         long size;
         string contentType;
+        string? posterPath = null;
 
         if (isImage)
         {
-            (url, size) = await _imageService.ProcessImageAsync(file);
+            (url, size) = await _imageService.ProcessImageAsync(file, subdir);
             contentType = "image/webp";
         }
         else
         {
             var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
-            Directory.CreateDirectory(uploadsDir);
+            var attachmentDir = string.IsNullOrWhiteSpace(subdir)
+                ? uploadsDir
+                : Path.Combine(uploadsDir, subdir);
+            Directory.CreateDirectory(attachmentDir);
 
             var fileName = $"{attachmentId}{ext}";
-            var filePath = Path.Combine(uploadsDir, fileName);
+            var filePath = Path.Combine(attachmentDir, fileName);
 
             using (var stream = new FileStream(filePath, FileMode.Create))
             {
@@ -57,10 +68,15 @@ public class MediaUploadService
 
             url = $"/api/upload/{attachmentId}";
             size = file.Length;
-            contentType = validation.DetectedMimeType ?? "application/octet-stream";
+            contentType = validation.DetectedMimeType ?? file.ContentType ?? "application/octet-stream";
+
+            if (isVideo)
+            {
+                posterPath = await _videoPosterService.TryGeneratePosterAsync(filePath, subdir);
+            }
         }
 
-        var result = new MediaUploadResult(url, size, contentType, validation.DetectedMimeType, isImage);
+        var result = new MediaUploadResult(url, size, contentType, validation.DetectedMimeType, isImage, posterPath);
         return (true, null, result);
     }
 
@@ -79,5 +95,16 @@ public class MediaUploadService
 
         var url = await _imageService.ProcessEmojiAsync(file);
         return (true, null, url);
+    }
+
+    private static string? BuildAttachmentSubdir(Guid? serverId, Guid? channelId)
+    {
+        if (channelId is null)
+            return "misc";
+
+        if (serverId is null)
+            return Path.Combine("dms", channelId.Value.ToString());
+
+        return Path.Combine("servers", serverId.Value.ToString(), "channels", channelId.Value.ToString());
     }
 }

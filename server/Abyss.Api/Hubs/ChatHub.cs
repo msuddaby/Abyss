@@ -386,7 +386,7 @@ public class ChatHub : Hub
                 if (att != null)
                 {
                     att.MessageId = message.Id;
-                    attachments.Add(new AttachmentDto(att.Id, message.Id, att.FileName, att.FilePath, att.ContentType, att.Size));
+                    attachments.Add(new AttachmentDto(att.Id, message.Id, att.FileName, att.FilePath, att.PosterPath, att.ContentType, att.Size));
                 }
             }
         }
@@ -646,7 +646,7 @@ public class ChatHub : Hub
             new UserDto(message.Author.Id, message.Author.UserName!, message.Author.DisplayName, message.Author.AvatarUrl, message.Author.Status, message.Author.Bio),
             message.ChannelId,
             message.CreatedAt,
-            message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.ContentType, a.Size)).ToList(),
+            message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
             message.EditedAt,
             message.IsDeleted,
             message.IsSystem,

@@ -25,7 +25,7 @@ public record ReplyReferenceDto(Guid Id, string Content, string AuthorId, UserDt
 public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo);
 public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto PinnedBy);
 public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji);
-public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string ContentType, long Size);
+public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string? PosterPath, string ContentType, long Size);
 public record AuditLogDto(Guid Id, string Action, string ActorId, UserDto Actor, string? TargetId, string? TargetName, string? Details, DateTime CreatedAt);
 public record CreateRoleRequest(string Name, string Color, long Permissions, bool DisplaySeparately);
 public record UpdateRoleRequest(string? Name, string? Color, long? Permissions, int? Position, bool? DisplaySeparately);

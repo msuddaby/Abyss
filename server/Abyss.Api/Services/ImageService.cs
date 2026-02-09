@@ -6,23 +6,27 @@ public class ImageService
 {
     private readonly string _uploadsDir;
     private readonly string _emojisDir;
+    private readonly string _videoPostersDir;
 
     public ImageService(IWebHostEnvironment env)
     {
         var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
         _uploadsDir = Path.Combine(webRoot, "uploads");
         _emojisDir = Path.Combine(webRoot, "uploads", "emojis");
+        _videoPostersDir = Path.Combine(webRoot, "uploads", "video-posters");
         Directory.CreateDirectory(_uploadsDir);
         Directory.CreateDirectory(_emojisDir);
+        Directory.CreateDirectory(_videoPostersDir);
     }
 
     /// <summary>
     /// Process a general image upload: strip metadata and convert to WebP.
     /// </summary>
-    public async Task<(string RelativePath, long Size)> ProcessImageAsync(IFormFile file)
+    public async Task<(string RelativePath, long Size)> ProcessImageAsync(IFormFile file, string? subdir = null)
     {
         var fileName = $"{Guid.NewGuid()}.webp";
-        var filePath = Path.Combine(_uploadsDir, fileName);
+        var (dirPath, urlPrefix) = ResolveUploadsSubdir(_uploadsDir, "/uploads", subdir);
+        var filePath = Path.Combine(dirPath, fileName);
 
         using var image = new MagickImage();
         using var input = file.OpenReadStream();
@@ -34,7 +38,7 @@ public class ImageService
         await image.WriteAsync(filePath, MagickFormat.WebP);
         var size = new FileInfo(filePath).Length;
 
-        return ($"/uploads/{fileName}", size);
+        return ($"{urlPrefix}/{fileName}", size);
     }
 
     /// <summary>
@@ -102,5 +106,48 @@ public class ImageService
         await image.WriteAsync(filePath, MagickFormat.WebP);
 
         return $"/uploads/{fileName}";
+    }
+
+    /// <summary>
+    /// Process a video poster image into WebP with a capped width.
+    /// </summary>
+    public async Task<(string RelativePath, long Size)> ProcessVideoPosterAsync(string sourcePath, int maxWidth = 320, string? subdir = null)
+    {
+        var fileName = $"{Guid.NewGuid()}.webp";
+        var (dirPath, urlPrefix) = ResolveUploadsSubdir(_videoPostersDir, "/uploads/video-posters", subdir);
+        var filePath = Path.Combine(dirPath, fileName);
+
+        using var image = new MagickImage(sourcePath);
+        if (image.Width > (uint)maxWidth)
+        {
+            image.Resize(new MagickGeometry((uint)maxWidth, 0u));
+        }
+
+        image.Strip();
+        image.Quality = 80;
+
+        await image.WriteAsync(filePath, MagickFormat.WebP);
+        var size = new FileInfo(filePath).Length;
+
+        return ($"{urlPrefix}/{fileName}", size);
+    }
+
+    private static (string DirPath, string UrlPrefix) ResolveUploadsSubdir(string baseDir, string baseUrl, string? subdir)
+    {
+        if (string.IsNullOrWhiteSpace(subdir))
+        {
+            Directory.CreateDirectory(baseDir);
+            return (baseDir, baseUrl);
+        }
+
+        var trimmed = subdir.Trim().Trim('/', '\\');
+        var urlSubdir = trimmed.Replace('\\', '/');
+        var dirSubdir = trimmed
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar);
+
+        var dirPath = Path.Combine(baseDir, dirSubdir);
+        Directory.CreateDirectory(dirPath);
+        return (dirPath, $"{baseUrl}/{urlSubdir}");
     }
 }
