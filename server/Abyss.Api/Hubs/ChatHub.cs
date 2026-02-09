@@ -812,7 +812,7 @@ public class ChatHub : Hub
         }
 
         var effectiveMuted = isMuted || !canSpeak;
-        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened);
+        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
         if (!canSpeak)
         {
             _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);

@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useAuthStore, useMessageStore, getConnection } from "@abyss/shared";
-import type { Message, Reaction } from "@abyss/shared";
+import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
 export default function MessageList() {
   const { messages, loading, hasMore, loadMore } = useMessageStore();
   const currentChannelId = useMessageStore((s) => s.currentChannelId);
+  const hasNewer = useMessageStore((s) => s.hasNewer);
+  const loadNewer = useMessageStore((s) => s.loadNewer);
+  const highlightedMessageId = useMessageStore((s) => s.highlightedMessageId);
+  const setHighlightedMessageId = useMessageStore((s) => s.setHighlightedMessageId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const listInnerRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [contextMenuMessageId, setContextMenuMessageId] = useState<
     string | null
@@ -20,11 +25,8 @@ export default function MessageList() {
   const isNearBottomRef = useRef(true);
   const initialScrollDoneRef = useRef<string | null>(null);
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  // Track scroll position BEFORE render so we know if user was near bottom
-  // when a new message arrives (measuring after render is too late — scrollHeight already grew)
-  const isNearBottomRef = useRef(true);
   const pendingInitialScrollRef = useRef(false);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
