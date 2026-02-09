@@ -27,6 +27,12 @@ import data from "@emoji-mart/data";
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 
+// Extend HTMLVideoElement with webkit-specific properties for iOS
+interface WebkitHTMLVideoElement extends HTMLVideoElement {
+  webkitEnterFullscreen?: () => void;
+  webkitExitFullscreen?: () => void;
+}
+
 type MarkdownEnv = {
   membersById: Record<string, string>;
   emojisById: Record<string, { name: string; imageUrl: string }>;
@@ -462,8 +468,8 @@ function AttachmentMedia({ att }: { att: Attachment }) {
         container.requestFullscreen().catch(() => {});
         return;
       }
-      if (video && (video as HTMLVideoElement).webkitEnterFullscreen) {
-        (video as HTMLVideoElement).webkitEnterFullscreen();
+      if (video && (video as WebkitHTMLVideoElement).webkitEnterFullscreen) {
+        (video as WebkitHTMLVideoElement).webkitEnterFullscreen();
       }
     } else {
       document.exitFullscreen?.().catch(() => {});
