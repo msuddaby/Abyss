@@ -139,8 +139,14 @@ public class ChatHub : Hub
             {
                 await Clients.Group($"server:{serverId}").SendAsync("UserOffline", UserId);
             }
+        }
 
-            // Leave voice if connected
+        // Leave voice if this was the voice connection (or user is fully offline).
+        // Voice is tied to a specific connection (WebRTC peers), so clean up
+        // even if the user has other connections open (e.g. another browser tab).
+        var isVoiceConn = _voiceState.IsVoiceConnection(UserId, Context.ConnectionId);
+        if (isVoiceConn || !stillOnline)
+        {
             var voiceChannel = _voiceState.GetUserChannel(UserId);
             if (voiceChannel.HasValue)
             {
@@ -519,7 +525,7 @@ public class ChatHub : Hub
             }
         }
 
-        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, isMuted, isDeafened);
+        _voiceState.JoinChannel(channelGuid, UserId, DisplayName, isMuted, isDeafened, Context.ConnectionId);
         await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
 
         // Send current participants to the joining user

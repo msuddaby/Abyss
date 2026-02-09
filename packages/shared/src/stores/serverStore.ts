@@ -137,7 +137,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   createServer: async (name) => {
     const res = await api.post('/servers', { name });
     const server = res.data;
-    set((s) => ({ servers: [...s.servers, server] }));
+    set((s) => s.servers.some((sv) => sv.id === server.id) ? s : { servers: [...s.servers, server] });
     const conn = await ensureConnected();
     await conn.invoke('JoinServerGroup', server.id);
     return server;
@@ -153,7 +153,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   joinServer: async (code) => {
     const res = await api.post(`/invites/${code}/join`);
     const server = res.data;
-    set((s) => ({ servers: [...s.servers, server] }));
+    set((s) => s.servers.some((sv) => sv.id === server.id) ? s : { servers: [...s.servers, server] });
     const conn = await ensureConnected();
     await conn.invoke('JoinServerGroup', server.id);
   },
@@ -330,7 +330,32 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }),
 
   removeMember: (userId) =>
-    set((s) => ({ members: s.members.filter((m) => m.userId !== userId) })),
+    set((s) => {
+      // Also remove from voice channel users and sharers
+      const nextVoice = new Map(s.voiceChannelUsers);
+      for (const [channelId, users] of nextVoice) {
+        if (users.has(userId)) {
+          const updated = new Map(users);
+          updated.delete(userId);
+          if (updated.size === 0) nextVoice.delete(channelId);
+          else nextVoice.set(channelId, updated);
+        }
+      }
+      const nextSharers = new Map(s.voiceChannelSharers);
+      for (const [channelId, sharers] of nextSharers) {
+        if (sharers.has(userId)) {
+          const updated = new Set(sharers);
+          updated.delete(userId);
+          if (updated.size === 0) nextSharers.delete(channelId);
+          else nextSharers.set(channelId, updated);
+        }
+      }
+      return {
+        members: s.members.filter((m) => m.userId !== userId),
+        voiceChannelUsers: nextVoice,
+        voiceChannelSharers: nextSharers,
+      };
+    }),
 
   addChannelLocal: (channel) =>
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] }),

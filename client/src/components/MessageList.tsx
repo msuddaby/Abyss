@@ -17,6 +17,9 @@ export default function MessageList() {
   const isLoadingMoreRef = useRef(false);
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  // Track scroll position BEFORE render so we know if user was near bottom
+  // when a new message arrives (measuring after render is too late — scrollHeight already grew)
+  const isNearBottomRef = useRef(true);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
@@ -78,6 +81,7 @@ export default function MessageList() {
     if (!list) return;
     const distanceFromBottom =
       list.scrollHeight - list.scrollTop - list.clientHeight;
+    isNearBottomRef.current = distanceFromBottom < 150;
     setShowScrollToBottom(distanceFromBottom > 150);
   }, []);
 
@@ -92,6 +96,7 @@ export default function MessageList() {
     const channelChanged = currentChannelId !== prevChannelRef.current;
     if (channelChanged) {
       prevChannelRef.current = currentChannelId;
+      isNearBottomRef.current = true;
     }
     // Scroll when messages finish loading for a channel switch
     const justFinishedLoading = prevLoadingRef.current && !loading;
@@ -118,24 +123,15 @@ export default function MessageList() {
       return;
     }
 
-    if (newCount > prevCount) {
+    if (newCount > prevCount && prevCount > 0) {
       const lastMessage = messages[newCount - 1];
       const isOwnMessage = !!currentUserId && lastMessage?.authorId === currentUserId;
-      if (isOwnMessage) {
+      // Always scroll for own messages; for others, only if user was near bottom
+      // (using pre-render ref since post-render scrollHeight already includes the new message)
+      if (isOwnMessage || isNearBottomRef.current) {
         requestAnimationFrame(() => {
           bottomRef.current?.scrollIntoView({ behavior: "smooth" });
         });
-        return;
-      }
-      if (prevCount > 0) {
-        // New message arrived — scroll to bottom only if user is near the bottom
-        const distanceFromBottom =
-          list.scrollHeight - list.scrollTop - list.clientHeight;
-        if (distanceFromBottom < 150) {
-          requestAnimationFrame(() => {
-            bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-          });
-        }
       }
     }
     requestAnimationFrame(updateScrollToBottomState);

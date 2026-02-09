@@ -44,14 +44,16 @@ export default function ChannelSidebar() {
   // When activeChannel changes (including restore from localStorage), join + fetch messages
   useEffect(() => {
     if (activeChannel && activeChannel.type === 'Text' && currentChannelId !== activeChannel.id) {
-      const join = async () => {
+      const switchChannel = async () => {
         if (currentChannelId) {
           await leaveChannel(currentChannelId);
         }
+        // Join SignalR group BEFORE fetching messages so any message sent
+        // during/after the fetch is caught by the group subscription
         await joinChannel(activeChannel.id);
+        fetchMessages(activeChannel.id);
       };
-      join().catch(console.error);
-      fetchMessages(activeChannel.id);
+      switchChannel().catch(console.error);
     }
   }, [activeChannel]);
 

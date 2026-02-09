@@ -18,10 +18,13 @@ public class VoiceStateService
     // channelId -> {userId -> VoiceUserState}
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, VoiceUserState>> _voiceChannels = new();
 
+    // userId -> connectionId that owns the voice session
+    private readonly ConcurrentDictionary<string, string> _voiceConnections = new();
+
     // channelId -> {userId -> displayName} of active screen sharers
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _activeSharers = new();
 
-    public void JoinChannel(Guid channelId, string userId, string displayName, bool isMuted, bool isDeafened)
+    public void JoinChannel(Guid channelId, string userId, string displayName, bool isMuted, bool isDeafened, string connectionId)
     {
         var users = _voiceChannels.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, VoiceUserState>());
         users[userId] = new VoiceUserState
@@ -32,6 +35,7 @@ public class VoiceStateService
             IsServerMuted = false,
             IsServerDeafened = false,
         };
+        _voiceConnections[userId] = connectionId;
     }
 
     public void LeaveChannel(Guid channelId, string userId)
@@ -42,6 +46,8 @@ public class VoiceStateService
             if (users.IsEmpty)
                 _voiceChannels.TryRemove(channelId, out _);
         }
+
+        _voiceConnections.TryRemove(userId, out _);
 
         // Remove this user from screen sharers if they were sharing
         RemoveScreenSharer(channelId, userId);
@@ -58,6 +64,16 @@ public class VoiceStateService
             // Remove this user from screen sharers if they were sharing
             RemoveScreenSharer(channelId, userId);
         }
+
+        _voiceConnections.TryRemove(userId, out _);
+    }
+
+    /// <summary>
+    /// Check if a specific connectionId is the voice connection for a user.
+    /// </summary>
+    public bool IsVoiceConnection(string userId, string connectionId)
+    {
+        return _voiceConnections.TryGetValue(userId, out var voiceConnId) && voiceConnId == connectionId;
     }
 
     public Guid? GetUserChannel(string userId)

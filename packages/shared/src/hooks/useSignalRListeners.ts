@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
 import { useUnreadStore } from '../stores/unreadStore.js';
 import { useDmStore } from '../stores/dmStore.js';
+import { useMessageStore } from '../stores/messageStore.js';
 import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import type { HubConnection } from '@microsoft/signalr';
@@ -54,6 +55,8 @@ export async function rejoinActiveChannel(conn: HubConnection) {
   if (!channelId) return;
   try {
     await conn.invoke('JoinChannel', channelId);
+    // Refetch messages to pick up any sent while disconnected
+    useMessageStore.getState().fetchMessages(channelId);
   } catch (err) {
     console.error('Failed to rejoin channel:', err);
   }
@@ -247,7 +250,7 @@ export function useSignalRListeners() {
     }).catch(console.error);
   }, []);
 
-  // Fetch voice channel users when switching servers
+  // Fetch voice channel users when switching servers + periodic reconciliation
   useEffect(() => {
     if (!activeServer) return;
     useSearchStore.getState().closeSearch();
@@ -255,6 +258,22 @@ export function useSignalRListeners() {
     if (conn.state === 'Connected') {
       fetchServerState(conn, activeServer.id);
     }
+
+    // Periodic reconciliation: re-fetch voice state every 30s to self-heal
+    // any stale state from missed signals or race conditions
+    const interval = setInterval(() => {
+      const c = getConnection();
+      if (c.state === 'Connected') {
+        c.invoke('GetServerVoiceUsers', activeServer.id).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
+          useServerStore.getState().setVoiceChannelUsers(data);
+        }).catch(console.error);
+        c.invoke('GetServerVoiceSharers', activeServer.id).then((data: Record<string, string[]>) => {
+          useServerStore.getState().setVoiceChannelSharers(data);
+        }).catch(console.error);
+      }
+    }, 30_000);
+
+    return () => clearInterval(interval);
   }, [activeServer]);
 
   // Track which channel is active for typing indicators
