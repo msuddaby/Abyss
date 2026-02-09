@@ -7,6 +7,34 @@ namespace Abyss.Api.Services;
 public class MediaConfig
 {
     /// <summary>
+    /// Emoji-specific upload limits.
+    /// </summary>
+    public long EmojiMaxSize { get; } = 256 * 1024; // 256KB
+
+    /// <summary>
+    /// Allowed emoji MIME types.
+    /// </summary>
+    public HashSet<string> EmojiAllowedMimeTypes { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/jpeg"
+    };
+
+    /// <summary>
+    /// Allowed emoji file extensions.
+    /// </summary>
+    public HashSet<string> EmojiAllowedExtensions { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png",
+        ".gif",
+        ".webp",
+        ".jpg",
+        ".jpeg"
+    };
+
+    /// <summary>
     /// Per-category size limits in bytes.
     /// More granular than a single global limit.
     /// </summary>

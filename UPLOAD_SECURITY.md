@@ -92,6 +92,16 @@ Is other? → Copy to disk with validated extension
 Store attachment metadata with detected MIME type
 ```
 
+### 5. EmojisController (`Controllers/EmojisController.cs`)
+
+Emoji uploads now use the same validation pipeline with emoji-specific limits:
+
+- Max size: 256KB
+- Allowed types: PNG, GIF, WebP, JPEG
+- Stored in `/uploads/emojis/*` as WebP (animated GIFs preserved)
+
+Emoji validation uses `MediaValidator` with a custom policy, then processes images via `ImageService`.
+
 #### Download Flow (Matrix-Inspired Security)
 ```
 User requests file

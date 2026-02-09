@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Abyss.Api.Data;
@@ -13,71 +12,44 @@ namespace Abyss.Api.Controllers;
 public class UploadController : ControllerBase
 {
     private readonly AppDbContext _db;
-    private readonly ImageService _imageService;
-    private readonly MediaValidator _mediaValidator;
     private readonly MediaConfig _mediaConfig;
+    private readonly MediaUploadService _mediaUploadService;
 
-    public UploadController(AppDbContext db, ImageService imageService, MediaValidator mediaValidator, MediaConfig mediaConfig)
+    public UploadController(AppDbContext db, MediaConfig mediaConfig, MediaUploadService mediaUploadService)
     {
         _db = db;
-        _imageService = imageService;
-        _mediaValidator = mediaValidator;
         _mediaConfig = mediaConfig;
+        _mediaUploadService = mediaUploadService;
     }
 
     [HttpPost]
     public async Task<ActionResult> Upload(IFormFile file)
     {
-        // 1. Comprehensive validation using our new MediaValidator
-        var validation = await _mediaValidator.ValidateUploadAsync(file);
-        if (!validation.IsValid)
-        {
-            return BadRequest(validation.ErrorMessage);
-        }
-
-        var ext = Path.GetExtension(file.FileName);
-        var isImage = validation.Category == "image";
-
         var attachmentId = Guid.NewGuid();
-        string url;
-        long size;
-
-        if (isImage)
-        {
-            // Process images through ImageMagick (strips metadata, re-encodes to WebP)
-            (url, size) = await _imageService.ProcessImageAsync(file);
-        }
-        else
-        {
-            // Store non-image files as-is
-            var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads");
-            Directory.CreateDirectory(uploadsDir);
-
-            var fileName = $"{attachmentId}{ext}";
-            var filePath = Path.Combine(uploadsDir, fileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await file.CopyToAsync(stream);
-            }
-
-            url = $"/api/upload/{attachmentId}";
-            size = file.Length;
-        }
+        var upload = await _mediaUploadService.StoreAttachmentAsync(file, attachmentId);
+        if (!upload.IsValid || upload.Result is null)
+            return BadRequest(upload.ErrorMessage);
 
         // Store attachment metadata with detected MIME type
         var attachment = new Attachment
         {
             Id = attachmentId,
             FileName = file.FileName,
-            FilePath = url,
-            ContentType = isImage ? "image/webp" : (validation.DetectedMimeType ?? "application/octet-stream"),
-            Size = size,
+            FilePath = upload.Result.RelativeUrl,
+            ContentType = upload.Result.ContentType,
+            Size = upload.Result.Size,
         };
         _db.Attachments.Add(attachment);
         await _db.SaveChangesAsync();
 
-        return Ok(new { id = attachment.Id.ToString(), url = attachment.FilePath, fileName = attachment.FileName, contentType = attachment.ContentType, size = attachment.Size });
+        return Ok(new
+        {
+            id = attachment.Id.ToString(),
+            url = attachment.FilePath,
+            fileName = attachment.FileName,
+            contentType = attachment.ContentType,
+            size = attachment.Size
+        });
     }
 
     [HttpGet("{id:guid}")]

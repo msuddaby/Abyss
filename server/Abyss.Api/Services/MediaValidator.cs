@@ -26,31 +26,70 @@ public class MediaValidator
     );
 
     /// <summary>
-    /// Validate an uploaded file comprehensively.
+    /// Validation options for specialized uploads (e.g., emojis).
     /// </summary>
-    public async Task<ValidationResult> ValidateUploadAsync(IFormFile file)
+    public record MediaValidationOptions(
+        long? MaxSize = null,
+        HashSet<string>? AllowedExtensions = null,
+        HashSet<string>? AllowedMimeTypes = null,
+        bool RequireExtension = true
+    );
+
+    /// <summary>
+    /// Validate an uploaded file comprehensively with default MediaConfig rules.
+    /// </summary>
+    public Task<ValidationResult> ValidateUploadAsync(IFormFile file)
+    {
+        return ValidateUploadAsync(file, null);
+    }
+
+    /// <summary>
+    /// Validate an uploaded file with optional policy overrides.
+    /// </summary>
+    public async Task<ValidationResult> ValidateUploadAsync(IFormFile file, MediaValidationOptions? options)
     {
         // 1. Basic checks
         if (file.Length == 0)
             return new ValidationResult(false, "File is empty");
 
         var ext = Path.GetExtension(file.FileName);
-        if (string.IsNullOrEmpty(ext))
+        var hasExt = !string.IsNullOrEmpty(ext);
+
+        if (options?.RequireExtension == true && !hasExt)
             return new ValidationResult(false, "File has no extension");
 
-        // 2. Extension allowlist check
-        var (isAllowed, category, maxSize) = _config.ValidateExtension(ext);
-        if (!isAllowed)
-            return new ValidationResult(false, $"File type '{ext}' is not allowed");
+        string? category = null;
+        long maxSize;
 
-        // 3. Size limit check (category-specific)
+        if (options?.AllowedExtensions != null)
+        {
+            if (hasExt && !options.AllowedExtensions.Contains(ext))
+                return new ValidationResult(false, $"File type '{ext}' is not allowed");
+
+            maxSize = options.MaxSize ?? _config.MaxSizesByCategory["default"];
+            category = "emoji";
+        }
+        else
+        {
+            if (!hasExt)
+                return new ValidationResult(false, "File has no extension");
+
+            var (isAllowed, detectedCategory, detectedMaxSize) = _config.ValidateExtension(ext);
+            if (!isAllowed)
+                return new ValidationResult(false, $"File type '{ext}' is not allowed");
+
+            category = detectedCategory;
+            maxSize = detectedMaxSize;
+        }
+
+        // 2. Size limit check
         if (file.Length > maxSize)
         {
             var sizeMB = maxSize / (1024.0 * 1024.0);
             return new ValidationResult(false, $"File too large. Maximum size for {category} files is {sizeMB:F1}MB");
         }
 
-        // 4. Magic number validation
+        // 3. Magic number validation
         string? detectedMimeType = null;
         try
         {
@@ -63,15 +102,21 @@ public class MediaValidator
             // Continue - magic number detection failure is not fatal
         }
 
-        // 5. Check if detected MIME type is blocked
+        // 4. Check if detected MIME type is blocked
         if (detectedMimeType != null && _config.IsMimeTypeBlocked(detectedMimeType))
         {
             _logger.LogWarning("Blocked file upload with MIME type {MimeType}: {FileName}", detectedMimeType, file.FileName);
             return new ValidationResult(false, "This file type is not allowed for security reasons");
         }
 
-        // 6. Validate MIME type matches extension (if detected)
-        if (detectedMimeType != null && !_config.MimeTypeMatchesExtension(ext, detectedMimeType))
+        // 5. Optional allowlist by MIME type
+        if (options?.AllowedMimeTypes != null)
+        {
+            var mime = detectedMimeType ?? file.ContentType;
+            if (string.IsNullOrWhiteSpace(mime) || !options.AllowedMimeTypes.Contains(mime))
+                return new ValidationResult(false, "Only PNG, GIF, WebP, and JPEG files are allowed.");
+        }
+        else if (detectedMimeType != null && hasExt && !_config.MimeTypeMatchesExtension(ext, detectedMimeType))
         {
             _logger.LogWarning(
                 "MIME type mismatch: file {FileName} has extension {Extension} but detected as {MimeType}",

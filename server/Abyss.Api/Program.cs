@@ -103,6 +103,7 @@ builder.Services.AddSingleton<TurnCredentialService>();
 builder.Services.AddSingleton<ImageService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
+builder.Services.AddScoped<MediaUploadService>();
 
 // HTTP Client for push notifications
 builder.Services.AddHttpClient();

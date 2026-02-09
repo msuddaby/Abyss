@@ -20,22 +20,17 @@ public class EmojisController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly IHubContext<ChatHub> _hub;
-    private readonly ImageService _imageService;
+    private readonly MediaUploadService _mediaUploadService;
 
     private static readonly Regex NameRegex = new(@"^[a-zA-Z0-9_]{2,32}$", RegexOptions.Compiled);
-    private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "image/png", "image/gif", "image/webp", "image/jpeg"
-    };
-    private const int MaxFileSize = 256 * 1024;
     private const int MaxEmojisPerServer = 50;
 
-    public EmojisController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService)
+    public EmojisController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, MediaUploadService mediaUploadService)
     {
         _db = db;
         _perms = perms;
         _hub = hub;
-        _imageService = imageService;
+        _mediaUploadService = mediaUploadService;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -64,12 +59,6 @@ public class EmojisController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest("No file provided.");
 
-        if (file.Length > MaxFileSize)
-            return BadRequest("File too large (max 256KB).");
-
-        if (!AllowedTypes.Contains(file.ContentType))
-            return BadRequest("Only PNG, GIF, and WebP files are allowed.");
-
         var count = await _db.CustomEmojis.CountAsync(e => e.ServerId == serverId);
         if (count >= MaxEmojisPerServer)
             return BadRequest($"Server has reached the maximum of {MaxEmojisPerServer} emojis.");
@@ -78,7 +67,11 @@ public class EmojisController : ControllerBase
         if (nameExists)
             return BadRequest($"An emoji with the name '{name}' already exists in this server.");
 
-        var imageUrl = await _imageService.ProcessEmojiAsync(file);
+        var upload = await _mediaUploadService.StoreEmojiAsync(file);
+        if (!upload.IsValid || upload.Url is null)
+            return BadRequest(upload.ErrorMessage);
+
+        var imageUrl = upload.Url;
 
         var emoji = new CustomEmoji
         {
