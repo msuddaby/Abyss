@@ -3,7 +3,7 @@ import ChannelSidebar from '../components/ChannelSidebar';
 import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
 
-import ScreenShareView from '../components/ScreenShareView';
+import VoiceChannelView from '../components/VoiceChannelView';
 import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
@@ -115,9 +115,7 @@ export default function MainLayout() {
                 <span className="channel-voice-icon">🔊</span>
                 <span className="channel-name">{activeChannel.name}</span>
               </div>
-              <div className="voice-channel-content">
-                <ScreenShareView />
-              </div>
+              <VoiceChannelView />
             </div>
           )
         ) : (
