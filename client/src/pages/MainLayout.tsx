@@ -90,7 +90,7 @@ export default function MainLayout() {
                     onClick={() => searchIsOpen ? closeSearch() : openSearch()}
                     title="Search messages"
                   >
-                    🔍!
+                    🔍
                   </button>
                   <button
                     className={`pin-header-btn${showPins ? ' active' : ''}`}
