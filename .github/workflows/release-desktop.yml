@@ -23,8 +23,11 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install workspace dependencies
         run: npm ci
+
+      - name: Install desktop dependencies
+        run: cd packages/desktop && npm install --legacy-peer-deps
 
       - name: Build client
         env:

@@ -4,8 +4,7 @@
   "workspaces": [
     "packages/shared",
     "client",
-    "packages/app",
-    "packages/desktop"
+    "packages/app"
   ],
   "overrides": {
     "react": "^19.2.0",
