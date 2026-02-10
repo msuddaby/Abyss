@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.Models;
@@ -11,6 +12,7 @@ namespace Abyss.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
+[EnableRateLimiting("upload")]
 public class UploadController : ControllerBase
 {
     private readonly AppDbContext _db;

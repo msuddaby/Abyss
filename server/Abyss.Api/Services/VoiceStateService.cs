@@ -13,6 +13,7 @@ public class VoiceStateService
         public bool IsDeafened { get; set; }
         public bool IsServerMuted { get; set; }
         public bool IsServerDeafened { get; set; }
+        public DateTime LastSeen { get; set; } = DateTime.UtcNow;
     }
 
     // channelId -> {userId -> VoiceUserState}
@@ -37,6 +38,7 @@ public class VoiceStateService
             IsDeafened = isDeafened,
             IsServerMuted = false,
             IsServerDeafened = false,
+            LastSeen = DateTime.UtcNow,
         };
         _voiceConnections[userId] = connectionId;
     }
@@ -142,6 +144,7 @@ public class VoiceStateService
 
             state.IsMuted = state.IsServerMuted || isMuted;
             state.IsDeafened = state.IsServerDeafened || isDeafened;
+            state.LastSeen = DateTime.UtcNow;
 
             return new VoiceUserStateDto(
                 state.DisplayName,
@@ -242,5 +245,76 @@ public class VoiceStateService
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// Refresh the LastSeen timestamp for a user (called on voice activity like signaling).
+    /// </summary>
+    public void TouchUser(string userId)
+    {
+        foreach (var (_, users) in _voiceChannels)
+        {
+            if (users.TryGetValue(userId, out var state))
+            {
+                state.LastSeen = DateTime.UtcNow;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Remove voice users whose LastSeen is older than the given threshold.
+    /// Returns list of (channelId, userId) pairs that were cleaned up.
+    /// </summary>
+    public List<(Guid ChannelId, string UserId)> CleanupStaleConnections(TimeSpan maxAge)
+    {
+        var cutoff = DateTime.UtcNow - maxAge;
+        var removed = new List<(Guid, string)>();
+
+        foreach (var (channelId, users) in _voiceChannels)
+        {
+            foreach (var (userId, state) in users)
+            {
+                if (state.LastSeen < cutoff)
+                {
+                    users.TryRemove(userId, out _);
+                    _voiceConnections.TryRemove(userId, out _);
+                    RemoveScreenSharer(channelId, userId);
+                    RemoveCameraUser(channelId, userId);
+                    removed.Add((channelId, userId));
+                }
+            }
+
+            if (users.IsEmpty)
+                _voiceChannels.TryRemove(channelId, out _);
+        }
+
+        return removed;
+    }
+}
+
+public class VoiceStateCleanupService : BackgroundService
+{
+    private readonly VoiceStateService _voiceState;
+    private readonly ILogger<VoiceStateCleanupService> _logger;
+
+    public VoiceStateCleanupService(VoiceStateService voiceState, ILogger<VoiceStateCleanupService> logger)
+    {
+        _voiceState = voiceState;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+
+            var removed = _voiceState.CleanupStaleConnections(TimeSpan.FromMinutes(10));
+            if (removed.Count > 0)
+            {
+                _logger.LogWarning("Cleaned up {Count} stale voice connections", removed.Count);
+            }
+        }
     }
 }

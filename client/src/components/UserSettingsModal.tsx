@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useAuthStore, useVoiceStore, getApiBase } from "@abyss/shared";
+import { formatKeybind } from "./VoiceControls";
 
-type SettingsTab = "profile" | "voice" | "video" | "account";
+type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -21,6 +22,7 @@ export default function UserSettingsModal({
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [capturingKey, setCapturingKey] = useState(false);
+  const [capturingKeybind, setCapturingKeybind] = useState<string | null>(null);
   const [micTestActive, setMicTestActive] = useState(false);
   const [micTestLevel, setMicTestLevel] = useState(0);
   const [micTestRecording, setMicTestRecording] = useState(false);
@@ -53,6 +55,12 @@ export default function UserSettingsModal({
   const setInputSensitivity = useVoiceStore((s) => s.setInputSensitivity);
   const cameraDeviceId = useVoiceStore((s) => s.cameraDeviceId);
   const setCameraDeviceId = useVoiceStore((s) => s.setCameraDeviceId);
+  const keybindToggleMute = useVoiceStore((s) => s.keybindToggleMute);
+  const keybindToggleDeafen = useVoiceStore((s) => s.keybindToggleDeafen);
+  const keybindDisconnect = useVoiceStore((s) => s.keybindDisconnect);
+  const setKeybindToggleMute = useVoiceStore((s) => s.setKeybindToggleMute);
+  const setKeybindToggleDeafen = useVoiceStore((s) => s.setKeybindToggleDeafen);
+  const setKeybindDisconnect = useVoiceStore((s) => s.setKeybindDisconnect);
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -91,6 +99,51 @@ export default function UserSettingsModal({
       window.removeEventListener("mousedown", onMouse);
     };
   }, [capturingKey, setPttKey]);
+
+  const keybindSetters: Record<string, (bind: string) => void> = {
+    toggleMute: setKeybindToggleMute,
+    toggleDeafen: setKeybindToggleDeafen,
+    disconnect: setKeybindDisconnect,
+  };
+
+  const keybindDefaults: Record<string, string> = {
+    toggleMute: "mod+shift+m",
+    toggleDeafen: "mod+shift+d",
+    disconnect: "mod+shift+e",
+  };
+
+  useEffect(() => {
+    if (!capturingKeybind) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Ignore bare modifier presses
+      if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
+      // Require at least one modifier
+      const hasMod = e.ctrlKey || e.metaKey;
+      if (!hasMod && !e.altKey && !e.shiftKey) return;
+      const parts: string[] = [];
+      if (hasMod) parts.push("mod");
+      if (e.altKey) parts.push("alt");
+      if (e.shiftKey) parts.push("shift");
+      parts.push(e.key.toLowerCase());
+      const bind = parts.join("+");
+      keybindSetters[capturingKeybind](bind);
+      setCapturingKeybind(null);
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCapturingKeybind(null);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keydown", onEsc);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keydown", onEsc);
+    };
+  }, [capturingKeybind, setKeybindToggleMute, setKeybindToggleDeafen, setKeybindDisconnect]);
 
   useEffect(() => {
     if (!micTestActive) return;
@@ -445,6 +498,12 @@ export default function UserSettingsModal({
           >
             Video
           </button>
+          <button
+            className={`us-nav-item ${activeTab === "keybinds" ? "active" : ""}`}
+            onClick={() => setActiveTab("keybinds")}
+          >
+            Keybinds
+          </button>
           <div className="us-nav-separator" />
           <button
             className={`us-nav-item ${activeTab === "account" ? "active" : ""}`}
@@ -460,6 +519,7 @@ export default function UserSettingsModal({
               {activeTab === "profile" && "Profile"}
               {activeTab === "voice" && "Voice & Audio"}
               {activeTab === "video" && "Video"}
+              {activeTab === "keybinds" && "Keybinds"}
               {activeTab === "account" && "Account"}
             </h2>
             <button className="us-close" onClick={onClose}>
@@ -773,6 +833,50 @@ export default function UserSettingsModal({
                       <span>No preview</span>
                     </div>
                   )}
+                </div>
+              </>
+            )}
+
+            {activeTab === "keybinds" && (
+              <>
+                <div className="us-card">
+                  <div className="us-card-title">Voice Shortcuts</div>
+                  {([
+                    { id: "toggleMute", label: "Toggle Mute", bind: keybindToggleMute },
+                    { id: "toggleDeafen", label: "Toggle Deafen", bind: keybindToggleDeafen },
+                    { id: "disconnect", label: "Disconnect", bind: keybindDisconnect },
+                  ] as const).map(({ id, label, bind }) => (
+                    <div className="keybind-row" key={id}>
+                      <span className="keybind-label">{label}</span>
+                      <button
+                        className={`keybind-capture${capturingKeybind === id ? " recording" : ""}`}
+                        onClick={() => setCapturingKeybind(capturingKeybind === id ? null : id)}
+                      >
+                        {capturingKeybind === id ? "Press keys..." : formatKeybind(bind)}
+                      </button>
+                      {bind !== keybindDefaults[id] && (
+                        <button
+                          className="keybind-reset"
+                          onClick={() => keybindSetters[id](keybindDefaults[id])}
+                          title="Reset to default"
+                        >
+                          ↺
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="us-card-actions">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      setKeybindToggleMute("mod+shift+m");
+                      setKeybindToggleDeafen("mod+shift+d");
+                      setKeybindDisconnect("mod+shift+e");
+                    }}
+                  >
+                    Reset All
+                  </button>
                 </div>
               </>
             )}

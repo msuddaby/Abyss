@@ -37,7 +37,7 @@ public class PermissionService
         var member = await GetMemberAsync(serverId, userId);
         if (member == null) return 0;
         if (member.IsOwner) return ~0L;
-        return ComputePermissions(serverId, member);
+        return await ComputePermissionsAsync(serverId, member);
     }
 
     public Task<long> GetPermissionsAsync(Guid serverId, string userId) =>
@@ -59,7 +59,7 @@ public class PermissionService
         if (member == null) return 0;
         if (member.IsOwner) return ~0L;
 
-        var perms = ComputePermissions(channel.ServerId.Value, member);
+        var perms = await ComputePermissionsAsync(channel.ServerId.Value, member);
 
         var roleIds = new HashSet<Guid>();
         var defaultRole = await _db.ServerRoles.AsNoTracking()
@@ -180,12 +180,13 @@ public class PermissionService
         await _db.SaveChangesAsync();
     }
 
-    private long ComputePermissions(Guid serverId, ServerMember member)
+    private async Task<long> ComputePermissionsAsync(Guid serverId, ServerMember member)
     {
         long perms = 0;
 
         // Include @everyone role permissions
-        var defaultRole = _db.ServerRoles.FirstOrDefault(r => r.ServerId == serverId && r.IsDefault);
+        var defaultRole = await _db.ServerRoles.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.ServerId == serverId && r.IsDefault);
         if (defaultRole != null)
             perms |= defaultRole.Permissions;
 
@@ -197,6 +198,92 @@ public class PermissionService
         }
 
         return perms;
+    }
+
+    /// <summary>
+    /// Batch-compute channel permissions for all members of the channel's server.
+    /// Returns list of userIds that have the given permission.
+    /// Loads all members + roles in a single query instead of N+1.
+    /// </summary>
+    public async Task<List<string>> GetUserIdsWithChannelPermissionAsync(Guid channelId, Permission perm)
+    {
+        var channel = await _db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == channelId);
+        if (channel?.ServerId == null) return new List<string>();
+
+        var serverId = channel.ServerId.Value;
+
+        // Single query: load all members with their roles
+        var members = await _db.ServerMembers
+            .Include(sm => sm.MemberRoles)
+                .ThenInclude(mr => mr.Role)
+            .Where(sm => sm.ServerId == serverId)
+            .AsNoTracking()
+            .ToListAsync();
+
+        var defaultRole = await _db.ServerRoles.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.ServerId == serverId && r.IsDefault);
+
+        var overrides = await _db.ChannelPermissionOverrides.AsNoTracking()
+            .Where(o => o.ChannelId == channelId)
+            .ToListAsync();
+
+        var allowed = new List<string>();
+        foreach (var member in members)
+        {
+            if (member.IsOwner)
+            {
+                allowed.Add(member.UserId);
+                continue;
+            }
+
+            // Compute base server permissions
+            long perms = 0;
+            if (defaultRole != null)
+                perms |= defaultRole.Permissions;
+            if (member.MemberRoles != null)
+            {
+                foreach (var mr in member.MemberRoles)
+                    perms |= mr.Role.Permissions;
+            }
+
+            // Gather role IDs for this member
+            var roleIds = new HashSet<Guid>();
+            if (defaultRole != null) roleIds.Add(defaultRole.Id);
+            if (member.MemberRoles != null)
+            {
+                foreach (var mr in member.MemberRoles)
+                    roleIds.Add(mr.RoleId);
+            }
+
+            // Apply channel overrides
+            if ((perms & ChannelPermissionMask) == 0)
+                perms |= ChannelPermissionMask;
+
+            if (defaultRole != null)
+            {
+                var everyoneOverride = overrides.FirstOrDefault(o => o.RoleId == defaultRole.Id);
+                if (everyoneOverride != null)
+                    perms = ApplyChannelOverride(perms, everyoneOverride.Allow, everyoneOverride.Deny);
+            }
+
+            long combinedAllow = 0;
+            long combinedDeny = 0;
+            foreach (var ov in overrides)
+            {
+                if (!roleIds.Contains(ov.RoleId)) continue;
+                if (defaultRole != null && ov.RoleId == defaultRole.Id) continue;
+                combinedAllow |= ov.Allow;
+                combinedDeny |= ov.Deny;
+            }
+
+            if (combinedAllow != 0 || combinedDeny != 0)
+                perms = ApplyChannelOverride(perms, combinedAllow, combinedDeny);
+
+            if ((perms & (long)perm) == (long)perm)
+                allowed.Add(member.UserId);
+        }
+
+        return allowed;
     }
 
     private static long ApplyChannelOverride(long perms, long allow, long deny)

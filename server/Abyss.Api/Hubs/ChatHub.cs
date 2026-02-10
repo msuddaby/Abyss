@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
@@ -24,8 +25,7 @@ public class ChatHub : Hub
     private const string MaxMessageLengthKey = "MaxMessageLength";
 
     // Track online users: connectionId -> userId
-    internal static readonly Dictionary<string, string> _connections = new();
-    internal static readonly object _lock = new();
+    internal static readonly ConcurrentDictionary<string, string> _connections = new();
 
     public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications)
     {
@@ -47,24 +47,9 @@ public class ChatHub : Hub
         return false;
     }
 
-    private async Task<List<string>> GetUserIdsWithChannelPermission(Guid channelId, Permission perm)
+    private Task<List<string>> GetUserIdsWithChannelPermission(Guid channelId, Permission perm)
     {
-        var channel = await _db.Channels.AsNoTracking().FirstOrDefaultAsync(c => c.Id == channelId);
-        if (channel?.ServerId == null) return new List<string>();
-
-        var memberIds = await _db.ServerMembers
-            .Where(sm => sm.ServerId == channel.ServerId)
-            .Select(sm => sm.UserId)
-            .ToListAsync();
-
-        var allowed = new List<string>();
-        foreach (var userId in memberIds)
-        {
-            if (await _perms.HasChannelPermissionAsync(channelId, userId, perm))
-                allowed.Add(userId);
-        }
-
-        return allowed;
+        return _perms.GetUserIdsWithChannelPermissionAsync(channelId, perm);
     }
 
     private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, int maxMessageLength, out string normalized, out string? error)
@@ -181,7 +166,7 @@ public class ChatHub : Hub
 
     public override async Task OnConnectedAsync()
     {
-        lock (_lock) { _connections[Context.ConnectionId] = UserId; }
+        _connections[Context.ConnectionId] = UserId;
 
         // Join per-user group for targeted notifications
         await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{UserId}");
@@ -214,11 +199,10 @@ public class ChatHub : Hub
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
-        lock (_lock) { _connections.Remove(Context.ConnectionId); }
+        _connections.TryRemove(Context.ConnectionId, out _);
 
         // Check if user has no more connections
-        bool stillOnline;
-        lock (_lock) { stillOnline = _connections.ContainsValue(UserId); }
+        bool stillOnline = _connections.Values.Contains(UserId);
 
         if (!stillOnline)
         {
@@ -464,8 +448,7 @@ public class ChatHub : Hub
             }
 
             // Process mentions and send targeted notifications
-            HashSet<string> onlineUserIds;
-            lock (_lock) { onlineUserIds = new HashSet<string>(_connections.Values); }
+            var onlineUserIds = new HashSet<string>(_connections.Values);
 
             var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds);
             var notifiedUserIds = new HashSet<string>(notifications.Select(n => n.UserId));
@@ -751,11 +734,7 @@ public class ChatHub : Hub
             .Select(sm => sm.UserId)
             .ToListAsync();
 
-        HashSet<string> onlineUserIds;
-        lock (_lock)
-        {
-            onlineUserIds = new HashSet<string>(_connections.Values);
-        }
+        var onlineUserIds = new HashSet<string>(_connections.Values);
 
         return memberUserIds.Where(uid => onlineUserIds.Contains(uid)).ToList();
     }
@@ -1031,11 +1010,7 @@ public class ChatHub : Hub
         if (!_voiceState.IsScreenSharing(sharerChannel.Value, sharerUserId)) return;
 
         // Relay watch request to the sharer's connections
-        List<string> sharerConnections;
-        lock (_lock)
-        {
-            sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
-        }
+        var sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
 
         foreach (var connId in sharerConnections)
         {
@@ -1047,11 +1022,7 @@ public class ChatHub : Hub
     public async Task StopWatchingStream(string sharerUserId)
     {
         // Relay stop request to the sharer's connections
-        List<string> sharerConnections;
-        lock (_lock)
-        {
-            sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
-        }
+        var sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
 
         foreach (var connId in sharerConnections)
         {
@@ -1061,16 +1032,17 @@ public class ChatHub : Hub
 
     public async Task SendSignal(string targetUserId, string signal)
     {
+        if (string.IsNullOrWhiteSpace(signal) || signal.Length > 100_000) return;
+
         // Verify sender is in a voice channel (membership was checked at join time)
         var senderChannel = _voiceState.GetUserChannel(UserId);
         if (!senderChannel.HasValue) return;
 
+        // Refresh voice activity timestamp
+        _voiceState.TouchUser(UserId);
+
         // Find connection(s) for target user
-        List<string> targetConnections;
-        lock (_lock)
-        {
-            targetConnections = _connections.Where(c => c.Value == targetUserId).Select(c => c.Key).ToList();
-        }
+        var targetConnections = _connections.Where(c => c.Value == targetUserId).Select(c => c.Key).ToList();
 
         foreach (var connId in targetConnections)
         {
@@ -1170,22 +1142,24 @@ public class ChatHub : Hub
     }
 
     // Get DM channels for the current user
-    public async Task<List<DmChannelDto>> GetDmChannels()
+    public async Task<List<DmChannelDto>> GetDmChannels(int offset = 0, int limit = 50)
     {
+        limit = Math.Clamp(limit, 1, 100);
+        offset = Math.Max(offset, 0);
+
         var channels = await _db.Channels
             .Include(c => c.DmUser1)
             .Include(c => c.DmUser2)
             .Where(c => c.Type == ChannelType.DM && (c.DmUser1Id == UserId || c.DmUser2Id == UserId))
+            .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
+            .Skip(offset)
+            .Take(limit)
             .ToListAsync();
-
-        // Sort by LastMessageAt descending, with nulls at end
-        channels = channels.OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue).ToList();
 
         return channels.Select(c =>
         {
             var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
             var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio);
-            // Use a derived CreatedAt from the channel Id (sequential GUIDs) — or just use LastMessageAt
             return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
         }).ToList();
     }
@@ -1203,29 +1177,28 @@ public class ChatHub : Hub
         var channel = await _db.Channels.FindAsync(channelId);
         if (channel == null || channel.PersistentChat) return;
 
-        // Bulk-delete messages + related data for this voice channel
-        var messageIds = await _db.Messages
-            .Where(m => m.ChannelId == channelId)
-            .Select(m => m.Id)
-            .ToListAsync();
+        // Use raw SQL for efficient bulk delete (avoids loading entities into memory)
+        await _db.Database.ExecuteSqlInterpolatedAsync($@"
+            DELETE FROM ""Reactions""
+            WHERE ""MessageId"" IN (SELECT ""Id"" FROM ""Messages"" WHERE ""ChannelId"" = {channelId});
 
-        if (messageIds.Count == 0) return;
+            DELETE FROM ""Attachments""
+            WHERE ""MessageId"" IN (SELECT ""Id"" FROM ""Messages"" WHERE ""ChannelId"" = {channelId});
 
-        _db.Reactions.RemoveRange(_db.Reactions.Where(r => messageIds.Contains(r.MessageId)));
-        _db.Attachments.RemoveRange(_db.Attachments.Where(a => a.MessageId.HasValue && messageIds.Contains(a.MessageId.Value)));
-        _db.PinnedMessages.RemoveRange(_db.PinnedMessages.Where(pm => messageIds.Contains(pm.MessageId)));
-        _db.Notifications.RemoveRange(_db.Notifications.Where(n => messageIds.Contains(n.MessageId)));
-        _db.Messages.RemoveRange(_db.Messages.Where(m => m.ChannelId == channelId));
+            DELETE FROM ""PinnedMessages""
+            WHERE ""MessageId"" IN (SELECT ""Id"" FROM ""Messages"" WHERE ""ChannelId"" = {channelId});
 
-        await _db.SaveChangesAsync();
+            DELETE FROM ""Notifications""
+            WHERE ""MessageId"" IN (SELECT ""Id"" FROM ""Messages"" WHERE ""ChannelId"" = {channelId});
+
+            DELETE FROM ""Messages""
+            WHERE ""ChannelId"" = {channelId};
+        ");
     }
 
     // Get online user IDs (for @here mention resolution)
     public static HashSet<string> GetOnlineUserIds()
     {
-        lock (_lock)
-        {
-            return new HashSet<string>(_connections.Values);
-        }
+        return new HashSet<string>(_connections.Values);
     }
 }

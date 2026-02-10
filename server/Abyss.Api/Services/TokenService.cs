@@ -21,7 +21,7 @@ public class TokenService
 
         var sysadminUsername = Environment.GetEnvironmentVariable("SYSADMIN_USERNAME");
         if (!string.IsNullOrWhiteSpace(sysadminUsername)
-            && string.Equals(user.UserName, sysadminUsername, StringComparison.OrdinalIgnoreCase))
+            && string.Equals(user.UserName, sysadminUsername, StringComparison.Ordinal))
         {
             claims.Add(new Claim("sysadmin", "true"));
         }

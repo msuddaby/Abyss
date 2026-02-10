@@ -207,6 +207,11 @@ export default function MemberList() {
       )}
       {contextMenu && (
         <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <button className="context-menu-item" onClick={() => {
+            const m = contextMenu.member;
+            setProfileCard({ userId: m.userId, x: contextMenu.x, y: contextMenu.y });
+            setContextMenu(null);
+          }}>View Profile</button>
           <button className="context-menu-item" onClick={handleMessage}>Message</button>
           {canManageRoles && currentMember && canActOn(currentMember, contextMenu.member) && (
             <button className="context-menu-item" onClick={handleManageRoles}>Manage Roles</button>

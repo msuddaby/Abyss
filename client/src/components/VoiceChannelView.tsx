@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
-import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
 import VoiceChatPanel from './VoiceChatPanel';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
@@ -47,6 +47,22 @@ export default function VoiceChannelView() {
   const { joinVoice } = useWebRTC();
   const setFocusedUserId = useVoiceStore((s) => s.setFocusedUserId);
 
+  const connectionState = useVoiceStore((s) => s.connectionState);
+  const isJoiningVoice = useVoiceStore((s) => s.isJoiningVoice);
+
+  // Moderator permissions for focused user controls
+  const currentMember = members.find((m) => m.userId === currentUser?.id);
+  const canModerateVoice = currentMember ? hasPermission(currentMember, Permission.MuteMembers) : false;
+
+  const handleModerate = async (targetUserId: string, newMuted: boolean, newDeafened: boolean) => {
+    try {
+      const conn = await ensureConnected();
+      await conn.invoke('ModerateVoiceState', targetUserId, newMuted, newDeafened);
+    } catch (err) {
+      console.warn('Failed to moderate voice state', err);
+    }
+  };
+
   const isConnected = !!activeChannel && currentChannelId === activeChannel.id;
   const isWatching = isConnected && watchingUserId !== null;
   const isFocused = isConnected && focusedUserId !== null && !isWatching;
@@ -78,6 +94,9 @@ export default function VoiceChannelView() {
   return (
     <div className="vcv-wrapper">
     <div className="vcv-container">
+      {isConnected && connectionState === 'reconnecting' && (
+        <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
+      )}
       {isWatching ? (
         <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>
           <div className="vcv-watching-main">
@@ -122,6 +141,29 @@ export default function VoiceChannelView() {
           <div className="vcv-focused-header">
             <span className="vcv-focused-name">{focusedEntry[1].displayName}</span>
             <div className="vcv-focused-actions">
+              {(() => {
+                const targetMember = members.find((m) => m.userId === focusedUserId);
+                const canMod = canModerateVoice && focusedUserId !== currentUser?.id && currentMember && targetMember && canActOn(currentMember, targetMember);
+                const userState = channelUsers?.get(focusedUserId!);
+                return canMod && userState ? (
+                  <>
+                    <button
+                      className={`vcv-focused-chip${userState.isMuted ? ' active' : ''}`}
+                      onClick={() => handleModerate(focusedUserId!, !userState.isMuted, userState.isDeafened)}
+                      title={userState.isMuted ? 'Unmute User' : 'Mute User'}
+                    >
+                      🔇
+                    </button>
+                    <button
+                      className={`vcv-focused-chip${userState.isDeafened ? ' active' : ''}`}
+                      onClick={() => handleModerate(focusedUserId!, userState.isMuted, !userState.isDeafened)}
+                      title={userState.isDeafened ? 'Undeafen User' : 'Deafen User'}
+                    >
+                      🎧
+                    </button>
+                  </>
+                ) : null;
+              })()}
               {activeSharers.has(focusedUserId!) && (
                 <button
                   className="vcv-focused-chip"
@@ -246,8 +288,9 @@ export default function VoiceChannelView() {
           <button
             className="vcv-connect-btn"
             onClick={() => joinVoice(activeChannel.id)}
+            disabled={isJoiningVoice}
           >
-            Connect
+            {isJoiningVoice ? 'Connecting...' : 'Connect'}
           </button>
         </div>
       )}

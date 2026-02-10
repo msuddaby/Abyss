@@ -2457,6 +2457,39 @@
   white-space: nowrap;
 }
 
+/* Voice quality dot */
+.voice-quality-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.voice-quality-dot.good {
+  background: var(--success);
+}
+
+.voice-quality-dot.fair {
+  background: #faa61a;
+}
+
+.voice-quality-dot.poor {
+  background: var(--danger);
+}
+
+/* Loading state for voice buttons */
+.voice-ctrl-btn.loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.voice-ctrl-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Typing indicator */
 .typing-indicator {
   padding: 0 16px;
@@ -3117,6 +3150,15 @@
   background: var(--bg-tertiary);
 }
 
+.other-sharer-chip.loading {
+  opacity: 0.7;
+}
+
+.other-sharer-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* User Bar (bottom of channel sidebar) */
 .user-bar {
   display: flex;
@@ -3617,6 +3659,61 @@
   50% {
     opacity: 0.6;
   }
+}
+
+/* Keybind Settings */
+.keybind-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.keybind-label {
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.keybind-capture {
+  flex: 0 0 auto;
+  width: 200px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: "Consolas", monospace;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.keybind-capture:hover {
+  border-color: var(--text-muted);
+}
+
+.keybind-capture.recording {
+  border-color: var(--brand-color);
+  color: var(--brand-color);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.keybind-reset {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.keybind-reset:hover {
+  color: var(--text-primary);
 }
 
 /* User Profile Card */
@@ -5330,6 +5427,21 @@
   overflow: hidden;
 }
 
+.vcv-reconnecting-banner {
+  background: var(--danger);
+  color: #fff;
+  text-align: center;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  animation: pulse-reconnect 2s ease-in-out infinite;
+}
+
+@keyframes pulse-reconnect {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .vcv-scroll-area {
   flex: 1;
   overflow-y: auto;
@@ -5636,6 +5748,10 @@
 
 .vcv-focused-chip:hover {
   background: var(--bg-accent-hover);
+}
+
+.vcv-focused-chip.active {
+  background: var(--danger);
 }
 
 .vcv-focused-close {

@@ -8,6 +8,7 @@ import {
   useAuthStore,
   useServerStore,
   useVoiceChatStore,
+  useToastStore,
 } from "@abyss/shared";
 
 const STUN_URL =
@@ -34,6 +35,72 @@ let cameraStream: MediaStream | null = null;
 const cameraVideoStreams: Map<string, MediaStream> = new Map(); // peerId → remote camera stream
 const cameraTrackSenders: Map<string, RTCRtpSender> = new Map(); // peerId → sender
 const pendingTrackTypes: Map<string, string[]> = new Map(); // peerId → FIFO queue of "camera"|"screen"
+
+// Connection stats
+export interface ConnectionStats {
+  roundTripTime: number | null;
+  packetLoss: number | null;
+  jitter: number | null;
+}
+let cachedStats: ConnectionStats = { roundTripTime: null, packetLoss: null, jitter: null };
+let statsInterval: ReturnType<typeof setInterval> | null = null;
+
+export function getConnectionStats(): ConnectionStats {
+  return cachedStats;
+}
+
+function startStatsCollection() {
+  if (statsInterval) return;
+  statsInterval = setInterval(async () => {
+    let totalRtt = 0, rttCount = 0;
+    let totalLoss = 0, lossCount = 0;
+    let totalJitter = 0, jitterCount = 0;
+
+    for (const pc of peers.values()) {
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type === "candidate-pair" && report.state === "succeeded" && report.currentRoundTripTime != null) {
+            totalRtt += report.currentRoundTripTime * 1000; // to ms
+            rttCount++;
+          }
+          if (report.type === "inbound-rtp" && report.kind === "audio") {
+            if (report.packetsLost != null && report.packetsReceived != null) {
+              const total = report.packetsLost + report.packetsReceived;
+              if (total > 0) {
+                totalLoss += (report.packetsLost / total) * 100;
+                lossCount++;
+              }
+            }
+            if (report.jitter != null) {
+              totalJitter += report.jitter * 1000; // to ms
+              jitterCount++;
+            }
+          }
+        });
+      } catch {
+        // peer may have closed
+      }
+    }
+
+    cachedStats = {
+      roundTripTime: rttCount > 0 ? totalRtt / rttCount : null,
+      packetLoss: lossCount > 0 ? totalLoss / lossCount : null,
+      jitter: jitterCount > 0 ? totalJitter / jitterCount : null,
+    };
+  }, 3000);
+}
+
+function stopStatsCollection() {
+  if (statsInterval) {
+    clearInterval(statsInterval);
+    statsInterval = null;
+  }
+  cachedStats = { roundTripTime: null, packetLoss: null, jitter: null };
+}
+
+// ICE reconnection timers per peer
+const iceReconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 // Signaling queue — serializes WebRTC signaling operations per peer to prevent races
 const signalingQueues: Map<string, Promise<void>> = new Map();
@@ -530,9 +597,38 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
 
   pc.oniceconnectionstatechange = () => {
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
-    if (pc.iceConnectionState === "failed") {
+    const voiceState = useVoiceStore.getState();
+
+    if (pc.iceConnectionState === "disconnected") {
+      voiceState.setConnectionState("reconnecting");
+      // Give 5s to recover before forcing ICE restart
+      const timer = setTimeout(() => {
+        if (pc.iceConnectionState === "disconnected") {
+          console.warn(`ICE still disconnected for ${peerId}, restarting...`);
+          restartIceForPeer(peerId, pc);
+        }
+        iceReconnectTimers.delete(peerId);
+      }, 5000);
+      iceReconnectTimers.set(peerId, timer);
+    } else if (pc.iceConnectionState === "failed") {
       console.warn(`ICE failed for ${peerId}, attempting restart...`);
+      voiceState.setConnectionState("reconnecting");
+      useToastStore.getState().addToast("Connection issue detected. Reconnecting...", "error");
       restartIceForPeer(peerId, pc);
+    } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      // Clear reconnect timer
+      const timer = iceReconnectTimers.get(peerId);
+      if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
+      // Check if ALL peers are connected
+      let allConnected = true;
+      for (const [, p] of peers) {
+        const s = p.iceConnectionState;
+        if (s !== "connected" && s !== "completed" && s !== "closed") {
+          allConnected = false;
+          break;
+        }
+      }
+      if (allConnected) voiceState.setConnectionState("connected");
     }
   };
 
@@ -566,31 +662,43 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         });
       addAnalyser(peerId, stream);
     } else if (track.kind === "video") {
-      const trackTypes = pendingTrackTypes.get(peerId);
-      let trackType = trackTypes?.shift();
-      if (!trackTypes?.length) pendingTrackTypes.delete(peerId);
+      const applyVideoTrack = () => {
+        const trackTypes = pendingTrackTypes.get(peerId);
+        let trackType = trackTypes?.shift();
+        if (!trackTypes?.length) pendingTrackTypes.delete(peerId);
 
-      // Fallback disambiguation if track-info was lost or raced
-      if (!trackType) {
-        const store = useVoiceStore.getState();
-        if (store.watchingUserId === peerId && !screenVideoStreams.has(peerId)) {
-          trackType = "screen";
-          console.warn(`track-info race: inferring screen track from ${peerId} (watching)`);
-        } else if (store.activeSharers.has(peerId) && !screenVideoStreams.has(peerId) && cameraVideoStreams.has(peerId)) {
-          trackType = "screen";
-          console.warn(`track-info race: inferring screen track from ${peerId} (sharer + has camera)`);
-        } else {
-          trackType = "camera";
-          console.warn(`track-info race: defaulting to camera track from ${peerId}`);
+        // Fallback disambiguation if track-info was lost or raced
+        if (!trackType) {
+          const store = useVoiceStore.getState();
+          if (store.watchingUserId === peerId && !screenVideoStreams.has(peerId)) {
+            trackType = "screen";
+            console.warn(`track-info race: inferring screen track from ${peerId} (watching)`);
+          } else if (store.activeSharers.has(peerId) && !screenVideoStreams.has(peerId) && cameraVideoStreams.has(peerId)) {
+            trackType = "screen";
+            console.warn(`track-info race: inferring screen track from ${peerId} (sharer + has camera)`);
+          } else {
+            trackType = "camera";
+            console.warn(`track-info race: defaulting to camera track from ${peerId}`);
+          }
         }
-      }
 
-      if (trackType === "screen") {
-        screenVideoStreams.set(peerId, stream);
-        useVoiceStore.getState().bumpScreenStreamVersion();
+        if (trackType === "screen") {
+          screenVideoStreams.set(peerId, stream);
+          useVoiceStore.getState().bumpScreenStreamVersion();
+        } else {
+          cameraVideoStreams.set(peerId, stream);
+          useVoiceStore.getState().bumpCameraStreamVersion();
+        }
+      };
+
+      // If track-info already arrived, process immediately
+      const trackTypes = pendingTrackTypes.get(peerId);
+      if (trackTypes && trackTypes.length > 0) {
+        applyVideoTrack();
       } else {
-        cameraVideoStreams.set(peerId, stream);
-        useVoiceStore.getState().bumpCameraStreamVersion();
+        // Brief delay to allow in-flight track-info signal to arrive via SignalR
+        // before falling back to heuristics
+        setTimeout(applyVideoTrack, 150);
       }
     }
   };
@@ -637,7 +745,13 @@ function cleanupAll() {
   screenTrackSenders.clear();
   cameraTrackSenders.clear();
   signalingQueues.clear();
-  useVoiceStore.getState().setNeedsAudioUnlock(false);
+  // Clear ICE reconnect timers
+  iceReconnectTimers.forEach((t) => clearTimeout(t));
+  iceReconnectTimers.clear();
+  stopStatsCollection();
+  const vs = useVoiceStore.getState();
+  vs.setConnectionState("connected");
+  vs.setNeedsAudioUnlock(false);
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
@@ -705,73 +819,84 @@ async function startScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
   if (!voiceState.currentChannelId) return;
 
+  voiceState.setScreenShareLoading(true);
   try {
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,
     });
-  } catch (err) {
+
+    const videoTrack = screenStream.getVideoTracks()[0];
+
+    // Handle browser "Stop sharing" button
+    videoTrack.onended = () => {
+      stopScreenShareInternal();
+    };
+
+    // Do NOT add track to any peer connections — viewers opt-in via RequestWatchStream
+    voiceState.setScreenSharing(true);
+    const conn = getConnection();
+    await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, true);
+  } catch (err: any) {
     console.error("Could not get display media:", err);
-    return;
+    // Don't toast for user cancel (NotAllowedError)
+    if (err?.name !== "NotAllowedError") {
+      useToastStore.getState().addToast("Could not start screen share.", "error");
+    }
+  } finally {
+    voiceState.setScreenShareLoading(false);
   }
-
-  const videoTrack = screenStream.getVideoTracks()[0];
-
-  // Handle browser "Stop sharing" button
-  videoTrack.onended = () => {
-    stopScreenShareInternal();
-  };
-
-  // Do NOT add track to any peer connections — viewers opt-in via RequestWatchStream
-  voiceState.setScreenSharing(true);
-  const conn = getConnection();
-  await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, true);
 }
 
 async function stopScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
-  const conn = getConnection();
+  voiceState.setScreenShareLoading(true);
+  try {
+    const conn = getConnection();
 
-  // Remove all screen tracks from all viewers we're sending to and renegotiate
-  const shareEntries = Array.from(screenTrackSenders.entries());
-  await Promise.all(
-    shareEntries.map(([viewerId, senders]) =>
-      enqueueSignaling(viewerId, async () => {
-        const pc = peers.get(viewerId);
-        if (!pc) return;
-        senders.forEach((sender) => pc.removeTrack(sender));
+    // Remove all screen tracks from all viewers we're sending to and renegotiate
+    const shareEntries = Array.from(screenTrackSenders.entries());
+    await Promise.all(
+      shareEntries.map(([viewerId, senders]) =>
+        enqueueSignaling(viewerId, async () => {
+          const pc = peers.get(viewerId);
+          if (!pc) return;
+          senders.forEach((sender) => pc.removeTrack(sender));
 
-        if (
-          pc.signalingState === "stable" &&
-          pc.iceConnectionState !== "failed"
-        ) {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          await conn.invoke(
-            "SendSignal",
-            viewerId,
-            JSON.stringify({ type: "offer", sdp: offer.sdp }),
-          );
-        } else {
-          console.warn(
-            `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
-          );
-        }
-      }),
-    ),
-  );
-  screenTrackSenders.clear();
+          if (
+            pc.signalingState === "stable" &&
+            pc.iceConnectionState !== "failed"
+          ) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await conn.invoke(
+              "SendSignal",
+              viewerId,
+              JSON.stringify({ type: "offer", sdp: offer.sdp }),
+            );
+          } else {
+            console.warn(
+              `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
+            );
+          }
+        }),
+      ),
+    );
+    screenTrackSenders.clear();
 
-  // Stop screen tracks
-  if (screenStream) {
-    screenStream.getTracks().forEach((track) => track.stop());
-    screenStream = null;
-  }
+    // Stop screen tracks
+    if (screenStream) {
+      screenStream.getTracks().forEach((track) => track.stop());
+      screenStream = null;
+    }
 
-  voiceState.setScreenSharing(false);
+    voiceState.setScreenSharing(false);
 
-  if (voiceState.currentChannelId) {
-    await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, false);
+    if (voiceState.currentChannelId) {
+      await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, false);
+    }
+  } finally {
+    voiceState.setScreenShareLoading(false);
   }
 }
 
@@ -780,6 +905,7 @@ async function startCameraInternal() {
   const voiceState = useVoiceStore.getState();
   if (!voiceState.currentChannelId) return;
 
+  voiceState.setCameraLoading(true);
   try {
     const videoConstraints: MediaTrackConstraints = {
       width: { ideal: 640 },
@@ -792,61 +918,68 @@ async function startCameraInternal() {
       video: videoConstraints,
       audio: false,
     });
+
+    const videoTrack = cameraStream.getVideoTracks()[0];
+    videoTrack.onended = () => {
+      stopCameraInternal();
+    };
+
+    // Add camera track to all existing peers (eager)
+    const conn = getConnection();
+    for (const [peerId, pc] of peers) {
+      await addCameraTrackToPeer(peerId, pc, conn);
+    }
+
+    voiceState.setCameraOn(true);
+    await conn.invoke("NotifyCamera", voiceState.currentChannelId, true);
   } catch (err) {
     console.error("Could not get camera:", err);
-    return;
+    useToastStore.getState().addToast("Could not access camera. Check permissions.", "error");
+  } finally {
+    voiceState.setCameraLoading(false);
   }
-
-  const videoTrack = cameraStream.getVideoTracks()[0];
-  videoTrack.onended = () => {
-    stopCameraInternal();
-  };
-
-  // Add camera track to all existing peers (eager)
-  const conn = getConnection();
-  for (const [peerId, pc] of peers) {
-    await addCameraTrackToPeer(peerId, pc, conn);
-  }
-
-  voiceState.setCameraOn(true);
-  await conn.invoke("NotifyCamera", voiceState.currentChannelId, true);
 }
 
 async function stopCameraInternal() {
   const voiceState = useVoiceStore.getState();
-  const conn = getConnection();
+  voiceState.setCameraLoading(true);
+  try {
+    const conn = getConnection();
 
-  // Remove camera track from all peers and renegotiate
-  const camEntries = Array.from(cameraTrackSenders.entries());
-  await Promise.all(
-    camEntries.map(([peerId, sender]) =>
-      enqueueSignaling(peerId, async () => {
-        const pc = peers.get(peerId);
-        if (!pc) return;
-        pc.removeTrack(sender);
-        if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          await conn.invoke(
-            "SendSignal",
-            peerId,
-            JSON.stringify({ type: "offer", sdp: offer.sdp }),
-          );
-        }
-      }),
-    ),
-  );
-  cameraTrackSenders.clear();
+    // Remove camera track from all peers and renegotiate
+    const camEntries = Array.from(cameraTrackSenders.entries());
+    await Promise.all(
+      camEntries.map(([peerId, sender]) =>
+        enqueueSignaling(peerId, async () => {
+          const pc = peers.get(peerId);
+          if (!pc) return;
+          pc.removeTrack(sender);
+          if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await conn.invoke(
+              "SendSignal",
+              peerId,
+              JSON.stringify({ type: "offer", sdp: offer.sdp }),
+            );
+          }
+        }),
+      ),
+    );
+    cameraTrackSenders.clear();
 
-  if (cameraStream) {
-    cameraStream.getTracks().forEach((track) => track.stop());
-    cameraStream = null;
-  }
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      cameraStream = null;
+    }
 
-  voiceState.setCameraOn(false);
+    voiceState.setCameraOn(false);
 
-  if (voiceState.currentChannelId) {
-    await conn.invoke("NotifyCamera", voiceState.currentChannelId, false);
+    if (voiceState.currentChannelId) {
+      await conn.invoke("NotifyCamera", voiceState.currentChannelId, false);
+    }
+  } finally {
+    voiceState.setCameraLoading(false);
   }
 }
 
@@ -1384,6 +1517,7 @@ export function useWebRTC() {
         await replaceLocalAudioStream(newStream);
       } catch (err) {
         console.error("Failed to switch microphone:", err);
+        useToastStore.getState().addToast("Failed to switch microphone.", "error");
       }
     })();
     return () => {
@@ -1456,60 +1590,73 @@ export function useWebRTC() {
 
   const joinVoice = useCallback(
     async (channelId: string) => {
-      await initializeTurn();
-
-      // Leave current if any
-      if (currentChannelId) {
-        const conn = getConnection();
-        await conn.invoke("LeaveVoiceChannel", currentChannelId);
-        cleanupAll();
-      }
-
+      useVoiceStore.getState().setJoiningVoice(true);
       try {
-        const audioConstraints = await buildAudioConstraintsResolved();
-        const constraints: MediaStreamConstraints = {
-          audio: audioConstraints,
-        };
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        console.log(
-          "Got local audio stream, tracks:",
-          localStream.getAudioTracks().length,
+        await initializeTurn();
+
+        // Reset device resolution flag so each voice session gets a fresh attempt
+        deviceResolutionFailed = false;
+
+        // Leave current if any
+        if (currentChannelId) {
+          const conn = getConnection();
+          await conn.invoke("LeaveVoiceChannel", currentChannelId);
+          cleanupAll();
+        }
+
+        try {
+          const audioConstraints = await buildAudioConstraintsResolved();
+          const constraints: MediaStreamConstraints = {
+            audio: audioConstraints,
+          };
+          localStream = await navigator.mediaDevices.getUserMedia(constraints);
+          console.log(
+            "Got local audio stream, tracks:",
+            localStream.getAudioTracks().length,
+          );
+        } catch (err) {
+          console.error("Could not access microphone:", err);
+          useToastStore.getState().addToast("Could not access microphone. Check permissions.", "error");
+          return;
+        }
+
+        // Apply current mute state to the new stream immediately
+        const voiceState = useVoiceStore.getState();
+        const shouldEnable =
+          !voiceState.isMuted &&
+          (voiceState.voiceMode === "voice-activity" || voiceState.isPttActive);
+        localStream.getAudioTracks().forEach((track) => {
+          track.enabled = shouldEnable;
+        });
+
+        // Set up audio analyser for local user's speaking indicator
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser) {
+          addAnalyser(currentUser.id, localStream);
+        }
+
+        // Start keep-alive to prevent audio suspension in background
+        startAudioKeepAlive();
+
+        voiceState.setConnectionState("connected");
+        setCurrentChannel(channelId);
+        const conn = getConnection();
+        await conn.invoke(
+          "JoinVoiceChannel",
+          channelId,
+          voiceState.isMuted,
+          voiceState.isDeafened,
         );
-      } catch (err) {
-        console.error("Could not access microphone:", err);
-        return;
+
+        // Start collecting connection quality stats
+        startStatsCollection();
+
+        // Initialize voice chat store
+        const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+        useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
+      } finally {
+        useVoiceStore.getState().setJoiningVoice(false);
       }
-
-      // Apply current mute state to the new stream immediately
-      const voiceState = useVoiceStore.getState();
-      const shouldEnable =
-        !voiceState.isMuted &&
-        (voiceState.voiceMode === "voice-activity" || voiceState.isPttActive);
-      localStream.getAudioTracks().forEach((track) => {
-        track.enabled = shouldEnable;
-      });
-
-      // Set up audio analyser for local user's speaking indicator
-      const currentUser = useAuthStore.getState().user;
-      if (currentUser) {
-        addAnalyser(currentUser.id, localStream);
-      }
-
-      // Start keep-alive to prevent audio suspension in background
-      startAudioKeepAlive();
-
-      setCurrentChannel(channelId);
-      const conn = getConnection();
-      await conn.invoke(
-        "JoinVoiceChannel",
-        channelId,
-        voiceState.isMuted,
-        voiceState.isDeafened,
-      );
-
-      // Initialize voice chat store
-      const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
-      useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
     },
     [buildAudioConstraintsResolved, currentChannelId, setCurrentChannel],
   );

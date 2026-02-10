@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { getConnection, useVoiceChatStore, useVoiceStore } from '@abyss/shared';
-import type { Message, Reaction } from '@abyss/shared';
+import { useVoiceChatStore, useVoiceStore } from '@abyss/shared';
 import MessageItem from './MessageItem';
 import MessageInput from './MessageInput';
 
@@ -10,40 +9,12 @@ export default function VoiceChatPanel() {
   const loading = useVoiceChatStore((s) => s.loading);
   const hasMore = useVoiceChatStore((s) => s.hasMore);
   const loadMore = useVoiceChatStore((s) => s.loadMore);
-  const addMessage = useVoiceChatStore((s) => s.addMessage);
-  const updateMessage = useVoiceChatStore((s) => s.updateMessage);
-  const markDeleted = useVoiceChatStore((s) => s.markDeleted);
-  const addReaction = useVoiceChatStore((s) => s.addReaction);
-  const removeReaction = useVoiceChatStore((s) => s.removeReaction);
   const toggleVoiceChat = useVoiceStore((s) => s.toggleVoiceChat);
 
   const [contextMenuMessageId, setContextMenuMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
-
-  // SignalR listeners for voice chat messages
-  useEffect(() => {
-    const conn = getConnection();
-    const onReceive = (message: Message) => addMessage(message);
-    const onEdit = (messageId: string, content: string, editedAt: string) => updateMessage(messageId, content, editedAt);
-    const onDelete = (messageId: string) => markDeleted(messageId);
-    const onReactionAdded = (reaction: Reaction) => addReaction(reaction);
-    const onReactionRemoved = (messageId: string, userId: string, emoji: string) => removeReaction(messageId, userId, emoji);
-
-    conn.on('ReceiveMessage', onReceive);
-    conn.on('MessageEdited', onEdit);
-    conn.on('MessageDeleted', onDelete);
-    conn.on('ReactionAdded', onReactionAdded);
-    conn.on('ReactionRemoved', onReactionRemoved);
-    return () => {
-      conn.off('ReceiveMessage', onReceive);
-      conn.off('MessageEdited', onEdit);
-      conn.off('MessageDeleted', onDelete);
-      conn.off('ReactionAdded', onReactionAdded);
-      conn.off('ReactionRemoved', onReactionRemoved);
-    };
-  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction]);
 
   // Auto-scroll when new messages arrive (if near bottom)
   useEffect(() => {

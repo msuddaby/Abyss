@@ -8,13 +8,14 @@ import { useDmStore } from '../stores/dmStore.js';
 import { useMessageStore } from '../stores/messageStore.js';
 import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
+import { useVoiceChatStore } from '../stores/voiceChatStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
 import { useNotificationSettingsStore } from '../stores/notificationSettingsStore.js';
 import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences } from '../types/index.js';
+import type { Server, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction } from '../types/index.js';
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
@@ -334,6 +335,25 @@ export function useSignalRListeners() {
       conn.on('UserPreferencesChanged', (prefs: UserPreferences) => {
         useUserPreferencesStore.getState().applyToVoiceStore(prefs);
         useUserPreferencesStore.setState({ preferences: prefs });
+      });
+
+      // Voice chat message handlers — dispatches to voiceChatStore
+      // (separate from MessageList's handlers which dispatch to messageStore)
+      const vcStore = useVoiceChatStore.getState;
+      conn.on('ReceiveMessage', (message: Message) => {
+        vcStore().addMessage(message);
+      });
+      conn.on('MessageEdited', (messageId: string, content: string, editedAt: string) => {
+        vcStore().updateMessage(messageId, content, editedAt);
+      });
+      conn.on('MessageDeleted', (messageId: string) => {
+        vcStore().markDeleted(messageId);
+      });
+      conn.on('ReactionAdded', (reaction: Reaction) => {
+        vcStore().addReaction(reaction);
+      });
+      conn.on('ReactionRemoved', (messageId: string, userId: string, emoji: string) => {
+        vcStore().removeReaction(messageId, userId, emoji);
       });
 
       refreshSignalRState(conn);

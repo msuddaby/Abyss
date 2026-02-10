@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore, useAuthStore } from '@abyss/shared';
 import { getScreenVideoStream, getLocalScreenStream, requestWatch, stopWatching } from '../hooks/useWebRTC';
 
@@ -8,6 +8,8 @@ export default function ScreenShareView() {
   const screenStreamVersion = useVoiceStore((s) => s.screenStreamVersion);
   const currentUser = useAuthStore((s) => s.user);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
 
   const isWatching = watchingUserId !== null;
   const isWatchingSelf = watchingUserId === currentUser?.id;
@@ -90,22 +92,28 @@ export default function ScreenShareView() {
             {otherSharers.map(([userId, displayName]) => (
               <button
                 key={userId}
-                className="other-sharer-chip"
+                className={`other-sharer-chip${switchingTo === userId ? ' loading' : ''}`}
+                disabled={switchingTo !== null}
                 onClick={async () => {
-                  // Stop watching current, switch to new
-                  if (!isWatchingSelf) {
-                    await stopWatching();
-                  } else {
-                    useVoiceStore.getState().setWatching(null);
-                  }
-                  if (userId === currentUser?.id) {
-                    useVoiceStore.getState().setWatching(userId);
-                  } else {
-                    await requestWatch(userId);
+                  setSwitchingTo(userId);
+                  try {
+                    // Stop watching current, switch to new
+                    if (!isWatchingSelf) {
+                      await stopWatching();
+                    } else {
+                      useVoiceStore.getState().setWatching(null);
+                    }
+                    if (userId === currentUser?.id) {
+                      useVoiceStore.getState().setWatching(userId);
+                    } else {
+                      await requestWatch(userId);
+                    }
+                  } finally {
+                    setSwitchingTo(null);
                   }
                 }}
               >
-                🖥️ {displayName}
+                {switchingTo === userId ? '⏳' : '🖥️'} {displayName}
               </button>
             ))}
           </div>

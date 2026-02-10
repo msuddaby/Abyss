@@ -490,14 +490,10 @@ public class ServersController : ControllerBase
 
         await _systemMessages.SendMemberJoinLeaveAsync(serverId, UserId, joined: false);
 
-        List<string> userConnections;
-        lock (ChatHub._lock)
-        {
-            userConnections = ChatHub._connections
-                .Where(c => c.Value == UserId)
-                .Select(c => c.Key)
-                .ToList();
-        }
+        var userConnections = ChatHub._connections
+            .Where(c => c.Value == UserId)
+            .Select(c => c.Key)
+            .ToList();
         foreach (var connectionId in userConnections)
         {
             await _hub.Groups.RemoveFromGroupAsync(connectionId, $"server:{serverId}");

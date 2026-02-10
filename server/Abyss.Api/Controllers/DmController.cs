@@ -101,14 +101,10 @@ public class DmController : ControllerBase
         await _db.SaveChangesAsync();
 
         // Add both users' connections to the channel group
-        List<string> connectionIds;
-        lock (ChatHub._lock)
-        {
-            connectionIds = ChatHub._connections
-                .Where(c => c.Value == UserId || c.Value == userId)
-                .Select(c => c.Key)
-                .ToList();
-        }
+        var connectionIds = ChatHub._connections
+            .Where(c => c.Value == UserId || c.Value == userId)
+            .Select(c => c.Key)
+            .ToList();
         foreach (var connId in connectionIds)
         {
             await _hub.Groups.AddToGroupAsync(connId, $"channel:{channel.Id}");

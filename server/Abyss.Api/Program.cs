@@ -1,6 +1,11 @@
+using System.Threading.RateLimiting;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Abyss.Api.Data;
@@ -38,7 +43,8 @@ var pgDb = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "abyss";
 var pgUser = Environment.GetEnvironmentVariable("POSTGRES_USER") ?? "abyss";
 var pgPass = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD")
     ?? throw new InvalidOperationException("POSTGRES_PASSWORD is not configured. Check your .env file.");
-var connectionString = $"Host={pgHost};Port={pgPort};Database={pgDb};Username={pgUser};Password={pgPass}";
+var connectionString = $"Host={pgHost};Port={pgPort};Database={pgDb};Username={pgUser};Password={pgPass};" +
+    "Maximum Pool Size=100;Minimum Pool Size=10;Connection Idle Lifetime=300;Connection Pruning Interval=10";
 builder.Services.AddDbContext<AppDbContext>(opt =>
     opt.UseNpgsql(connectionString));
 
@@ -106,6 +112,49 @@ builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
 
+// Rate Limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddFixedWindowLimiter("api", opt =>
+    {
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.PermitLimit = 100;
+        opt.QueueLimit = 0;
+    });
+
+    options.AddFixedWindowLimiter("auth", opt =>
+    {
+        opt.Window = TimeSpan.FromMinutes(15);
+        opt.PermitLimit = 10;
+        opt.QueueLimit = 0;
+    });
+
+    options.AddFixedWindowLimiter("upload", opt =>
+    {
+        opt.Window = TimeSpan.FromMinutes(1);
+        opt.PermitLimit = 20;
+        opt.QueueLimit = 0;
+    });
+});
+
+// Request size limits
+builder.Services.Configure<KestrelServerOptions>(options =>
+{
+    options.Limits.MaxRequestBodySize = 52_428_800; // 50MB
+});
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 52_428_800; // 50MB
+});
+
+// Voice state cleanup
+builder.Services.AddHostedService<VoiceStateCleanupService>();
+
+// Audit log cleanup
+builder.Services.AddHostedService<AuditLogCleanupService>();
+
 // HTTP Client for push notifications
 builder.Services.AddHttpClient();
 
@@ -158,13 +207,38 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 }
 
+// Exception handler for production (prevents stack trace leaking)
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/error");
+}
+
 app.UseCors();
+app.UseRateLimiter();
+
+// Security headers
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    await next();
+});
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseStaticFiles();
 
-app.MapControllers();
+app.MapControllers().RequireRateLimiting("api");
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapGet("/health", () => Results.Ok());
+
+app.Map("/error", (HttpContext context) =>
+{
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+    var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    logger.LogError(exception, "Unhandled exception");
+    return Results.Problem(title: "An error occurred", statusCode: 500);
+});
 
 app.Run();

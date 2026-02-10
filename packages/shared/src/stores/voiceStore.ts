@@ -60,12 +60,27 @@ interface VoiceState {
   setInputSensitivity: (value: number) => void;
   setLocalInputLevel: (value: number) => void;
   setNeedsAudioUnlock: (value: boolean) => void;
+  isCameraLoading: boolean;
+  isScreenShareLoading: boolean;
+  isJoiningVoice: boolean;
+  connectionState: 'connected' | 'reconnecting' | 'disconnected';
+  setCameraLoading: (loading: boolean) => void;
+  setScreenShareLoading: (loading: boolean) => void;
+  setJoiningVoice: (joining: boolean) => void;
+  setConnectionState: (state: 'connected' | 'reconnecting' | 'disconnected') => void;
   speakerOn: boolean;
   toggleSpeaker: () => void;
   setSpeaking: (userId: string, speaking: boolean) => void;
   isVoiceChatOpen: boolean;
   toggleVoiceChat: () => void;
   setVoiceChatOpen: (open: boolean) => void;
+  // Keybinds (stored as "mod+shift+m" format)
+  keybindToggleMute: string;
+  keybindToggleDeafen: string;
+  keybindDisconnect: string;
+  setKeybindToggleMute: (bind: string) => void;
+  setKeybindToggleDeafen: (bind: string) => void;
+  setKeybindDisconnect: (bind: string) => void;
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -255,6 +270,14 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set({ localInputLevel: next });
   },
   setNeedsAudioUnlock: (value) => set({ needsAudioUnlock: value }),
+  isCameraLoading: false,
+  isScreenShareLoading: false,
+  isJoiningVoice: false,
+  connectionState: 'connected' as const,
+  setCameraLoading: (loading) => set({ isCameraLoading: loading }),
+  setScreenShareLoading: (loading) => set({ isScreenShareLoading: loading }),
+  setJoiningVoice: (joining) => set({ isJoiningVoice: joining }),
+  setConnectionState: (state) => set({ connectionState: state }),
   toggleSpeaker: () => set((s) => {
     const next = !s.speakerOn;
     getStorage().setItem('speakerOn', String(next));
@@ -272,6 +295,21 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   isVoiceChatOpen: false,
   toggleVoiceChat: () => set((s) => ({ isVoiceChatOpen: !s.isVoiceChatOpen })),
   setVoiceChatOpen: (open) => set({ isVoiceChatOpen: open }),
+  keybindToggleMute: 'mod+shift+m',
+  keybindToggleDeafen: 'mod+shift+d',
+  keybindDisconnect: 'mod+shift+e',
+  setKeybindToggleMute: (bind) => {
+    getStorage().setItem('keybindToggleMute', bind);
+    set({ keybindToggleMute: bind });
+  },
+  setKeybindToggleDeafen: (bind) => {
+    getStorage().setItem('keybindToggleDeafen', bind);
+    set({ keybindToggleDeafen: bind });
+  },
+  setKeybindDisconnect: (bind) => {
+    getStorage().setItem('keybindDisconnect', bind);
+    set({ keybindDisconnect: bind });
+  },
 }));
 
 /**
@@ -297,5 +335,8 @@ export function hydrateVoiceStore() {
     echoCancellation: boolOr('echoCancellation', true),
     autoGainControl: boolOr('autoGainControl', true),
     inputSensitivity: Number(s.getItem('inputSensitivity')) || 1,
+    keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',
+    keybindToggleDeafen: s.getItem('keybindToggleDeafen') || 'mod+shift+d',
+    keybindDisconnect: s.getItem('keybindDisconnect') || 'mod+shift+e',
   });
 }
