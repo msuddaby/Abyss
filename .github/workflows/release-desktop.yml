@@ -24,6 +24,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Sync version from git tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          echo "Setting version to $VERSION"
+          cd packages/desktop
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Install workspace dependencies
         run: npm ci
 

@@ -1,3 +1,4 @@
 provider: github
 owner: msuddaby
 repo: Abyss
+updaterCacheDirName: abyss-desktop-updater
