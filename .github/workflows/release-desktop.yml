@@ -25,6 +25,7 @@ jobs:
           cache: 'npm'
 
       - name: Sync version from git tag
+        shell: bash
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           echo "Setting version to $VERSION"
