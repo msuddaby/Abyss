@@ -14,6 +14,18 @@ let reconnectingSince: number | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let pingInFlight = false;
+let reconnectCallbacks: (() => void)[] = [];
+
+export function onReconnected(cb: () => void): () => void {
+  reconnectCallbacks.push(cb);
+  return () => {
+    reconnectCallbacks = reconnectCallbacks.filter((c) => c !== cb);
+  };
+}
+
+function fireReconnectCallbacks() {
+  for (const cb of reconnectCallbacks) cb();
+}
 
 function setStatus(status: SignalRStatus, lastError?: string | null) {
   useSignalRStore.getState().setStatus(status, lastError ?? null);
@@ -41,6 +53,7 @@ export function getConnection(): signalR.HubConnection {
     reconnectingSince = null;
     reconnectAttempts = 0;
     setStatus("connected");
+    fireReconnectCallbacks();
   });
 
   connection.onclose(() => {
@@ -110,6 +123,7 @@ async function restartConnection(reason: string): Promise<void> {
   }
   try {
     await startConnection();
+    fireReconnectCallbacks();
   } catch (err) {
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
