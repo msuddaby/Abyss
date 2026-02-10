@@ -1,7 +1,8 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 import log from 'electron-log';
 import { showNotification } from './notifications';
+import * as https from 'https';
 
 export type UpdateStatus =
   | 'idle'
@@ -17,6 +18,7 @@ export interface UpdateState {
   version?: string;
   progress?: number;
   error?: string;
+  manualDownloadUrl?: string;
 }
 
 export class UpdateManager {
@@ -24,17 +26,27 @@ export class UpdateManager {
   private updateState: UpdateState = { status: 'idle' };
   private checkInterval?: NodeJS.Timeout;
   private startupCheckTimeout?: NodeJS.Timeout;
+  private readonly canAutoUpdate: boolean;
+
+  private static readonly GITHUB_REPO = 'msuddaby/Abyss';
 
   constructor(window: BrowserWindow) {
     this.window = window;
 
-    // Configure electron-updater
-    autoUpdater.logger = log;
-    autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    // electron-updater only supports AppImage on Linux
+    this.canAutoUpdate = !(process.platform === 'linux' && !process.env.APPIMAGE);
 
-    // Set up event handlers
-    this.setupEventHandlers();
+    if (this.canAutoUpdate) {
+      // Configure electron-updater
+      autoUpdater.logger = log;
+      autoUpdater.autoDownload = false;
+      autoUpdater.autoInstallOnAppQuit = true;
+
+      // Set up event handlers
+      this.setupEventHandlers();
+    } else {
+      log.info('Auto-update not supported on this platform (non-AppImage Linux). Using GitHub release checks.');
+    }
 
     // Schedule periodic checks: startup (5min delay) + every 6 hours
     this.schedulePeriodicChecks();
@@ -142,7 +154,13 @@ export class UpdateManager {
         log.info('Manual update check triggered by user');
         this.sendLog('Manual update check triggered');
       }
-      await autoUpdater.checkForUpdates();
+
+      if (this.canAutoUpdate) {
+        await autoUpdater.checkForUpdates();
+      } else {
+        await this.checkGitHubRelease();
+      }
+
       return this.updateState;
     } catch (error) {
       log.error('Failed to check for updates:', error);
@@ -155,11 +173,82 @@ export class UpdateManager {
   }
 
   /**
+   * Check GitHub releases API for a newer version (fallback for non-AppImage Linux)
+   */
+  private checkGitHubRelease(): Promise<void> {
+    this.updateStatus({ status: 'checking' });
+
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.github.com',
+        path: `/repos/${UpdateManager.GITHUB_REPO}/releases/latest`,
+        headers: { 'User-Agent': `Abyss-Desktop/${app.getVersion()}` },
+      };
+
+      https.get(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          try {
+            if (res.statusCode === 404) {
+              this.updateStatus({ status: 'not-available', version: app.getVersion() });
+              resolve();
+              return;
+            }
+            if (res.statusCode !== 200) {
+              reject(new Error(`GitHub API returned ${res.statusCode}`));
+              return;
+            }
+            const release = JSON.parse(data);
+            const latestVersion = (release.tag_name as string).replace(/^v/, '');
+            const currentVersion = app.getVersion();
+
+            if (this.isNewerVersion(latestVersion, currentVersion)) {
+              log.info(`Update available via GitHub: ${latestVersion}`);
+              this.updateStatus({
+                status: 'available',
+                version: latestVersion,
+                manualDownloadUrl: release.html_url,
+              });
+            } else {
+              this.updateStatus({ status: 'not-available', version: currentVersion });
+            }
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      }).on('error', reject);
+    });
+  }
+
+  /**
+   * Compare semver strings: returns true if latest > current
+   */
+  private isNewerVersion(latest: string, current: string): boolean {
+    const l = latest.split('.').map(Number);
+    const c = current.split('.').map(Number);
+    for (let i = 0; i < Math.max(l.length, c.length); i++) {
+      const lv = l[i] ?? 0;
+      const cv = c[i] ?? 0;
+      if (lv > cv) return true;
+      if (lv < cv) return false;
+    }
+    return false;
+  }
+
+  /**
    * Download available update
    */
   async downloadUpdate(): Promise<void> {
     if (this.updateState.status !== 'available') {
       throw new Error('No update available to download');
+    }
+
+    // Non-AppImage Linux: open releases page in browser
+    if (!this.canAutoUpdate && this.updateState.manualDownloadUrl) {
+      shell.openExternal(this.updateState.manualDownloadUrl);
+      return;
     }
 
     try {

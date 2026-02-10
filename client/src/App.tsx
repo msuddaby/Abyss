@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -30,8 +30,10 @@ function App() {
     initialize();
   }, [initialize]);
 
+  const Router = window.electron ? HashRouter : BrowserRouter;
+
   return (
-    <BrowserRouter>
+    <Router>
       <ToastHost />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
@@ -45,7 +47,7 @@ function App() {
           }
         />
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
 }
 

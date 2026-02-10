@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, nativeImage } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, shell } from 'electron';
 import * as path from 'path';
 import { UpdateManager } from './update-manager';
 
@@ -80,7 +80,11 @@ function updateTrayMenu(window: BrowserWindow) {
           label: `Update available (v${updateInfo.version})`,
           click: async () => {
             try {
-              await manager.downloadUpdate();
+              if (updateInfo.manualDownloadUrl) {
+                shell.openExternal(updateInfo.manualDownloadUrl);
+              } else {
+                await manager.downloadUpdate();
+              }
             } catch (error) {
               console.error('Failed to download update:', error);
             }

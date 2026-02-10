@@ -1,5 +1,6 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+const { MakerAppImage } = require('@reforged/maker-appimage');
 
 module.exports = {
   packagerConfig: {
@@ -47,7 +48,7 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-zip',
-      platforms: ['darwin', 'linux'],
+      platforms: ['darwin'],
     },
     {
       name: '@electron-forge/maker-dmg',
@@ -56,20 +57,15 @@ module.exports = {
         name: 'Abyss'
       }
     },
-    {
-      name: '@electron-forge/maker-deb',
-      config: {
-        options: {
-          name: 'abyss-desktop',
-          productName: 'Abyss',
-          genericName: 'Voice Chat'
-        }
-      },
-    },
-    {
-      name: '@electron-forge/maker-rpm',
-      config: {},
-    },
+    new MakerAppImage({
+      options: {
+        name: 'Abyss',
+        bin: 'abyss-desktop',
+        icon: './resources/icon.png',
+        genericName: 'Voice Chat',
+        categories: ['Network', 'Chat'],
+      }
+    }),
   ],
   plugins: [
     {

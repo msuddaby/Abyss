@@ -87,7 +87,11 @@ jobs:
           cd packages/desktop
           npm run make
 
-      # Linux build
+      # Linux build (AppImage requires squashfs-tools)
+      - name: Install Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+
       - name: Build and package (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -126,9 +130,7 @@ jobs:
         with:
           name: linux-artifacts
           path: |
-            packages/desktop/out/make/**/*.deb
-            packages/desktop/out/make/**/*.rpm
-            packages/desktop/out/make/**/*.zip
+            packages/desktop/out/make/**/*.AppImage
             packages/desktop/out/make/**/latest-linux.yml
 
   create-release:
@@ -169,9 +171,9 @@ jobs:
             - Auto-updates will work after first install
 
             **Linux:**
-            - Debian/Ubuntu: Download `.deb` and run `sudo dpkg -i abyss-desktop_*.deb`
-            - Fedora/RHEL: Download `.rpm` and run `sudo rpm -i abyss-desktop-*.rpm`
-            - Arch Linux: Install `abyss-desktop-bin` from the AUR
+            - Download the `.AppImage` file
+            - Make executable: `chmod +x Abyss-*.AppImage`
+            - Run it directly — auto-updates are built in
 
             ### What's New
 

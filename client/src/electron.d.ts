@@ -12,6 +12,7 @@ interface UpdateInfo {
   version?: string;
   progress?: number;
   error?: string;
+  manualDownloadUrl?: string;
 }
 
 interface ElectronUpdates {

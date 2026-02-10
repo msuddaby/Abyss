@@ -7,6 +7,7 @@ interface UpdateState {
   version?: string;
   progress?: number;
   error?: string;
+  manualDownloadUrl?: string;
 }
 
 export default function UpdateBanner() {
@@ -71,7 +72,9 @@ export default function UpdateBanner() {
         {state.status === 'available' && (
           <>
             <span>Update v{state.version} available</span>
-            <button className="update-action-btn" onClick={handleDownload}>Download</button>
+            <button className="update-action-btn" onClick={handleDownload}>
+              {state.manualDownloadUrl ? 'View Download' : 'Download'}
+            </button>
           </>
         )}
         {state.status === 'downloading' && (
