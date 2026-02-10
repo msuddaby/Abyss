@@ -79,6 +79,15 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('close-window');
   },
 
+  // Update log forwarding from main process
+  onUpdateLog: (callback: (msg: string) => void) => {
+    const subscription = (_event: any, msg: string) => callback(msg);
+    ipcRenderer.on('update-log', subscription);
+    return () => {
+      ipcRenderer.removeListener('update-log', subscription);
+    };
+  },
+
   // Auto-updater (only available in production builds)
   updates: {
     checkForUpdates: async () => {

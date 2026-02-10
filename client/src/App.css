@@ -5335,3 +5335,107 @@
 .vcv-connect-btn:hover {
   background: var(--bg-accent-hover);
 }
+
+/* Update Banner */
+.update-banner {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  color: var(--text-primary);
+  background: rgba(52, 152, 219, 0.14);
+  border-bottom: 1px solid rgba(52, 152, 219, 0.35);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+}
+
+.update-banner.available,
+.update-banner.downloaded {
+  background: rgba(46, 204, 113, 0.14);
+  border-bottom: 1px solid rgba(46, 204, 113, 0.35);
+}
+
+.update-banner.downloading {
+  background: rgba(52, 152, 219, 0.14);
+  border-bottom: 1px solid rgba(52, 152, 219, 0.35);
+}
+
+.update-banner.error {
+  background: rgba(231, 76, 60, 0.18);
+  border-bottom: 1px solid rgba(231, 76, 60, 0.45);
+}
+
+.update-banner.not-available {
+  background: rgba(149, 165, 166, 0.12);
+  border-bottom: 1px solid rgba(149, 165, 166, 0.3);
+}
+
+.update-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+}
+
+.update-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: update-spin 0.8s linear infinite;
+}
+
+@keyframes update-spin {
+  to { transform: rotate(360deg); }
+}
+
+.update-action-btn {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: var(--text-primary);
+  padding: 2px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.update-action-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.update-dismiss-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  margin-left: 4px;
+}
+
+.update-dismiss-btn:hover {
+  color: var(--text-primary);
+}
+
+.update-progress-bar {
+  width: 120px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.update-progress-fill {
+  height: 100%;
+  background: rgba(52, 152, 219, 0.8);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}

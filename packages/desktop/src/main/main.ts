@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
@@ -47,6 +47,23 @@ function createWindow() {
 
   mainWindow.on('resize', saveBounds);
   mainWindow.on('move', saveBounds);
+
+  // Open external links in the default browser instead of in-app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Prevent the main window from navigating away from the app
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const appOrigins = ['http://localhost:5173', 'file://'];
+    if (!appOrigins.some((origin) => url.startsWith(origin))) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {

@@ -46,6 +46,9 @@ interface Window {
     toggleMaximize: () => void;
     closeWindow: () => void;
 
+    // Update log forwarding
+    onUpdateLog: (callback: (msg: string) => void) => () => void;
+
     // Auto-updater (only available in production builds)
     updates: ElectronUpdates;
   };

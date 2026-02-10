@@ -79,7 +79,7 @@ export function setupIpcHandlers(
   // Update handlers (only available in production)
   if (updateManager) {
     ipcMain.handle('check-for-updates', async () => {
-      return await updateManager.checkForUpdates();
+      return await updateManager.checkForUpdates(true);
     });
 
     ipcMain.handle('get-update-info', () => {

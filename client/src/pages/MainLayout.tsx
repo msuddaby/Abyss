@@ -8,6 +8,7 @@ import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
 import PinnedMessagesModal from '../components/PinnedMessagesModal';
+import UpdateBanner from '../components/UpdateBanner';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 
@@ -51,6 +52,7 @@ export default function MainLayout() {
             <span>{signalRMessage}</span>
           </div>
         )}
+        {window.electron && <UpdateBanner />}
         {isDmMode && activeDmChannel ? (
           <>
             <div className="channel-header">

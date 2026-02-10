@@ -106,7 +106,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Check for Updates',
           click: async () => {
             try {
-              await manager.checkForUpdates();
+              await manager.checkForUpdates(true);
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }
@@ -122,7 +122,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Try again',
           click: async () => {
             try {
-              await manager.checkForUpdates();
+              await manager.checkForUpdates(true);
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }
@@ -134,7 +134,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Check for Updates',
           click: async () => {
             try {
-              await manager.checkForUpdates();
+              await manager.checkForUpdates(true);
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }

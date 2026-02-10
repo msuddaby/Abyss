@@ -103,8 +103,17 @@ export class UpdateManager {
     });
   }
 
+  private sendLog(msg: string) {
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.webContents.send('update-log', msg);
+    }
+  }
+
   private updateStatus(state: Partial<UpdateState>) {
     this.updateState = { ...this.updateState, ...state };
+
+    // Forward status transition as log to renderer
+    this.sendLog(`Status: ${this.updateState.status}${this.updateState.version ? ` (v${this.updateState.version})` : ''}`);
 
     // Send update to renderer process
     if (this.window && !this.window.isDestroyed()) {
@@ -127,8 +136,12 @@ export class UpdateManager {
   /**
    * Manually check for updates
    */
-  async checkForUpdates(): Promise<UpdateState> {
+  async checkForUpdates(manual = false): Promise<UpdateState> {
     try {
+      if (manual) {
+        log.info('Manual update check triggered by user');
+        this.sendLog('Manual update check triggered');
+      }
       await autoUpdater.checkForUpdates();
       return this.updateState;
     } catch (error) {
