@@ -24,6 +24,7 @@ export function onReconnected(cb: () => void): () => void {
 }
 
 function fireReconnectCallbacks() {
+  console.log('[SignalR] fireReconnectCallbacks, count:', reconnectCallbacks.length);
   for (const cb of reconnectCallbacks) cb();
 }
 
@@ -44,19 +45,22 @@ export function getConnection(): signalR.HubConnection {
   connection.keepAliveIntervalInMilliseconds = 15000;
   connection.serverTimeoutInMilliseconds = 60000;
 
-  connection.onreconnecting(() => {
+  connection.onreconnecting((err) => {
+    console.log('[SignalR] onreconnecting', err?.message);
     reconnectingSince = Date.now();
     setStatus("reconnecting");
   });
 
-  connection.onreconnected(() => {
+  connection.onreconnected((connectionId) => {
+    console.log('[SignalR] onreconnected, connectionId:', connectionId);
     reconnectingSince = null;
     reconnectAttempts = 0;
     setStatus("connected");
     fireReconnectCallbacks();
   });
 
-  connection.onclose(() => {
+  connection.onclose((err) => {
+    console.log('[SignalR] onclose', err?.message);
     reconnectingSince = null;
     setStatus("disconnected");
     scheduleReconnect("closed");
@@ -123,8 +127,10 @@ async function restartConnection(reason: string): Promise<void> {
   }
   try {
     await startConnection();
+    console.log('[SignalR] restartConnection succeeded, firing callbacks');
     fireReconnectCallbacks();
   } catch (err) {
+    console.log('[SignalR] restartConnection failed:', err);
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
   }

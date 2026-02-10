@@ -55,13 +55,14 @@ export async function rejoinActiveChannel(conn: HubConnection) {
   const { isDmMode, activeDmChannel } = useDmStore.getState();
   const { activeChannel } = useServerStore.getState();
   const channelId = isDmMode ? activeDmChannel?.id : (activeChannel?.type === 'Text' ? activeChannel.id : null);
+  console.log('[SignalR] rejoinActiveChannel', { isDmMode, channelId, connState: conn.state });
   if (!channelId) return;
   try {
     await conn.invoke('JoinChannel', channelId);
-    // Refetch messages to pick up any sent while disconnected
+    console.log('[SignalR] JoinChannel succeeded, fetching messages');
     useMessageStore.getState().fetchMessages(channelId);
   } catch (err) {
-    console.error('Failed to rejoin channel:', err);
+    console.error('[SignalR] Failed to rejoin channel:', err);
   }
 }
 
@@ -309,7 +310,9 @@ export function useSignalRListeners() {
 
   // Re-join channel group after any reconnection (auto-reconnect OR manual fallback)
   useEffect(() => {
+    console.log('[SignalR] registering onReconnected callback');
     return onReconnected(() => {
+      console.log('[SignalR] onReconnected callback fired, calling rejoinActiveChannel');
       const conn = getConnection();
       rejoinActiveChannel(conn);
       refreshSignalRState(conn);

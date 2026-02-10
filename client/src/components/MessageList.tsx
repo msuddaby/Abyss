@@ -50,6 +50,7 @@ export default function MessageList() {
     incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
     const handler = async (message: Message) => {
+      console.log('[SignalR] ReceiveMessage handler fired', message.id);
       addMessage(message);
       const isFromOtherUser =
         message.authorId && message.authorId !== currentUserId;
