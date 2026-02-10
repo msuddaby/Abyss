@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { getConnection, startConnection } from '../services/signalr.js';
+import { useSignalRStore } from '../stores/signalrStore.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
@@ -75,11 +76,6 @@ export function useSignalRListeners() {
   useEffect(() => {
     startConnection().then(() => {
       const conn = getConnection();
-
-      conn.onreconnected(() => {
-        rejoinActiveChannel(conn);
-        refreshSignalRState(conn);
-      });
 
       const events = [
         'UserOnline', 'UserOffline', 'UserIsTyping',
@@ -310,6 +306,25 @@ export function useSignalRListeners() {
 
       refreshSignalRState(conn);
     }).catch(console.error);
+  }, []);
+
+  // Re-join channel group after any reconnection (auto-reconnect OR manual fallback)
+  useEffect(() => {
+    let hasBeenConnected = false;
+    let prevStatus = useSignalRStore.getState().status;
+    const unsub = useSignalRStore.subscribe((state) => {
+      const { status } = state;
+      if (status === 'connected' && prevStatus !== 'connected') {
+        if (hasBeenConnected) {
+          const conn = getConnection();
+          rejoinActiveChannel(conn);
+          refreshSignalRState(conn);
+        }
+        hasBeenConnected = true;
+      }
+      prevStatus = status;
+    });
+    return () => unsub();
   }, []);
 
   // Fetch voice channel users when switching servers + periodic reconciliation
