@@ -60,7 +60,7 @@ function createWindow() {
   } else {
     // Production: load from built client
     const clientPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'client/dist/index.html')
+      ? path.join(process.resourcesPath, 'dist/index.html')
       : path.join(__dirname, '../../../../client/dist/index.html');
 
     mainWindow.loadFile(clientPath);
