@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, systemPreferences } from 'electron';
 import { uIOhook, UiohookKey } from 'uiohook-napi';
 
 /**
@@ -18,42 +18,191 @@ export class GlobalShortcutManager {
 
   constructor(window: BrowserWindow) {
     this.window = window;
+    this.checkAccessibilityPermissions();
+  }
+
+  /**
+   * Check if accessibility permissions are granted (macOS only).
+   * Returns true if permissions are granted or not required (non-macOS).
+   */
+  hasAccessibilityPermissions(): boolean {
+    if (process.platform !== 'darwin') {
+      return true;
+    }
+    return systemPreferences.isTrustedAccessibilityClient(false);
+  }
+
+  /**
+   * Prompt user to grant accessibility permissions (macOS only).
+   * This will show the system dialog asking for permissions.
+   */
+  requestAccessibilityPermissions(): void {
+    if (process.platform === 'darwin') {
+      systemPreferences.isTrustedAccessibilityClient(true);
+    }
+  }
+
+  private checkAccessibilityPermissions(): void {
+    if (process.platform === 'darwin') {
+      const hasAccess = this.hasAccessibilityPermissions();
+      if (!hasAccess) {
+        console.warn('[GlobalShortcuts] Accessibility permissions not granted.');
+        console.warn('[GlobalShortcuts] Call requestAccessibilityPermissions() to prompt user.');
+      }
+    }
 
     uIOhook.on('keydown', (e) => {
-      if (this.targetKeyCode !== null && e.keycode === this.targetKeyCode && !this.isPttActive) {
-        this.isPttActive = true;
-        this.window.webContents.send('global-ptt-press');
+      console.log('[GlobalShortcuts] keydown event:', {
+        keycode: e.keycode,
+        targetKeyCode: this.targetKeyCode,
+        isPttActive: this.isPttActive,
+        platform: process.platform
+      });
+
+      if (this.targetKeyCode !== null && e.keycode === this.targetKeyCode) {
+        // On macOS, force-reset if already active (stuck state protection)
+        if (this.isPttActive && process.platform === 'darwin') {
+          console.warn('[GlobalShortcuts] PTT was stuck active, resetting before new press');
+          this.isPttActive = false;
+          this.window.webContents.send('global-ptt-release');
+        }
+
+        if (!this.isPttActive) {
+          this.isPttActive = true;
+          console.log('[GlobalShortcuts] PTT activated');
+          this.window.webContents.send('global-ptt-press');
+        }
       }
     });
 
     uIOhook.on('keyup', (e) => {
+      console.log('[GlobalShortcuts] keyup event:', {
+        keycode: e.keycode,
+        targetKeyCode: this.targetKeyCode,
+        isPttActive: this.isPttActive,
+        platform: process.platform
+      });
+
       if (this.targetKeyCode !== null && e.keycode === this.targetKeyCode && this.isPttActive) {
         this.isPttActive = false;
+        console.log('[GlobalShortcuts] PTT deactivated');
         this.window.webContents.send('global-ptt-release');
       }
     });
 
+    // Debug: log ALL mouse events (even non-target buttons)
+    if (process.platform === 'darwin') {
+      uIOhook.on('mousedown', (e) => {
+        console.log('[GlobalShortcuts] [DEBUG] Any mousedown:', e.button);
+      });
+      uIOhook.on('mouseup', (e) => {
+        console.log('[GlobalShortcuts] [DEBUG] Any mouseup:', e.button);
+      });
+    }
+
     uIOhook.on('mousedown', (e) => {
       const button = e.button as number;
-      if (this.targetMouseButton !== null && button === this.targetMouseButton && !this.isPttActive) {
-        this.isPttActive = true;
-        this.window.webContents.send('global-ptt-press');
+      console.log('[GlobalShortcuts] ========== MOUSEDOWN ==========');
+      console.log('[GlobalShortcuts] Raw event:', JSON.stringify(e, null, 2));
+      console.log('[GlobalShortcuts] Button:', button);
+      console.log('[GlobalShortcuts] Target button:', this.targetMouseButton);
+      console.log('[GlobalShortcuts] PTT active:', this.isPttActive);
+      console.log('[GlobalShortcuts] Window focused:', this.window.isFocused());
+      console.log('[GlobalShortcuts] ================================');
+
+      if (this.targetMouseButton !== null && button === this.targetMouseButton) {
+        // On macOS, force-reset if already active (stuck state protection)
+        if (this.isPttActive && process.platform === 'darwin') {
+          console.warn('[GlobalShortcuts] PTT was stuck active, resetting before new press');
+          this.isPttActive = false;
+          this.window.webContents.send('global-ptt-release');
+        }
+
+        if (!this.isPttActive) {
+          this.isPttActive = true;
+          console.log('[GlobalShortcuts] ✓ PTT ACTIVATED (mouse)');
+          this.window.webContents.send('global-ptt-press');
+        }
       }
     });
 
     uIOhook.on('mouseup', (e) => {
       const button = e.button as number;
+      console.log('[GlobalShortcuts] ========== MOUSEUP ==========');
+      console.log('[GlobalShortcuts] Raw event:', JSON.stringify(e, null, 2));
+      console.log('[GlobalShortcuts] Button:', button);
+      console.log('[GlobalShortcuts] Target button:', this.targetMouseButton);
+      console.log('[GlobalShortcuts] PTT active:', this.isPttActive);
+      console.log('[GlobalShortcuts] Window focused:', this.window.isFocused());
+      console.log('[GlobalShortcuts] Match:', this.targetMouseButton !== null && button === this.targetMouseButton);
+      console.log('[GlobalShortcuts] ================================');
+
       if (this.targetMouseButton !== null && button === this.targetMouseButton && this.isPttActive) {
         this.isPttActive = false;
+        console.log('[GlobalShortcuts] ✓ PTT DEACTIVATED (mouse)');
         this.window.webContents.send('global-ptt-release');
+      } else if (this.targetMouseButton !== null && button === this.targetMouseButton && !this.isPttActive) {
+        console.warn('[GlobalShortcuts] ⚠️  MOUSEUP received but PTT was not active!');
       }
     });
+
+    // Safety timeout to detect stuck PTT (macOS issue workaround)
+    // If PTT stays active for more than 10 seconds, likely stuck
+    if (process.platform === 'darwin') {
+      let pttActivatedAt = 0;
+
+      uIOhook.on('keydown', () => {
+        if (this.isPttActive) pttActivatedAt = Date.now();
+      });
+
+      uIOhook.on('mousedown', () => {
+        if (this.isPttActive) pttActivatedAt = Date.now();
+      });
+
+      setInterval(() => {
+        if (this.isPttActive && pttActivatedAt > 0) {
+          const elapsed = Date.now() - pttActivatedAt;
+          if (elapsed > 10000) {
+            console.warn('[GlobalShortcuts] PTT stuck for 10+ seconds, force-releasing');
+            this.isPttActive = false;
+            pttActivatedAt = 0;
+            this.window.webContents.send('global-ptt-release');
+          }
+        }
+      }, 1000);
+    }
   }
 
   private ensureStarted(): void {
     if (!this.started) {
-      uIOhook.start();
-      this.started = true;
+      // Check for accessibility permissions on macOS
+      if (process.platform === 'darwin') {
+        const hasAccess = systemPreferences.isTrustedAccessibilityClient(false);
+        const isDev = process.env.NODE_ENV === 'development';
+
+        if (!hasAccess) {
+          console.warn('[GlobalShortcuts] Accessibility permissions not granted.');
+
+          if (isDev) {
+            console.warn('[GlobalShortcuts] Running in dev mode - attempting to start uIOhook anyway...');
+            console.warn('[GlobalShortcuts] If PTT does not work, you may need to grant permissions to:');
+            console.warn('[GlobalShortcuts]   - Electron.app in node_modules/electron/dist/');
+            console.warn('[GlobalShortcuts]   - Or use: npm run package to create a dev build');
+          } else {
+            console.warn('[GlobalShortcuts] Please grant accessibility permissions in System Settings.');
+            return;
+          }
+        }
+      }
+
+      try {
+        uIOhook.start();
+        this.started = true;
+        console.log('[GlobalShortcuts] uIOhook started successfully');
+      } catch (error) {
+        console.error('[GlobalShortcuts] Failed to start uIOhook:', error);
+        this.started = false;
+      }
     }
   }
 
@@ -62,13 +211,24 @@ export class GlobalShortcutManager {
    * @param key Key in web format (e.g., "`", "Space", "Mouse3")
    */
   registerPttKey(key: string): boolean {
+    console.log('[GlobalShortcuts] ========================================');
     console.log('[GlobalShortcuts] Registering PTT key:', key);
+    console.log('[GlobalShortcuts] Platform:', process.platform);
 
     this.unregisterPttKey();
 
     if (key.startsWith('Mouse')) {
       const webButton = parseInt(key.slice(5), 10);
       const uiButton = this.webMouseToUiohook(webButton);
+      console.log('[GlobalShortcuts] Mouse button mapping:');
+      console.log('[GlobalShortcuts]   Input key string:', key);
+      console.log('[GlobalShortcuts]   Parsed web button:', webButton);
+      console.log('[GlobalShortcuts]   Mapped uiohook button:', uiButton);
+      console.log('[GlobalShortcuts]   Web button meanings:');
+      console.log('[GlobalShortcuts]     0=left, 1=middle, 2=right, 3=back, 4=forward');
+      console.log('[GlobalShortcuts]   uIOhook button meanings:');
+      console.log('[GlobalShortcuts]     1=left, 2=right, 3=middle, 4=back, 5=forward');
+
       if (uiButton === null) {
         console.error('[GlobalShortcuts] Unsupported mouse button:', key);
         return false;
@@ -77,7 +237,8 @@ export class GlobalShortcutManager {
       this.targetKeyCode = null;
       this.currentKey = key;
       this.ensureStarted();
-      console.log('[GlobalShortcuts] Registered mouse button:', key, '(uiohook button:', uiButton, ')');
+      console.log('[GlobalShortcuts] ✓ Registered mouse button successfully');
+      console.log('[GlobalShortcuts] ========================================');
       return true;
     }
 
@@ -102,6 +263,18 @@ export class GlobalShortcutManager {
     this.targetKeyCode = null;
     this.targetMouseButton = null;
     this.isPttActive = false;
+  }
+
+  /**
+   * Force-release PTT if it gets stuck.
+   * Useful for recovering from macOS keyup event issues.
+   */
+  forceReleasePtt(): void {
+    if (this.isPttActive) {
+      console.log('[GlobalShortcuts] Force-releasing stuck PTT');
+      this.isPttActive = false;
+      this.window.webContents.send('global-ptt-release');
+    }
   }
 
   /**

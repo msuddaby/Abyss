@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('unregister-ptt-key');
   },
 
+  forceReleasePtt: () => {
+    ipcRenderer.send('force-release-ptt');
+  },
+
   onGlobalPttPress: (callback: () => void) => {
     const subscription = (_event: any) => callback();
     ipcRenderer.on('global-ptt-press', subscription);

@@ -11,6 +11,16 @@ export function setupIpcHandlers(
   shortcutManager: GlobalShortcutManager,
   updateManager?: UpdateManager
 ) {
+  // Check accessibility permissions
+  ipcMain.handle('check-accessibility-permissions', () => {
+    return shortcutManager.hasAccessibilityPermissions();
+  });
+
+  // Request accessibility permissions
+  ipcMain.on('request-accessibility-permissions', () => {
+    shortcutManager.requestAccessibilityPermissions();
+  });
+
   // Register PTT key
   ipcMain.on('register-ptt-key', (_event, key: string) => {
     const success = shortcutManager.registerPttKey(key);
@@ -22,6 +32,11 @@ export function setupIpcHandlers(
   // Unregister PTT key
   ipcMain.on('unregister-ptt-key', () => {
     shortcutManager.unregisterPttKey();
+  });
+
+  // Force-release PTT if stuck (macOS issue workaround)
+  ipcMain.on('force-release-ptt', () => {
+    shortcutManager.forceReleasePtt();
   });
 
   // Show desktop notification

@@ -8,3 +8,5 @@ out
 # Environment variables (contains signing credentials)
 .env
 signing.sh
+
+*.crashreport
