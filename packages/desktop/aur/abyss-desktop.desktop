@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Abyss
+Comment=Voice and text chat
+Exec=/opt/abyss-desktop/abyss-desktop %U
+Icon=abyss-desktop
+Terminal=false
+Type=Application
+Categories=Network;InstantMessaging;
+MimeType=x-scheme-handler/abyss;
+StartupWMClass=abyss-desktop

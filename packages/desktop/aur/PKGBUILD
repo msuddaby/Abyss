@@ -1,0 +1,39 @@
+# Maintainer: Matt Suddaby <matt@suddaby.dev>
+pkgname=abyss-desktop-bin
+_pkgname=abyss-desktop
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='Abyss - Voice and text chat application'
+arch=('x86_64')
+url='https://github.com/msuddaby/Abyss'
+license=('MIT')
+depends=('gtk3' 'nss' 'alsa-lib' 'libxss' 'libxtst' 'xdg-utils')
+optdepends=(
+    'libappindicator-gtk3: tray icon support'
+    'pipewire: PipeWire audio support'
+    'libpulse: PulseAudio support'
+)
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+source=(
+    "${_pkgname}-${pkgver}.zip::${url}/releases/download/v${pkgver}/abyss-desktop-linux-x64-${pkgver}.zip"
+    "${_pkgname}.desktop"
+)
+sha256sums=('SKIP'
+            'SKIP')
+
+package() {
+    install -d "${pkgdir}/opt/${_pkgname}"
+    cp -r "${srcdir}/abyss-desktop-linux-x64/"* "${pkgdir}/opt/${_pkgname}/"
+
+    install -d "${pkgdir}/usr/bin"
+    ln -s "/opt/${_pkgname}/abyss-desktop" "${pkgdir}/usr/bin/${_pkgname}"
+
+    install -Dm644 "${srcdir}/${_pkgname}.desktop" \
+        "${pkgdir}/usr/share/applications/${_pkgname}.desktop"
+
+    install -Dm644 "${pkgdir}/opt/${_pkgname}/resources/icon.png" \
+        "${pkgdir}/usr/share/pixmaps/${_pkgname}.png"
+
+    chmod 4755 "${pkgdir}/opt/${_pkgname}/chrome-sandbox"
+}
