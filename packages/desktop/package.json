@@ -1,5 +1,6 @@
 {
-  "name": "@abyss/desktop",
+  "name": "abyss-desktop",
+  "productName": "Abyss",
   "version": "1.0.0",
   "description": "Abyss Desktop - Electron wrapper for Abyss web client",
   "main": "dist/main/main.js",
