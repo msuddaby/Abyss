@@ -37,7 +37,7 @@ export function setOnUnauthorized(cb: () => void): void {
 
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken(): Promise<string | null> {
+export async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
     const refreshToken = getStorage().getItem('refreshToken');

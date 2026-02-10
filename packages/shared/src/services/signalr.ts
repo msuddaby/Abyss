@@ -1,5 +1,5 @@
 import * as signalR from "@microsoft/signalr";
-import { getApiBase } from "./api.js";
+import { getApiBase, refreshAccessToken } from "./api.js";
 import { getStorage } from "../storage.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
@@ -24,7 +24,6 @@ export function onReconnected(cb: () => void): () => void {
 }
 
 function fireReconnectCallbacks() {
-  console.log('[SignalR] fireReconnectCallbacks, count:', reconnectCallbacks.length);
   for (const cb of reconnectCallbacks) cb();
 }
 
@@ -45,22 +44,19 @@ export function getConnection(): signalR.HubConnection {
   connection.keepAliveIntervalInMilliseconds = 15000;
   connection.serverTimeoutInMilliseconds = 60000;
 
-  connection.onreconnecting((err) => {
-    console.log('[SignalR] onreconnecting', err?.message);
+  connection.onreconnecting(() => {
     reconnectingSince = Date.now();
     setStatus("reconnecting");
   });
 
-  connection.onreconnected((connectionId) => {
-    console.log('[SignalR] onreconnected, connectionId:', connectionId);
+  connection.onreconnected(() => {
     reconnectingSince = null;
     reconnectAttempts = 0;
     setStatus("connected");
     fireReconnectCallbacks();
   });
 
-  connection.onclose((err) => {
-    console.log('[SignalR] onclose', err?.message);
+  connection.onclose(() => {
     reconnectingSince = null;
     setStatus("disconnected");
     scheduleReconnect("closed");
@@ -125,12 +121,12 @@ async function restartConnection(reason: string): Promise<void> {
   } catch {
     // Ignore stop errors; we'll attempt a clean start anyway.
   }
+  // Refresh the access token before reconnecting — it may have expired while idle
+  await refreshAccessToken().catch(() => {});
   try {
     await startConnection();
-    console.log('[SignalR] restartConnection succeeded, firing callbacks');
     fireReconnectCallbacks();
   } catch (err) {
-    console.log('[SignalR] restartConnection failed:', err);
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
   }
