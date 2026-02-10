@@ -6,6 +6,7 @@ import path from 'path'
 export default defineConfig({
   plugins: [react()],
   envDir: path.resolve(__dirname, '..'),
+  base: process.env.ELECTRON === 'true' ? './' : '/',
   server: {
     allowedHosts: true,
   },

@@ -25,7 +25,7 @@ export interface Server {
 export interface Channel {
   id: string;
   name: string;
-  type: 'Text' | 'Voice';
+  type: "Text" | "Voice";
   serverId: string;
   position: number;
   permissions?: number;
@@ -234,7 +234,10 @@ export function hasPermission(member: ServerMember, perm: number): boolean {
   return (combined & perm) === perm;
 }
 
-export function hasChannelPermission(channelPermissions: number | undefined, perm: number): boolean {
+export function hasChannelPermission(
+  channelPermissions: number | undefined,
+  perm: number,
+): boolean {
   if (channelPermissions == null) return false;
   return (channelPermissions & perm) === perm;
 }
@@ -246,7 +249,7 @@ export function canViewChannel(channel: Channel): boolean {
 
 export function getDisplayColor(member: ServerMember): string | undefined {
   const sorted = [...member.roles]
-    .filter((r) => r.color !== '#99aab5' && !r.isDefault)
+    .filter((r) => r.color !== "#99aab5" && !r.isDefault)
     .sort((a, b) => b.position - a.position);
   return sorted[0]?.color;
 }
@@ -260,7 +263,11 @@ export function getHighestRole(member: ServerMember): ServerRole | undefined {
 export function canActOn(actor: ServerMember, target: ServerMember): boolean {
   if (actor.userId === target.userId) return false;
   if (target.isOwner) return false;
-  const actorPos = actor.isOwner ? Infinity : Math.max(0, ...actor.roles.map((r) => r.position));
-  const targetPos = target.isOwner ? Infinity : Math.max(0, ...target.roles.map((r) => r.position));
+  const actorPos = actor.isOwner
+    ? Infinity
+    : Math.max(0, ...actor.roles.map((r) => r.position));
+  const targetPos = target.isOwner
+    ? Infinity
+    : Math.max(0, ...target.roles.map((r) => r.position));
   return actorPos > targetPos;
 }

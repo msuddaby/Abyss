@@ -4,10 +4,14 @@
   "workspaces": [
     "packages/shared",
     "client",
-    "packages/app"
+    "packages/app",
+    "packages/desktop"
   ],
   "overrides": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.0"
   }
 }

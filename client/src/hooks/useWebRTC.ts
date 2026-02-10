@@ -42,16 +42,26 @@ const SPEAKING_THRESHOLD = 0.015;
 const INPUT_THRESHOLD_MIN = 0.005;
 const INPUT_THRESHOLD_MAX = 0.05;
 
+// Keep-alive interval to prevent browser from suspending audio
+let audioKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
+
+// Track if device resolution is causing issues
+let deviceResolutionFailed = false;
+
 function ensureAudioContext(): AudioContext {
   if (!audioContext || audioContext.state === "closed") {
     audioContext = new AudioContext();
   }
+  // Resume if suspended (can happen when tab is backgrounded)
+  if (audioContext.state === "suspended") {
+    audioContext.resume().catch((err) => {
+      console.warn("Failed to resume audio context:", err);
+    });
+  }
   return audioContext;
 }
 
-function canSetSinkId(
-  audio: HTMLAudioElement,
-): audio is HTMLAudioElement & {
+function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & {
   setSinkId: (deviceId: string) => Promise<void>;
 } {
   return (
@@ -63,16 +73,187 @@ function canSetSinkId(
   );
 }
 
+async function validateOutputDevice(deviceId: string): Promise<boolean> {
+  // Test if a device ID is valid by attempting to set it on a temporary audio element
+  if (!deviceId || deviceId === "") return false;
+
+  try {
+    const testAudio = new Audio();
+    if (!canSetSinkId(testAudio)) return true; // Can't validate, assume valid
+
+    await testAudio.setSinkId(deviceId);
+    return true;
+  } catch (err) {
+    console.warn(`Device ${deviceId} failed validation:`, err);
+    return false;
+  }
+}
+
+async function resolveDefaultOutputDevice(): Promise<string> {
+  // When "default" is selected, resolve it to the actual device ID
+  // This prevents audio from cutting out when window loses focus
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const outputs = devices.filter((d) => d.kind === "audiooutput");
+
+    if (outputs.length === 0) {
+      console.warn("No output devices found");
+      return "default";
+    }
+
+    // Strategy 1: Find device with same groupId as "default"
+    const defaultOutput = outputs.find((d) => d.deviceId === "default");
+    if (defaultOutput && defaultOutput.groupId) {
+      const actualDevice = outputs.find(
+        (d) =>
+          d.deviceId !== "default" &&
+          d.deviceId !== "" &&
+          d.groupId === defaultOutput.groupId,
+      );
+      if (actualDevice?.deviceId) {
+        const isValid = await validateOutputDevice(actualDevice.deviceId);
+        if (isValid) {
+          console.log(
+            `Resolved default output to: ${actualDevice.label || actualDevice.deviceId}`,
+          );
+          return actualDevice.deviceId;
+        }
+      }
+    }
+
+    // Strategy 2: Use first non-default device with a label
+    const firstLabeledDevice = outputs.find(
+      (d) => d.deviceId !== "default" && d.deviceId !== "" && d.label,
+    );
+    if (firstLabeledDevice?.deviceId) {
+      const isValid = await validateOutputDevice(firstLabeledDevice.deviceId);
+      if (isValid) {
+        console.log(
+          `Using first labeled output: ${firstLabeledDevice.label || firstLabeledDevice.deviceId}`,
+        );
+        return firstLabeledDevice.deviceId;
+      }
+    }
+
+    // Strategy 3: Use first non-default device
+    const firstDevice = outputs.find(
+      (d) => d.deviceId !== "default" && d.deviceId !== "",
+    );
+    if (firstDevice?.deviceId) {
+      const isValid = await validateOutputDevice(firstDevice.deviceId);
+      if (isValid) {
+        console.log(`Using first output device: ${firstDevice.deviceId}`);
+        return firstDevice.deviceId;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to resolve default output device:", err);
+  }
+
+  // Fallback: keep using "default" (original behavior)
+  console.log("Keeping default output device");
+  return "default";
+}
+
+async function resolveDefaultInputDevice(): Promise<string> {
+  // When "default" is selected, resolve it to the actual device ID
+  // This prevents microphone from cutting out when window loses focus
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices.filter((d) => d.kind === "audioinput");
+
+    if (inputs.length === 0) {
+      console.warn("No input devices found");
+      return "default";
+    }
+
+    // Strategy 1: Find device with same groupId as "default"
+    const defaultInput = inputs.find((d) => d.deviceId === "default");
+    if (defaultInput && defaultInput.groupId) {
+      const actualDevice = inputs.find(
+        (d) =>
+          d.deviceId !== "default" &&
+          d.deviceId !== "" &&
+          d.groupId === defaultInput.groupId,
+      );
+      if (actualDevice?.deviceId) {
+        console.log(
+          `Resolved default input to: ${actualDevice.label || actualDevice.deviceId}`,
+        );
+        return actualDevice.deviceId;
+      }
+    }
+
+    // Strategy 2: Use first non-default device with a label
+    const firstLabeledDevice = inputs.find(
+      (d) => d.deviceId !== "default" && d.deviceId !== "" && d.label,
+    );
+    if (firstLabeledDevice?.deviceId) {
+      console.log(
+        `Using first labeled input: ${firstLabeledDevice.label || firstLabeledDevice.deviceId}`,
+      );
+      return firstLabeledDevice.deviceId;
+    }
+
+    // Strategy 3: Use first non-default device
+    const firstDevice = inputs.find(
+      (d) => d.deviceId !== "default" && d.deviceId !== "",
+    );
+    if (firstDevice?.deviceId) {
+      console.log(`Using first input device: ${firstDevice.deviceId}`);
+      return firstDevice.deviceId;
+    }
+  } catch (err) {
+    console.warn("Failed to resolve default input device:", err);
+  }
+
+  // Fallback: keep using "default" (original behavior)
+  console.log("Keeping default input device");
+  return "default";
+}
+
 function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
   if (!canSetSinkId(audio)) return;
-  const target = deviceId && deviceId !== "default" ? deviceId : "default";
-  audio.setSinkId(target).catch((err) => {
-    console.warn("Failed to set audio output device:", err);
-    // Fallback to default if the stored device id is no longer valid
-    if (target !== "default") {
-      useVoiceStore.getState().setOutputDeviceId("default");
+
+  const applyDevice = async () => {
+    const target = deviceId || "default";
+    let resolvedTarget = target;
+
+    // Resolve "default" to actual device ID to prevent audio cutouts on window blur
+    // Skip resolution if it previously failed
+    if (target === "default" && !deviceResolutionFailed) {
+      resolvedTarget = await resolveDefaultOutputDevice();
     }
-  });
+
+    try {
+      await audio.setSinkId(resolvedTarget);
+      console.log(`Successfully set output device: ${resolvedTarget}`);
+    } catch (err) {
+      console.warn(
+        `Failed to set audio output device to "${resolvedTarget}":`,
+        err,
+      );
+
+      // If the resolved device failed, try falling back to "default"
+      if (resolvedTarget !== "default") {
+        try {
+          await audio.setSinkId("default");
+          console.log("Fell back to default output device");
+          // Mark that resolution is causing issues
+          if (target === "default") {
+            deviceResolutionFailed = true;
+            console.warn(
+              "Device resolution failed, will use 'default' directly from now on",
+            );
+          }
+        } catch (fallbackErr) {
+          console.error("Even default output device failed:", fallbackErr);
+        }
+      }
+    }
+  };
+
+  applyDevice();
 }
 
 export async function attemptAudioUnlock() {
@@ -169,8 +350,38 @@ function stopAnalyserLoop() {
   }
 }
 
+function startAudioKeepAlive() {
+  if (audioKeepAliveInterval) return;
+
+  audioKeepAliveInterval = setInterval(() => {
+    // Keep audio context running
+    if (audioContext && audioContext.state === "suspended") {
+      audioContext.resume().catch((err) => {
+        console.warn("Keep-alive: Failed to resume audio context:", err);
+      });
+    }
+
+    // Ensure all remote audio elements are playing
+    audioElements.forEach((audio) => {
+      if (audio.srcObject && audio.paused) {
+        audio.play().catch((err) => {
+          console.warn("Keep-alive: Failed to resume audio element:", err);
+        });
+      }
+    });
+  }, 5000); // Check every 5 seconds
+}
+
+function stopAudioKeepAlive() {
+  if (audioKeepAliveInterval) {
+    clearInterval(audioKeepAliveInterval);
+    audioKeepAliveInterval = null;
+  }
+}
+
 function cleanupAnalysers() {
   stopAnalyserLoop();
+  stopAudioKeepAlive();
   const store = useVoiceStore.getState();
   for (const [userId, entry] of analysers) {
     entry.source.disconnect();
@@ -281,6 +492,10 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
 
   pc.oniceconnectionstatechange = () => {
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
+    if (pc.iceConnectionState === "failed") {
+      console.warn(`ICE failed for ${peerId}, attempting restart...`);
+      restartIceForPeer(peerId, pc);
+    }
   };
 
   pc.ontrack = (event) => {
@@ -296,6 +511,9 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       if (!audio) {
         audio = new Audio();
         audio.autoplay = true;
+        // Ensure audio continues in background
+        audio.setAttribute("playsinline", "true");
+        audio.volume = 1.0;
         audioElements.set(peerId, audio);
       }
       applyOutputDevice(audio, currentOutputDeviceId);
@@ -445,18 +663,29 @@ async function stopScreenShareInternal() {
     const pc = peers.get(viewerId);
     if (pc) {
       senders.forEach((sender) => pc.removeTrack(sender));
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await conn.invoke(
-          "SendSignal",
-          viewerId,
-          JSON.stringify({ type: "offer", sdp: offer.sdp }),
-        );
-      } catch (err) {
-        console.error(
-          `Renegotiation (stop share) failed for ${viewerId}:`,
-          err,
+
+      // Only renegotiate if signaling state is stable and ICE isn't failed
+      if (
+        pc.signalingState === "stable" &&
+        pc.iceConnectionState !== "failed"
+      ) {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await conn.invoke(
+            "SendSignal",
+            viewerId,
+            JSON.stringify({ type: "offer", sdp: offer.sdp }),
+          );
+        } catch (err) {
+          console.error(
+            `Renegotiation (stop share) failed for ${viewerId}:`,
+            err,
+          );
+        }
+      } else {
+        console.warn(
+          `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
         );
       }
     }
@@ -494,6 +723,17 @@ async function addVideoTrackForViewer(viewerUserId: string) {
   if (senders.length === 0) return;
   screenTrackSenders.set(viewerUserId, senders);
 
+  // Only renegotiate if signaling state is stable and ICE isn't failed
+  if (pc.signalingState !== "stable" || pc.iceConnectionState === "failed") {
+    console.warn(
+      `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
+    );
+    // Remove the senders we just added since we can't renegotiate
+    senders.forEach((sender) => pc.removeTrack(sender));
+    screenTrackSenders.delete(viewerUserId);
+    return;
+  }
+
   // Renegotiate
   const conn = getConnection();
   try {
@@ -521,6 +761,14 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
   // Remove all screen tracks (video + audio)
   senders.forEach((sender) => pc.removeTrack(sender));
   screenTrackSenders.delete(viewerUserId);
+
+  // Only renegotiate if signaling state is stable and ICE isn't failed
+  if (pc.signalingState !== "stable" || pc.iceConnectionState === "failed") {
+    console.warn(
+      `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
+    );
+    return;
+  }
 
   // Renegotiate
   const conn = getConnection();
@@ -746,42 +994,67 @@ export function useWebRTC() {
       return;
     }
 
-    const isMouseBind = pttKey.startsWith("Mouse");
-    const mouseButton = isMouseBind ? parseInt(pttKey.slice(5), 10) : -1;
+    const isElectron = typeof window !== 'undefined' && window.electron;
 
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return;
-      if (!isMouseBind && e.key === pttKey) {
-        setPttActive(true);
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (!isMouseBind && e.key === pttKey) {
-        setPttActive(false);
-      }
-    };
-    const onMouseDown = (e: MouseEvent) => {
-      if (isMouseBind && e.button === mouseButton) {
-        setPttActive(true);
-      }
-    };
-    const onMouseUp = (e: MouseEvent) => {
-      if (isMouseBind && e.button === mouseButton) {
-        setPttActive(false);
-      }
-    };
+    // Use global shortcuts in Electron, window-level listeners in browser
+    if (isElectron) {
+      // Register global PTT key with Electron
+      window.electron!.registerPttKey(pttKey);
 
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("mousedown", onMouseDown);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("mouseup", onMouseUp);
-      setPttActive(false);
-    };
+      // Listen for global PTT events
+      const unsubPress = window.electron!.onGlobalPttPress(() => {
+        setPttActive(true);
+      });
+
+      const unsubRelease = window.electron!.onGlobalPttRelease(() => {
+        setPttActive(false);
+      });
+
+      return () => {
+        unsubPress();
+        unsubRelease();
+        window.electron!.unregisterPttKey();
+        setPttActive(false);
+      };
+    } else {
+      // Browser: use window-level event listeners (original implementation)
+      const isMouseBind = pttKey.startsWith("Mouse");
+      const mouseButton = isMouseBind ? parseInt(pttKey.slice(5), 10) : -1;
+
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.repeat) return;
+        if (!isMouseBind && e.key === pttKey) {
+          setPttActive(true);
+        }
+      };
+      const onKeyUp = (e: KeyboardEvent) => {
+        if (!isMouseBind && e.key === pttKey) {
+          setPttActive(false);
+        }
+      };
+      const onMouseDown = (e: MouseEvent) => {
+        if (isMouseBind && e.button === mouseButton) {
+          setPttActive(true);
+        }
+      };
+      const onMouseUp = (e: MouseEvent) => {
+        if (isMouseBind && e.button === mouseButton) {
+          setPttActive(false);
+        }
+      };
+
+      window.addEventListener("keydown", onKeyDown);
+      window.addEventListener("keyup", onKeyUp);
+      window.addEventListener("mousedown", onMouseDown);
+      window.addEventListener("mouseup", onMouseUp);
+      return () => {
+        window.removeEventListener("keydown", onKeyDown);
+        window.removeEventListener("keyup", onKeyUp);
+        window.removeEventListener("mousedown", onMouseDown);
+        window.removeEventListener("mouseup", onMouseUp);
+        setPttActive(false);
+      };
+    }
   }, [currentChannelId, voiceMode, pttKey, setPttActive]);
 
   // Mute/unmute local tracks (accounts for PTT mode)
@@ -815,19 +1088,37 @@ export function useWebRTC() {
     );
   }, [outputDeviceId]);
 
-  const buildAudioConstraints = useCallback(():
-    | MediaTrackConstraints
-    | boolean => {
-    const base: MediaTrackConstraints = {
-      noiseSuppression,
-      echoCancellation,
-      autoGainControl,
-    };
-    if (inputDeviceId && inputDeviceId !== "default") {
+  // const buildAudioConstraints = useCallback(():
+  //   | MediaTrackConstraints
+  //   | boolean => {
+  //   const base: MediaTrackConstraints = {
+  //     noiseSuppression,
+  //     echoCancellation,
+  //     autoGainControl,
+  //   };
+  //   if (inputDeviceId && inputDeviceId !== "default") {
+  //     return { ...base, deviceId: { exact: inputDeviceId } };
+  //   }
+  //   return base;
+  // }, [inputDeviceId, noiseSuppression, echoCancellation, autoGainControl]);
+
+  const buildAudioConstraintsResolved =
+    useCallback(async (): Promise<MediaTrackConstraints> => {
+      const base: MediaTrackConstraints = {
+        noiseSuppression,
+        echoCancellation,
+        autoGainControl,
+      };
+      // Resolve "default" to actual device ID to prevent microphone cutouts on window blur
+      if (!inputDeviceId || inputDeviceId === "default") {
+        const resolvedDeviceId = await resolveDefaultInputDevice();
+        if (resolvedDeviceId !== "default") {
+          return { ...base, deviceId: { exact: resolvedDeviceId } };
+        }
+        return base;
+      }
       return { ...base, deviceId: { exact: inputDeviceId } };
-    }
-    return base;
-  }, [inputDeviceId, noiseSuppression, echoCancellation, autoGainControl]);
+    }, [inputDeviceId, noiseSuppression, echoCancellation, autoGainControl]);
 
   // Switch input device / processing while connected
   useEffect(() => {
@@ -835,8 +1126,9 @@ export function useWebRTC() {
     let cancelled = false;
     (async () => {
       try {
+        const audioConstraints = await buildAudioConstraintsResolved();
         const constraints: MediaStreamConstraints = {
-          audio: buildAudioConstraints(),
+          audio: audioConstraints,
         };
         const newStream =
           await navigator.mediaDevices.getUserMedia(constraints);
@@ -852,7 +1144,7 @@ export function useWebRTC() {
     return () => {
       cancelled = true;
     };
-  }, [buildAudioConstraints, currentChannelId]);
+  }, [buildAudioConstraintsResolved, currentChannelId]);
 
   // Broadcast mute/deafen state to everyone in the server
   useEffect(() => {
@@ -892,6 +1184,31 @@ export function useWebRTC() {
     setupSignalRListeners();
   }, []);
 
+  // Handle window visibility changes to resume audio
+  useEffect(() => {
+    if (!currentChannelId) return;
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // Window became visible again - attempt to unlock/resume audio
+        attemptAudioUnlock();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      // Window gained focus - attempt to unlock/resume audio
+      attemptAudioUnlock();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [currentChannelId]);
+
   const joinVoice = useCallback(
     async (channelId: string) => {
       await initializeTurn();
@@ -904,8 +1221,9 @@ export function useWebRTC() {
       }
 
       try {
+        const audioConstraints = await buildAudioConstraintsResolved();
         const constraints: MediaStreamConstraints = {
-          audio: buildAudioConstraints(),
+          audio: audioConstraints,
         };
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
         console.log(
@@ -932,6 +1250,9 @@ export function useWebRTC() {
         addAnalyser(currentUser.id, localStream);
       }
 
+      // Start keep-alive to prevent audio suspension in background
+      startAudioKeepAlive();
+
       setCurrentChannel(channelId);
       const conn = getConnection();
       await conn.invoke(
@@ -941,7 +1262,7 @@ export function useWebRTC() {
         voiceState.isDeafened,
       );
     },
-    [buildAudioConstraints, currentChannelId, setCurrentChannel],
+    [buildAudioConstraintsResolved, currentChannelId, setCurrentChannel],
   );
 
   const leaveVoice = useCallback(async () => {

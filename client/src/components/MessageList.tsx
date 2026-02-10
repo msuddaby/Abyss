@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useAuthStore, useMessageStore, getConnection } from "@abyss/shared";
+import {
+  useAuthStore,
+  useMessageStore,
+  getConnection,
+  useDmStore,
+  useServerStore,
+} from "@abyss/shared";
+import { showDesktopNotification } from "@abyss/shared/services/electronNotifications";
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
@@ -9,7 +16,9 @@ export default function MessageList() {
   const hasNewer = useMessageStore((s) => s.hasNewer);
   const loadNewer = useMessageStore((s) => s.loadNewer);
   const highlightedMessageId = useMessageStore((s) => s.highlightedMessageId);
-  const setHighlightedMessageId = useMessageStore((s) => s.setHighlightedMessageId);
+  const setHighlightedMessageId = useMessageStore(
+    (s) => s.setHighlightedMessageId,
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listInnerRef = useRef<HTMLDivElement>(null);
@@ -37,17 +46,49 @@ export default function MessageList() {
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
-    incomingSoundRef.current = new Audio('/sounds/message-sent.mp3');
-    incomingSoundRef.current.preload = 'auto';
+    incomingSoundRef.current = new Audio("/sounds/message-sent.mp3");
+    incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
-    const handler = (message: Message) => {
+    const handler = async (message: Message) => {
       addMessage(message);
-      const isFromOtherUser = message.authorId && message.authorId !== currentUserId;
+      const isFromOtherUser =
+        message.authorId && message.authorId !== currentUserId;
       const isDifferentChannel = message.channelId !== currentChannelId;
       const isTabHidden = document.hidden;
-      if (isFromOtherUser && (isDifferentChannel || isTabHidden) && incomingSoundRef.current) {
-        incomingSoundRef.current.currentTime = 0;
-        incomingSoundRef.current.play().catch((err) => console.error('Incoming message sound failed:', err));
+
+      if (isFromOtherUser && (isDifferentChannel || isTabHidden)) {
+        // Play sound
+        if (incomingSoundRef.current) {
+          incomingSoundRef.current.currentTime = 0;
+          incomingSoundRef.current
+            .play()
+            .catch((err) =>
+              console.error("Incoming message sound failed:", err),
+            );
+        }
+
+        // Show desktop notification for DMs
+        const isDmMode = useDmStore.getState().isDmMode;
+        //const activeDmChannel = useDmStore.getState().activeDmChannel;
+        const activeServer = useServerStore.getState().activeServer;
+
+        // Check if this is a DM (not in a server channel)
+        const isDm = isDifferentChannel && (!activeServer || isDmMode);
+
+        if (isDm) {
+          const senderName =
+            message.author.displayName || message.author.username;
+          const preview =
+            message.content.length > 100
+              ? message.content.substring(0, 100) + "..."
+              : message.content;
+
+          await showDesktopNotification(
+            `${senderName} sent you a message`,
+            preview,
+            { channelId: message.channelId, messageId: message.id },
+          );
+        }
       }
     };
     const editHandler = (
@@ -93,7 +134,17 @@ export default function MessageList() {
       conn.off("MessagePinned", pinHandler);
       conn.off("MessageUnpinned", unpinHandler);
     };
-  }, [addMessage, updateMessage, markDeleted, addReaction, removeReaction, addPinnedMessage, removePinnedMessage, currentUserId, currentChannelId]);
+  }, [
+    addMessage,
+    updateMessage,
+    markDeleted,
+    addReaction,
+    removeReaction,
+    addPinnedMessage,
+    removePinnedMessage,
+    currentUserId,
+    currentChannelId,
+  ]);
 
   const updateScrollToBottomState = useCallback(() => {
     const list = listRef.current;
@@ -130,7 +181,13 @@ export default function MessageList() {
         updateScrollToBottomState();
       });
     }
-  }, [currentChannelId, messages, loading, updateScrollToBottomState, highlightedMessageId]);
+  }, [
+    currentChannelId,
+    messages,
+    loading,
+    updateScrollToBottomState,
+    highlightedMessageId,
+  ]);
 
   // Scroll to bottom on new messages (only if near bottom), preserve position on loadMore
   useEffect(() => {
@@ -148,7 +205,11 @@ export default function MessageList() {
 
     if (suppressAutoScrollRef.current || highlightedMessageId) return;
 
-    if (!loading && messages.length > 0 && initialScrollDoneRef.current !== currentChannelId) {
+    if (
+      !loading &&
+      messages.length > 0 &&
+      initialScrollDoneRef.current !== currentChannelId
+    ) {
       initialScrollDoneRef.current = currentChannelId ?? null;
       pendingInitialScrollRef.current = false;
       requestAnimationFrame(() => {
@@ -168,7 +229,8 @@ export default function MessageList() {
 
     if (newCount > prevCount && prevCount > 0) {
       const lastMessage = messages[newCount - 1];
-      const isOwnMessage = !!currentUserId && lastMessage?.authorId === currentUserId;
+      const isOwnMessage =
+        !!currentUserId && lastMessage?.authorId === currentUserId;
       // Always scroll for own messages; for others, only if user was near bottom
       // (using pre-render ref since post-render scrollHeight already includes the new message)
       if (isOwnMessage || isNearBottomRef.current) {
@@ -189,7 +251,12 @@ export default function MessageList() {
       }
     }
     requestAnimationFrame(updateScrollToBottomState);
-  }, [messages, currentUserId, updateScrollToBottomState, highlightedMessageId]);
+  }, [
+    messages,
+    currentUserId,
+    updateScrollToBottomState,
+    highlightedMessageId,
+  ]);
 
   useEffect(() => {
     const inner = listInnerRef.current;
@@ -197,7 +264,7 @@ export default function MessageList() {
     const observer = new ResizeObserver(() => {
       if (highlightedMessageId) {
         const el = messageRefs.current.get(highlightedMessageId);
-        if (el) el.scrollIntoView({ behavior: 'auto', block: 'center' });
+        if (el) el.scrollIntoView({ behavior: "auto", block: "center" });
         return;
       }
       if (suppressAutoScrollRef.current) return;
@@ -218,14 +285,19 @@ export default function MessageList() {
     });
     observer.observe(inner);
     return () => observer.disconnect();
-  }, [messages.length, loading, updateScrollToBottomState, highlightedMessageId]);
+  }, [
+    messages.length,
+    loading,
+    updateScrollToBottomState,
+    highlightedMessageId,
+  ]);
 
   const scrollToMessage = useCallback((id: string) => {
     const el = messageRefs.current.get(id);
     if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    el.classList.add('message-highlight');
-    setTimeout(() => el.classList.remove('message-highlight'), 1500);
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("message-highlight");
+    setTimeout(() => el.classList.remove("message-highlight"), 1500);
   }, []);
 
   useEffect(() => {
@@ -239,10 +311,10 @@ export default function MessageList() {
         setTimeout(tryScroll, 100);
         return;
       }
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.classList.add('message-highlight');
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("message-highlight");
       setTimeout(() => {
-        el.classList.remove('message-highlight');
+        el.classList.remove("message-highlight");
         setHighlightedMessageId(null);
       }, 1500);
     };
@@ -264,7 +336,13 @@ export default function MessageList() {
       suppressAutoScrollRef.current = false;
     }
 
-    if (distanceFromBottom < 150 && hasNewer && !loading && !isLoadingNewerRef.current && !highlightedMessageId) {
+    if (
+      distanceFromBottom < 150 &&
+      hasNewer &&
+      !loading &&
+      !isLoadingNewerRef.current &&
+      !highlightedMessageId
+    ) {
       isLoadingNewerRef.current = true;
       loadNewer().then(() => {
         requestAnimationFrame(() => {
@@ -322,7 +400,14 @@ export default function MessageList() {
               new Date(prev.createdAt).getTime() <
               5 * 60 * 1000;
           return (
-            <div key={msg.id} data-message-id={msg.id} ref={(el) => { if (el) messageRefs.current.set(msg.id, el); else messageRefs.current.delete(msg.id); }}>
+            <div
+              key={msg.id}
+              data-message-id={msg.id}
+              ref={(el) => {
+                if (el) messageRefs.current.set(msg.id, el);
+                else messageRefs.current.delete(msg.id);
+              }}
+            >
               <MessageItem
                 message={msg}
                 grouped={grouped}

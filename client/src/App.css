@@ -13,7 +13,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at 50% 20%, #2d2f34, var(--bg-tertiary) 60%);
+  background: radial-gradient(
+    circle at 50% 20%,
+    #2d2f34,
+    var(--bg-tertiary) 60%
+  );
 }
 
 .app-loading-card {
@@ -639,7 +643,9 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  transition:
+    background 0.15s,
+    transform 0.1s;
 }
 
 .role-create-btn:hover {
@@ -733,7 +739,9 @@
   font-size: 14px;
   padding: 4px 6px;
   border-radius: 4px;
-  transition: color 0.1s, background 0.1s;
+  transition:
+    color 0.1s,
+    background 0.1s;
 }
 
 .role-move-btn:hover:not(:disabled) {
@@ -806,7 +814,9 @@
   padding: 4px 8px;
   border-radius: 4px;
   line-height: 1;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 
 .role-editor-back:hover {
@@ -876,7 +886,10 @@
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 0.1s, border-color 0.1s, box-shadow 0.1s;
+  transition:
+    transform 0.1s,
+    border-color 0.1s,
+    box-shadow 0.1s;
   padding: 0;
 }
 
@@ -916,7 +929,7 @@
 .role-color-custom-icon {
   font-size: 13px;
   color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 
@@ -929,7 +942,9 @@
   border: 2px solid var(--text-muted);
   position: relative;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
   flex-shrink: 0;
 }
 
@@ -1299,7 +1314,10 @@
   font-size: 12px;
   letter-spacing: 0.2px;
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .scroll-to-bottom-banner button:hover {
@@ -1452,8 +1470,12 @@
 }
 
 @keyframes message-highlight-flash {
-  0% { background: rgba(44, 183, 160, 0.3); }
-  100% { background: transparent; }
+  0% {
+    background: rgba(44, 183, 160, 0.3);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .message-highlight > .message-item {
@@ -1681,12 +1703,20 @@
   color: var(--header-primary);
 }
 
-.message-content.message-markdown h1 { font-size: 20px; }
-.message-content.message-markdown h2 { font-size: 18px; }
-.message-content.message-markdown h3 { font-size: 16px; }
+.message-content.message-markdown h1 {
+  font-size: 20px;
+}
+.message-content.message-markdown h2 {
+  font-size: 18px;
+}
+.message-content.message-markdown h3 {
+  font-size: 16px;
+}
 .message-content.message-markdown h4,
 .message-content.message-markdown h5,
-.message-content.message-markdown h6 { font-size: 15px; }
+.message-content.message-markdown h6 {
+  font-size: 15px;
+}
 
 .message-content.message-markdown ul,
 .message-content.message-markdown ol {
@@ -1715,7 +1745,9 @@
 }
 
 .message-content.message-markdown code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
   font-size: 13px;
   background: var(--bg-secondary);
   padding: 2px 4px;
@@ -2605,7 +2637,9 @@
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
-  transition: color 0.1s, background 0.1s;
+  transition:
+    color 0.1s,
+    background 0.1s;
 }
 
 .permissions-reset-btn:hover {
@@ -2692,7 +2726,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    color 0.1s;
   font-weight: 700;
   line-height: 1;
 }
@@ -4717,7 +4753,9 @@
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .pinned-close-btn:hover {
@@ -4846,7 +4884,10 @@
   justify-content: center;
   border-radius: 4px;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
   margin: 8px 8px 0 0;
   flex-shrink: 0;
 }

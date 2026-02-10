@@ -41,8 +41,8 @@ public class MediaConfig
     public Dictionary<string, long> MaxSizesByCategory { get; } = new()
     {
         ["image"] = 10 * 1024 * 1024,      // 10MB - images
-        ["video"] = 100 * 1024 * 1024,     // 100MB - videos
-        ["audio"] = 20 * 1024 * 1024,      // 20MB - audio
+        ["video"] = 200 * 1024 * 1024,     // 200MB - videos
+        ["audio"] = 100 * 1024 * 1024,      // 100MB - audio
         ["document"] = 10 * 1024 * 1024,   // 10MB - documents
         ["archive"] = 50 * 1024 * 1024,    // 50MB - archives
         ["default"] = 10 * 1024 * 1024     // 10MB - fallback

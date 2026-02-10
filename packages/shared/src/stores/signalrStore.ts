@@ -1,6 +1,10 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
-export type SignalRStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
+export type SignalRStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected";
 
 interface SignalRState {
   status: SignalRStatus;
@@ -9,7 +13,7 @@ interface SignalRState {
 }
 
 export const useSignalRStore = create<SignalRState>((set) => ({
-  status: 'disconnected',
+  status: "disconnected",
   lastError: null,
   setStatus: (status, lastError = null) => set({ status, lastError }),
 }));

@@ -1,29 +1,35 @@
-import { useState } from 'react';
-import { useAuthStore } from '@abyss/shared';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from "react";
+import { useAuthStore } from "@abyss/shared";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function RegisterPage() {
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [error, setError] = useState('');
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [error, setError] = useState("");
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     try {
-      await register(username, email, password, displayName, inviteCode.trim() || undefined);
-      navigate('/');
+      await register(
+        username,
+        email,
+        password,
+        displayName,
+        inviteCode.trim() || undefined,
+      );
+      navigate("/");
     } catch (err: any) {
       const data = err.response?.data;
       if (Array.isArray(data)) {
-        setError(data.map((e: any) => e.description).join(', '));
+        setError(data.map((e: any) => e.description).join(", "));
       } else {
-        setError(data || 'Registration failed');
+        setError(data || "Registration failed");
       }
     }
   };
@@ -35,19 +41,39 @@ export default function RegisterPage() {
         {error && <div className="auth-error">{error}</div>}
         <label>
           Email
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
         </label>
         <label>
           Display Name
-          <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            required
+          />
         </label>
         <label>
           Username
-          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
         </label>
         <label>
           Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </label>
         <label>
           Invite Code

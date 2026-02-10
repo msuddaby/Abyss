@@ -3,6 +3,7 @@
 .env.dev
 .env.local
 .env.*.local
+packages/desktop/.env
 
 # TURN server config (contains credentials + public IP)
 turnserver.conf
@@ -45,3 +46,4 @@ Thumbs.db
 server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep
 server/Abyss.Api/uploads/*
+data/

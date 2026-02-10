@@ -1,22 +1,22 @@
-import { useState } from 'react';
-import { useAuthStore } from '@abyss/shared';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState } from "react";
+import { useAuthStore } from "@abyss/shared";
+import { Link, useNavigate } from "react-router-dom";
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
-    setError('');
+    setError("");
     try {
       await login(username, password);
-      navigate('/');
+      navigate("/");
     } catch (err: any) {
-      setError(err.response?.data || 'Login failed');
+      setError(err.response?.data || "Login failed");
     }
   };
 
@@ -28,11 +28,21 @@ export default function LoginPage() {
         {error && <div className="auth-error">{error}</div>}
         <label>
           Username
-          <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
         </label>
         <label>
           Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </label>
         <button type="submit">Log In</button>
         <p className="auth-link">

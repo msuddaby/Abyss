@@ -10,6 +10,7 @@ import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
+import { showDesktopNotification } from '../services/electronNotifications.js';
 import type { HubConnection } from '@microsoft/signalr';
 import type { Server, ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
 
@@ -248,7 +249,11 @@ export function useSignalRListeners() {
         }
       });
 
-      conn.on('MentionReceived', (notification: { id: string; messageId: string; channelId: string; serverId: string | null; type: string; createdAt: string }) => {
+      conn.on('MentionReceived', async (notification: { id: string; messageId: string; channelId: string; serverId: string | null; type: string; createdAt: string }) => {
+        const isCurrentChannel = notification.serverId
+          ? (useServerStore.getState().activeChannel?.id === notification.channelId && useServerStore.getState().activeChannel?.type === 'Text')
+          : (useDmStore.getState().activeDmChannel?.id === notification.channelId);
+
         if (!notification.serverId) {
           const activeDm = useDmStore.getState().activeDmChannel;
           if (activeDm?.id === notification.channelId) {
@@ -263,6 +268,26 @@ export function useSignalRListeners() {
           } else {
             useUnreadStore.getState().incrementMention(notification.channelId, notification.serverId);
           }
+        }
+
+        // Show desktop notification for mentions if not in current channel
+        if (!isCurrentChannel) {
+          const channelName = notification.serverId
+            ? useServerStore.getState().channels.find(c => c.id === notification.channelId)?.name || 'a channel'
+            : 'a DM';
+          const serverName = notification.serverId
+            ? useServerStore.getState().servers.find(s => s.id === notification.serverId)?.name
+            : null;
+
+          const title = serverName
+            ? `You were mentioned in #${channelName} (${serverName})`
+            : `You were mentioned in ${channelName}`;
+
+          await showDesktopNotification(
+            title,
+            'Click to view',
+            { channelId: notification.channelId, messageId: notification.messageId, serverId: notification.serverId }
+          );
         }
       });
 

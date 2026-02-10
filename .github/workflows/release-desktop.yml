@@ -1,0 +1,186 @@
+name: Release Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install client dependencies
+        run: |
+          cd client
+          npm ci
+
+      - name: Install desktop dependencies
+        run: |
+          cd packages/desktop
+          npm ci
+
+      - name: Build client
+        run: |
+          cd client
+          npm run build
+
+      - name: Build desktop TypeScript
+        run: |
+          cd packages/desktop
+          npm run build
+
+      # macOS specific: Import code signing certificate
+      - name: Import Code Signing Certificate (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          # Create keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          echo "$MACOS_CERTIFICATE" | base64 --decode -o "$CERTIFICATE_PATH"
+          security import "$CERTIFICATE_PATH" -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Clean up certificate file
+          rm "$CERTIFICATE_PATH"
+
+      # macOS build with code signing
+      - name: Build and package (macOS)
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
+        run: |
+          cd packages/desktop
+          npm run make
+
+      # Windows build (unsigned)
+      - name: Build and package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd packages/desktop
+          npm run make
+
+      # Linux build
+      - name: Build and package (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd packages/desktop
+          npm run make
+
+      # Generate update manifests
+      - name: Generate update manifests
+        run: node scripts/generate-update-manifest.js
+
+      # Upload artifacts
+      - name: Upload macOS artifacts
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-artifacts
+          path: |
+            packages/desktop/out/make/**/*.dmg
+            packages/desktop/out/make/**/*.zip
+            packages/desktop/out/make/**/latest-mac.yml
+
+      - name: Upload Windows artifacts
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: |
+            packages/desktop/out/make/**/*.exe
+            packages/desktop/out/make/**/RELEASES
+            packages/desktop/out/make/**/*.nupkg
+            packages/desktop/out/make/**/latest.yml
+
+      - name: Upload Linux artifacts
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+          path: |
+            packages/desktop/out/make/**/*.deb
+            packages/desktop/out/make/**/*.rpm
+            packages/desktop/out/make/**/*.zip
+            packages/desktop/out/make/**/latest-linux.yml
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') }}
+          files: |
+            artifacts/**/*
+          body: |
+            ## Abyss Desktop ${{ github.ref_name }}
+
+            ### Installation
+
+            **macOS:**
+            - Download `Abyss.dmg`
+            - Open and drag to Applications folder
+            - First launch: Right-click → Open (to bypass Gatekeeper)
+
+            **Windows:**
+            - Download the `.exe` installer
+            - Run installer (may show SmartScreen warning - click "More info" → "Run anyway")
+            - Auto-updates will work after first install
+
+            **Linux:**
+            - Debian/Ubuntu: Download `.deb` and run `sudo dpkg -i abyss-desktop_*.deb`
+            - Fedora/RHEL: Download `.rpm` and run `sudo rpm -i abyss-desktop-*.rpm`
+
+            ### What's New
+
+            <!-- Add release notes here -->
+
+            ### Auto-Updates
+
+            After installing this version, the app will automatically check for updates and notify you when new versions are available.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,7 @@
-import * as signalR from '@microsoft/signalr';
-import { getApiBase } from './api.js';
-import { getStorage } from '../storage.js';
-import { useSignalRStore } from '../stores/signalrStore.js';
+import * as signalR from "@microsoft/signalr";
+import { getApiBase } from "./api.js";
+import { getStorage } from "../storage.js";
+import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
 const PING_TIMEOUT_MS = 8000;
@@ -15,8 +15,6 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let pingInFlight = false;
 
-type SignalRStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
-
 function setStatus(status: SignalRStatus, lastError?: string | null) {
   useSignalRStore.getState().setStatus(status, lastError ?? null);
 }
@@ -26,7 +24,7 @@ export function getConnection(): signalR.HubConnection {
 
   connection = new signalR.HubConnectionBuilder()
     .withUrl(`${getApiBase()}/hubs/chat`, {
-      accessTokenFactory: () => getStorage().getItem('token') || '',
+      accessTokenFactory: () => getStorage().getItem("token") || "",
     })
     .withAutomaticReconnect([0, 2000, 5000, 10000, 20000, 30000])
     .build();
@@ -36,19 +34,19 @@ export function getConnection(): signalR.HubConnection {
 
   connection.onreconnecting(() => {
     reconnectingSince = Date.now();
-    setStatus('reconnecting');
+    setStatus("reconnecting");
   });
 
   connection.onreconnected(() => {
     reconnectingSince = null;
     reconnectAttempts = 0;
-    setStatus('connected');
+    setStatus("connected");
   });
 
   connection.onclose(() => {
     reconnectingSince = null;
-    setStatus('disconnected');
-    scheduleReconnect('closed');
+    setStatus("disconnected");
+    scheduleReconnect("closed");
   });
 
   return connection;
@@ -59,18 +57,21 @@ export function startConnection(): Promise<signalR.HubConnection> {
   if (conn.state === signalR.HubConnectionState.Connected) {
     return Promise.resolve(conn);
   }
-  setStatus('connecting');
+  setStatus("connecting");
   if (!startPromise) {
-    startPromise = conn.start().then(() => {
-      startPromise = null;
-      startHealthMonitor();
-      setStatus('connected');
-      return conn;
-    }).catch((err) => {
-      startPromise = null;
-      setStatus('disconnected', err instanceof Error ? err.message : null);
-      throw err;
-    });
+    startPromise = conn
+      .start()
+      .then(() => {
+        startPromise = null;
+        startHealthMonitor();
+        setStatus("connected");
+        return conn;
+      })
+      .catch((err) => {
+        startPromise = null;
+        setStatus("disconnected", err instanceof Error ? err.message : null);
+        throw err;
+      });
   }
   return startPromise;
 }
@@ -87,7 +88,7 @@ export async function stopConnection(): Promise<void> {
     await connection.stop();
     connection = null;
   }
-  setStatus('disconnected');
+  setStatus("disconnected");
 }
 
 export function resetConnection(): void {
@@ -95,13 +96,13 @@ export function resetConnection(): void {
   stopHealthMonitor();
   clearReconnectTimer();
   connection = null;
-  setStatus('disconnected');
+  setStatus("disconnected");
 }
 
 async function restartConnection(reason: string): Promise<void> {
   const conn = getConnection();
   if (conn.state === signalR.HubConnectionState.Connected) return;
-  setStatus('reconnecting');
+  setStatus("reconnecting");
   try {
     await conn.stop();
   } catch {
@@ -138,13 +139,13 @@ function clearReconnectTimer() {
 
 function scheduleReconnect(reason: string) {
   if (reconnectTimer) return;
-  setStatus('reconnecting', reason);
+  setStatus("reconnecting", reason);
   const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
   reconnectAttempts += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     void restartConnection(reason).catch(() => {
-      scheduleReconnect('retry');
+      scheduleReconnect("retry");
     });
   }, delay);
 }
@@ -152,12 +153,15 @@ function scheduleReconnect(reason: string) {
 async function healthCheck() {
   const conn = getConnection();
   if (conn.state === signalR.HubConnectionState.Disconnected) {
-    scheduleReconnect('disconnected');
+    scheduleReconnect("disconnected");
     return;
   }
-  if (conn.state === signalR.HubConnectionState.Reconnecting && reconnectingSince) {
+  if (
+    conn.state === signalR.HubConnectionState.Reconnecting &&
+    reconnectingSince
+  ) {
     if (Date.now() - reconnectingSince > RECONNECT_GRACE_MS) {
-      scheduleReconnect('reconnecting-timeout');
+      scheduleReconnect("reconnecting-timeout");
     }
     return;
   }
@@ -166,11 +170,13 @@ async function healthCheck() {
   pingInFlight = true;
   try {
     await Promise.race([
-      conn.invoke('Ping'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Ping timeout')), PING_TIMEOUT_MS)),
+      conn.invoke("Ping"),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Ping timeout")), PING_TIMEOUT_MS),
+      ),
     ]);
   } catch {
-    scheduleReconnect('ping-failed');
+    scheduleReconnect("ping-failed");
   } finally {
     pingInFlight = false;
   }
