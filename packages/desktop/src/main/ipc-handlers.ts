@@ -1,7 +1,10 @@
 import { BrowserWindow, ipcMain } from 'electron';
+import Store from 'electron-store';
 import { GlobalShortcutManager } from './global-shortcuts';
 import { showNotification } from './notifications';
 import { UpdateManager } from './update-manager';
+
+const store = new Store();
 
 export function setupIpcHandlers(
   window: BrowserWindow,
@@ -57,6 +60,20 @@ export function setupIpcHandlers(
   // Close window (hide to tray)
   ipcMain.on('close-window', () => {
     window.hide();
+  });
+
+  // Synchronous key/value storage for renderer (used by @abyss/shared storage adapter)
+  ipcMain.on('store-get', (event, key: string) => {
+    const value = store.get(`client.${key}`);
+    event.returnValue = value ?? null;
+  });
+  ipcMain.on('store-set', (event, key: string, value: string) => {
+    store.set(`client.${key}`, value);
+    event.returnValue = true;
+  });
+  ipcMain.on('store-remove', (event, key: string) => {
+    store.delete(`client.${key}`);
+    event.returnValue = true;
   });
 
   // Update handlers (only available in production)

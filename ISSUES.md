@@ -1,2 +1,0 @@
-- client/src/hooks/useWebRTC.ts - credentials in client file.
-- there should be a voice activity filter with noise supression

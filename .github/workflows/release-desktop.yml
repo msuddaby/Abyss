@@ -37,6 +37,9 @@ jobs:
           npm ci
 
       - name: Build client
+        env:
+          ELECTRON: 'true'
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: |
           cd client
           npm run build
@@ -174,6 +177,7 @@ jobs:
             **Linux:**
             - Debian/Ubuntu: Download `.deb` and run `sudo dpkg -i abyss-desktop_*.deb`
             - Fedora/RHEL: Download `.rpm` and run `sudo rpm -i abyss-desktop-*.rpm`
+            - Arch Linux: Install `abyss-desktop-bin` from the AUR
 
             ### What's New
 

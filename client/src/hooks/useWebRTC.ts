@@ -324,7 +324,12 @@ function startAnalyserLoop() {
         sum += val * val;
       }
       const rms = Math.sqrt(sum / buffer.length);
-      store.setSpeaking(userId, rms > SPEAKING_THRESHOLD);
+      const isLocal = !!currentUserId && userId === currentUserId;
+      let speaking = rms > SPEAKING_THRESHOLD;
+      if (isLocal && store.voiceMode === "push-to-talk") {
+        speaking = speaking && store.isPttActive && !store.isMuted;
+      }
+      store.setSpeaking(userId, speaking);
 
       if (currentUserId && userId === currentUserId) {
         store.setLocalInputLevel(rms);

@@ -33,6 +33,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false, // Required for iohook
+      backgroundThrottling: false, // Keep renderer active when hidden to tray
     },
     show: false, // Don't show until ready
   });

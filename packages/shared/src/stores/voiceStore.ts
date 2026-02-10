@@ -56,23 +56,23 @@ interface VoiceState {
 export const useVoiceStore = create<VoiceState>((set) => ({
   currentChannelId: null,
   participants: new Map(),
-  isMuted: (() => { try { return getStorage().getItem('isMuted') === 'true'; } catch { return false; } })(),
-  isDeafened: (() => { try { return getStorage().getItem('isDeafened') === 'true'; } catch { return false; } })(),
+  isMuted: false,
+  isDeafened: false,
   isScreenSharing: false,
   activeSharers: new Map(),
   watchingUserId: null,
   screenStreamVersion: 0,
   speakingUsers: new Set<string>(),
-  voiceMode: (() => { try { return (getStorage().getItem('voiceMode') as VoiceMode) || 'voice-activity'; } catch { return 'voice-activity' as VoiceMode; } })(),
-  pttKey: (() => { try { return getStorage().getItem('pttKey') || '`'; } catch { return '`'; } })(),
-  speakerOn: (() => { try { const v = getStorage().getItem('speakerOn'); return v === null ? true : v === 'true'; } catch { return true; } })(),
+  voiceMode: 'voice-activity' as VoiceMode,
+  pttKey: '`',
+  speakerOn: true,
   isPttActive: false,
-  inputDeviceId: (() => { try { return getStorage().getItem('inputDeviceId') || 'default'; } catch { return 'default'; } })(),
-  outputDeviceId: (() => { try { return getStorage().getItem('outputDeviceId') || 'default'; } catch { return 'default'; } })(),
-  noiseSuppression: (() => { try { const v = getStorage().getItem('noiseSuppression'); return v === null ? true : v === 'true'; } catch { return true; } })(),
-  echoCancellation: (() => { try { const v = getStorage().getItem('echoCancellation'); return v === null ? true : v === 'true'; } catch { return true; } })(),
-  autoGainControl: (() => { try { const v = getStorage().getItem('autoGainControl'); return v === null ? true : v === 'true'; } catch { return true; } })(),
-  inputSensitivity: (() => { try { const v = getStorage().getItem('inputSensitivity'); return v ? Number(v) : 1; } catch { return 1; } })(),
+  inputDeviceId: 'default',
+  outputDeviceId: 'default',
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: true,
+  inputSensitivity: 1,
   localInputLevel: 0,
   needsAudioUnlock: false,
 
@@ -195,3 +195,28 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       return { speakingUsers: next };
     }),
 }));
+
+/**
+ * Hydrate voice store from persistent storage.
+ * Must be called AFTER setStorage() so the adapter is available.
+ */
+export function hydrateVoiceStore() {
+  const s = getStorage();
+  const boolOr = (key: string, fallback: boolean) => {
+    const v = s.getItem(key);
+    return v === null ? fallback : v === 'true';
+  };
+  useVoiceStore.setState({
+    isMuted: boolOr('isMuted', false),
+    isDeafened: boolOr('isDeafened', false),
+    voiceMode: (s.getItem('voiceMode') as VoiceMode) || 'voice-activity',
+    pttKey: s.getItem('pttKey') || '`',
+    speakerOn: boolOr('speakerOn', true),
+    inputDeviceId: s.getItem('inputDeviceId') || 'default',
+    outputDeviceId: s.getItem('outputDeviceId') || 'default',
+    noiseSuppression: boolOr('noiseSuppression', true),
+    echoCancellation: boolOr('echoCancellation', true),
+    autoGainControl: boolOr('autoGainControl', true),
+    inputSensitivity: Number(s.getItem('inputSensitivity')) || 1,
+  });
+}

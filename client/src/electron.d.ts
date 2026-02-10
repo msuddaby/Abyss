@@ -30,6 +30,11 @@ interface Window {
     onGlobalPttPress: (callback: () => void) => () => void; // Returns unsubscribe function
     onGlobalPttRelease: (callback: () => void) => () => void; // Returns unsubscribe function
 
+    // Persistent storage (electron-store via main process)
+    getStoreItem: (key: string) => string | null;
+    setStoreItem: (key: string, value: string) => void;
+    removeStoreItem: (key: string) => void;
+
     // Notifications
     showNotification: (title: string, body: string, data?: any) => void;
     onNotificationClicked: (callback: (data: any) => void) => () => void; // Returns unsubscribe function

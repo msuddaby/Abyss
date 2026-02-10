@@ -4,6 +4,8 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
+    name: 'abyss-desktop',
+    executableName: 'abyss-desktop',
     icon: './resources/icon',
     extraResource: [
       '../../client/dist'

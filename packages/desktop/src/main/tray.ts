@@ -65,7 +65,8 @@ function updateTrayMenu(window: BrowserWindow) {
   const updateMenuItems: Electron.MenuItemConstructorOptions[] = [];
 
   if (updateManager) {
-    const updateInfo = updateManager.getUpdateInfo();
+    const manager = updateManager;
+    const updateInfo = manager.getUpdateInfo();
 
     switch (updateInfo.status) {
       case 'checking':
@@ -79,7 +80,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: `Update available (v${updateInfo.version})`,
           click: async () => {
             try {
-              await updateManager.downloadUpdate();
+              await manager.downloadUpdate();
             } catch (error) {
               console.error('Failed to download update:', error);
             }
@@ -96,7 +97,7 @@ function updateTrayMenu(window: BrowserWindow) {
         updateMenuItems.push({
           label: `Restart to install v${updateInfo.version}`,
           click: () => {
-            updateManager.quitAndInstall();
+            manager.quitAndInstall();
           },
         });
         break;
@@ -105,7 +106,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Check for Updates',
           click: async () => {
             try {
-              await updateManager.checkForUpdates();
+              await manager.checkForUpdates();
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }
@@ -121,7 +122,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Try again',
           click: async () => {
             try {
-              await updateManager.checkForUpdates();
+              await manager.checkForUpdates();
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }
@@ -133,7 +134,7 @@ function updateTrayMenu(window: BrowserWindow) {
           label: 'Check for Updates',
           click: async () => {
             try {
-              await updateManager.checkForUpdates();
+              await manager.checkForUpdates();
             } catch (error) {
               console.error('Failed to check for updates:', error);
             }

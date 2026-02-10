@@ -32,6 +32,17 @@ contextBridge.exposeInMainWorld('electron', {
     };
   },
 
+  // Persistent storage (electron-store via main process)
+  getStoreItem: (key: string) => {
+    return ipcRenderer.sendSync('store-get', key);
+  },
+  setStoreItem: (key: string, value: string) => {
+    ipcRenderer.sendSync('store-set', key, value);
+  },
+  removeStoreItem: (key: string) => {
+    ipcRenderer.sendSync('store-remove', key);
+  },
+
   // Notifications
   showNotification: (title: string, body: string, data?: any) => {
     ipcRenderer.send('show-notification', title, body, data);

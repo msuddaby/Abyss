@@ -10,7 +10,7 @@ import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
-import { showDesktopNotification } from '../services/electronNotifications.js';
+import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import type { HubConnection } from '@microsoft/signalr';
 import type { Server, ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
 
@@ -271,7 +271,11 @@ export function useSignalRListeners() {
         }
 
         // Show desktop notification for mentions if not in current channel
-        if (!isCurrentChannel) {
+        // In Electron, also notify for the current channel when window is hidden/unfocused
+        const isWindowHidden = isElectron()
+          ? !(await (window as any).electron.isFocused())
+          : false;
+        if (!isCurrentChannel || isWindowHidden) {
           const channelName = notification.serverId
             ? useServerStore.getState().channels.find(c => c.id === notification.channelId)?.name || 'a channel'
             : 'a DM';

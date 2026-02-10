@@ -4,7 +4,7 @@
   "description": "Abyss Desktop - Electron wrapper for Abyss web client",
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "tsc && electron .",
+    "dev": "tsc && NODE_ENV=development electron .",
     "start": "electron .",
     "build": "tsc",
     "rebuild": "electron-rebuild",

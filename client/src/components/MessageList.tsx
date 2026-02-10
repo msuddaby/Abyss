@@ -6,7 +6,7 @@ import {
   useDmStore,
   useServerStore,
 } from "@abyss/shared";
-import { showDesktopNotification } from "@abyss/shared/services/electronNotifications";
+import { showDesktopNotification, isElectron } from "@abyss/shared/services/electronNotifications";
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
@@ -55,8 +55,12 @@ export default function MessageList() {
         message.authorId && message.authorId !== currentUserId;
       const isDifferentChannel = message.channelId !== currentChannelId;
       const isTabHidden = document.hidden;
+      // In Electron, ask the main process directly — document.hidden may not update on hide-to-tray
+      const isWindowHidden = isElectron()
+        ? !(await window.electron!.isFocused())
+        : isTabHidden;
 
-      if (isFromOtherUser && (isDifferentChannel || isTabHidden)) {
+      if (isFromOtherUser && (isDifferentChannel || isWindowHidden)) {
         // Play sound
         if (incomingSoundRef.current) {
           incomingSoundRef.current.currentTime = 0;
@@ -69,11 +73,8 @@ export default function MessageList() {
 
         // Show desktop notification for DMs
         const isDmMode = useDmStore.getState().isDmMode;
-        //const activeDmChannel = useDmStore.getState().activeDmChannel;
         const activeServer = useServerStore.getState().activeServer;
-
-        // Check if this is a DM (not in a server channel)
-        const isDm = isDifferentChannel && (!activeServer || isDmMode);
+        const isDm = (!activeServer || isDmMode) && (isDifferentChannel || isWindowHidden);
 
         if (isDm) {
           const senderName =

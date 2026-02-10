@@ -3,7 +3,7 @@ import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import Constants from 'expo-constants';
 import { View } from 'react-native';
-import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, useServerStore, useUnreadStore, useAppConfigStore } from '@abyss/shared';
+import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, useServerStore, useUnreadStore, useAppConfigStore, hydrateVoiceStore } from '@abyss/shared';
 import { preloadStorage } from '../src/storage';
 import { registerForPushNotifications, addNotificationResponseListener, setBadgeCount } from '../src/utils/notifications';
 import ToastHost from '../src/components/ToastHost';
@@ -23,6 +23,7 @@ export default function RootLayout() {
     (async () => {
       const adapter = await preloadStorage();
       setStorage(adapter);
+      hydrateVoiceStore();
       setApiBase(Constants.expoConfig?.extra?.apiUrl ?? 'http://localhost:5000');
       setOnUnauthorized(() => useAuthStore.getState().logout());
 
