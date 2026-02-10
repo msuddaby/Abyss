@@ -16,6 +16,7 @@ public class Channel
     public Server? Server { get; set; }
     public int Position { get; set; }
     public List<ChannelPermissionOverride> PermissionOverrides { get; set; } = new();
+    public bool PersistentChat { get; set; }
 
     // DM-specific fields
     public string? DmUser1Id { get; set; }

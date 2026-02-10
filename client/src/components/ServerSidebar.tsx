@@ -3,6 +3,7 @@ import { useServerStore, useDmStore, useUnreadStore, useAuthStore, getApiBase, h
 import CreateServerModal from './CreateServerModal';
 import JoinServerModal from './JoinServerModal';
 import ServerSettingsModal from './ServerSettingsModal';
+import ServerNotificationModal from './ServerNotificationModal';
 import ConfirmModal from './ConfirmModal';
 
 export default function ServerSidebar() {
@@ -17,6 +18,7 @@ export default function ServerSidebar() {
   const [serverToLeave, setServerToLeave] = useState<typeof servers[number] | null>(null);
   const [contextMenuServer, setContextMenuServer] = useState<typeof servers[number] | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
+  const [notifSettingsServer, setNotifSettingsServer] = useState<typeof servers[number] | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -160,6 +162,12 @@ export default function ServerSidebar() {
       )}
       {contextMenuServer && (
         <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
+          <button
+            className="context-menu-item"
+            onClick={() => { setNotifSettingsServer(contextMenuServer); setContextMenuServer(null); }}
+          >
+            Notification Settings
+          </button>
           {(((contextMenuServer.id === activeServer?.id) && (canManageServer || isOwner)) || contextMenuServer.ownerId === currentUser?.id) && (
             <button
               className="context-menu-item"
@@ -189,6 +197,12 @@ export default function ServerSidebar() {
             setServerToLeave(null);
           }}
           onClose={() => setServerToLeave(null)}
+        />
+      )}
+      {notifSettingsServer && (
+        <ServerNotificationModal
+          serverId={notifSettingsServer.id}
+          onClose={() => setNotifSettingsServer(null)}
         />
       )}
     </div>

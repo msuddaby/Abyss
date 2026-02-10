@@ -250,8 +250,19 @@ public class ChatHub : Hub
                     await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("ScreenShareStopped", UserId);
                 }
 
+                // Check if user had camera on before leaving
+                var hadCamera = _voiceState.IsCameraOn(voiceChannel.Value, UserId);
+                if (hadCamera)
+                {
+                    _voiceState.RemoveCameraUser(voiceChannel.Value, UserId);
+                    await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("CameraStopped", UserId);
+                }
+
                 _voiceState.LeaveChannel(voiceChannel.Value, UserId);
                 await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("UserLeftVoice", UserId);
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{voiceChannel.Value}");
+
+                await CleanupVoiceChatIfEmpty(voiceChannel.Value);
 
                 // Notify server group so sidebar updates
                 var channel = await _db.Channels.FindAsync(voiceChannel.Value);
@@ -263,6 +274,14 @@ public class ChatHub : Hub
                         foreach (var userId in recipients)
                         {
                             await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", voiceChannel.Value.ToString(), UserId);
+                        }
+                    }
+                    if (hadCamera)
+                    {
+                        var camRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
+                        foreach (var userId in camRecipients)
+                        {
+                            await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", voiceChannel.Value.ToString(), UserId);
                         }
                     }
                     var leftRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
@@ -459,7 +478,8 @@ public class ChatHub : Hub
             // Reply notification: if replying to someone else who wasn't already notified
             if (replyToGuid.HasValue && replyDto != null && replyDto.AuthorId != UserId && !notifiedUserIds.Contains(replyDto.AuthorId))
             {
-                if (await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel))
+                if (await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel)
+                    && await _notifications.ShouldNotify(replyDto.AuthorId, channel.ServerId.Value, channelGuid, NotificationType.ReplyMention))
                 {
                     var replyNotification = new Notification
                     {
@@ -787,9 +807,20 @@ public class ChatHub : Hub
                 await Clients.Group($"voice:{currentChannel.Value}").SendAsync("ScreenShareStopped", UserId);
             }
 
+            // Clear camera if leaving while camera was on
+            var hadCamera = _voiceState.IsCameraOn(currentChannel.Value, UserId);
+            if (hadCamera)
+            {
+                _voiceState.RemoveCameraUser(currentChannel.Value, UserId);
+                await Clients.Group($"voice:{currentChannel.Value}").SendAsync("CameraStopped", UserId);
+            }
+
             _voiceState.LeaveChannel(currentChannel.Value, UserId);
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"voice:{currentChannel.Value}");
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{currentChannel.Value}");
             await Clients.Group($"voice:{currentChannel.Value}").SendAsync("UserLeftVoice", UserId);
+
+            await CleanupVoiceChatIfEmpty(currentChannel.Value);
 
             // Notify the server group so sidebar updates for non-participants
             var prevChannel = await _db.Channels.FindAsync(currentChannel.Value);
@@ -801,6 +832,14 @@ public class ChatHub : Hub
                     foreach (var userId in recipients)
                     {
                         await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", currentChannel.Value.ToString(), UserId);
+                    }
+                }
+                if (hadCamera)
+                {
+                    var camRecipients = await GetUserIdsWithChannelPermission(currentChannel.Value, Permission.ViewChannel);
+                    foreach (var userId in camRecipients)
+                    {
+                        await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", currentChannel.Value.ToString(), UserId);
                     }
                 }
                 var leftRecipients = await GetUserIdsWithChannelPermission(currentChannel.Value, Permission.ViewChannel);
@@ -818,6 +857,7 @@ public class ChatHub : Hub
             _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);
         }
         await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
 
         // Send current participants to the joining user
         var users = _voiceState.GetChannelUsersDisplayNames(channelGuid);
@@ -828,6 +868,13 @@ public class ChatHub : Hub
         if (currentSharers.Count > 0)
         {
             await Clients.Caller.SendAsync("ActiveSharers", currentSharers);
+        }
+
+        // Send current camera users to the joining user
+        var currentCameras = _voiceState.GetCameraUsers(channelGuid);
+        if (currentCameras.Count > 0)
+        {
+            await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
         }
 
         // Notify voice group for WebRTC setup
@@ -899,9 +946,20 @@ public class ChatHub : Hub
             await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
         }
 
+        // Clear camera if leaving while camera was on
+        var hadCamera = _voiceState.IsCameraOn(channelGuid, UserId);
+        if (hadCamera)
+        {
+            _voiceState.RemoveCameraUser(channelGuid, UserId);
+            await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
+        }
+
         _voiceState.LeaveChannel(channelGuid, UserId);
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"voice:{channelId}");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
         await Clients.Group($"voice:{channelId}").SendAsync("UserLeftVoice", UserId);
+
+        await CleanupVoiceChatIfEmpty(channelGuid);
 
         // Notify the server group so sidebar updates for non-participants
         var channel = await _db.Channels.FindAsync(channelGuid);
@@ -913,6 +971,14 @@ public class ChatHub : Hub
                 foreach (var userId in recipients)
                 {
                     await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+                }
+            }
+            if (hadCamera)
+            {
+                var camRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+                foreach (var userId in camRecipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
                 }
             }
             var leftRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
@@ -1035,6 +1101,53 @@ public class ChatHub : Hub
         return _voiceState.GetSharersForChannels(allowedChannelIds);
     }
 
+    // Camera sharing
+    public async Task NotifyCamera(string channelId, bool isOn)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var channel = await _db.Channels.FindAsync(channelGuid);
+        if (channel == null || !channel.ServerId.HasValue) return;
+        if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Stream)) return;
+
+        if (isOn)
+        {
+            _voiceState.AddCameraUser(channelGuid, UserId, DisplayName);
+            await Clients.Group($"voice:{channelId}").SendAsync("CameraStarted", UserId, DisplayName);
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("CameraStartedInChannel", channelId, UserId);
+            }
+        }
+        else
+        {
+            _voiceState.RemoveCameraUser(channelGuid, UserId);
+            await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
+            var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in recipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
+            }
+        }
+    }
+
+    // Get camera users for all voice channels in a server (for sidebar indicators)
+    public async Task<Dictionary<Guid, HashSet<string>>> GetServerVoiceCameras(string serverId)
+    {
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new Dictionary<Guid, HashSet<string>>();
+        var channelIds = await _db.Channels
+            .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
+            .Select(c => c.Id)
+            .ToListAsync();
+        var allowedChannelIds = new List<Guid>();
+        foreach (var channelId in channelIds)
+        {
+            if (await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ViewChannel))
+                allowedChannelIds.Add(channelId);
+        }
+        return _voiceState.GetCamerasForChannels(allowedChannelIds);
+    }
+
     // Mark a channel as read for the current user
     public async Task MarkChannelRead(string channelId)
     {
@@ -1081,6 +1194,30 @@ public class ChatHub : Hub
     public async Task<List<DmUnreadDto>> GetDmUnreads()
     {
         return await _notifications.GetDmUnreads(UserId);
+    }
+
+    private async Task CleanupVoiceChatIfEmpty(Guid channelId)
+    {
+        if (!_voiceState.IsChannelEmpty(channelId)) return;
+
+        var channel = await _db.Channels.FindAsync(channelId);
+        if (channel == null || channel.PersistentChat) return;
+
+        // Bulk-delete messages + related data for this voice channel
+        var messageIds = await _db.Messages
+            .Where(m => m.ChannelId == channelId)
+            .Select(m => m.Id)
+            .ToListAsync();
+
+        if (messageIds.Count == 0) return;
+
+        _db.Reactions.RemoveRange(_db.Reactions.Where(r => messageIds.Contains(r.MessageId)));
+        _db.Attachments.RemoveRange(_db.Attachments.Where(a => a.MessageId.HasValue && messageIds.Contains(a.MessageId.Value)));
+        _db.PinnedMessages.RemoveRange(_db.PinnedMessages.Where(pm => messageIds.Contains(pm.MessageId)));
+        _db.Notifications.RemoveRange(_db.Notifications.Where(n => messageIds.Contains(n.MessageId)));
+        _db.Messages.RemoveRange(_db.Messages.Where(m => m.ChannelId == channelId));
+
+        await _db.SaveChangesAsync();
     }
 
     // Get online user IDs (for @here mention resolution)

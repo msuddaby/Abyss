@@ -1,6 +1,30 @@
+import { useRef, useEffect, useState } from 'react';
 import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
-import { useWebRTC } from '../hooks/useWebRTC';
+import VoiceChatPanel from './VoiceChatPanel';
+import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
+
+function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: boolean; version: number }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const stream = isLocal ? getLocalCameraStream() : getCameraVideoStream(userId);
+    if (stream && ref.current.srcObject !== stream) {
+      ref.current.srcObject = stream;
+    }
+  }, [userId, isLocal, version]);
+
+  return (
+    <video
+      ref={ref}
+      className="vcv-video"
+      autoPlay
+      playsInline
+      muted={isLocal}
+    />
+  );
+}
 
 export default function VoiceChannelView() {
   const activeChannel = useServerStore((s) => s.activeChannel);
@@ -11,14 +35,21 @@ export default function VoiceChannelView() {
   const participants = useVoiceStore((s) => s.participants);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
   const activeSharers = useVoiceStore((s) => s.activeSharers);
+  const activeCameras = useVoiceStore((s) => s.activeCameras);
   const watchingUserId = useVoiceStore((s) => s.watchingUserId);
+  const focusedUserId = useVoiceStore((s) => s.focusedUserId);
   const isMuted = useVoiceStore((s) => s.isMuted);
   const isDeafened = useVoiceStore((s) => s.isDeafened);
+  const isCameraOn = useVoiceStore((s) => s.isCameraOn);
+  const cameraStreamVersion = useVoiceStore((s) => s.cameraStreamVersion);
   const currentUser = useAuthStore((s) => s.user);
+  const isVoiceChatOpen = useVoiceStore((s) => s.isVoiceChatOpen);
   const { joinVoice } = useWebRTC();
+  const setFocusedUserId = useVoiceStore((s) => s.setFocusedUserId);
 
   const isConnected = !!activeChannel && currentChannelId === activeChannel.id;
   const isWatching = isConnected && watchingUserId !== null;
+  const isFocused = isConnected && focusedUserId !== null && !isWatching;
   const channelUsers = activeChannel ? voiceChannelUsers.get(activeChannel.id) : undefined;
   const channelSharers = activeChannel ? voiceChannelSharers.get(activeChannel.id) : undefined;
   const canConnect = activeChannel ? hasChannelPermission(activeChannel.permissions, Permission.Connect) : false;
@@ -36,11 +67,115 @@ export default function VoiceChannelView() {
     return member.user.avatarUrl.startsWith('http') ? member.user.avatarUrl : `${getApiBase()}${member.user.avatarUrl}`;
   };
 
+  const hasCamera = (userId: string): boolean => {
+    if (userId === currentUser?.id) return isCameraOn;
+    return activeCameras.has(userId);
+  };
+
+  const focusedEntry = isFocused ? participantEntries.find(([uid]) => uid === focusedUserId) : null;
+  const [showParticipants, setShowParticipants] = useState(true);
+
   return (
+    <div className="vcv-wrapper">
     <div className="vcv-container">
       {isWatching ? (
-        <div className="vcv-screen-share-fullscreen">
-          <ScreenShareView />
+        <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>
+          <div className="vcv-watching-main">
+            <ScreenShareView />
+          </div>
+          {showParticipants && (
+            <div className="vcv-watching-panel">
+              <div className="vcv-watching-panel-list">
+                {participantEntries.map(([userId, state]) => {
+                  const isSpeaking = speakingUsers.has(userId);
+                  const avatarUrl = getMemberAvatar(userId);
+                  const userHasCamera = hasCamera(userId);
+                  const isSelf = userId === currentUser?.id;
+                  return (
+                    <div key={userId} className="vcv-watching-tile">
+                      {userHasCamera ? (
+                        <VideoTile userId={userId} isLocal={isSelf} version={cameraStreamVersion} />
+                      ) : (
+                        <div className={`vcv-watching-avatar-wrap${isSpeaking ? ' speaking' : ''}`}>
+                          <div className="vcv-avatar">
+                            {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
+                          </div>
+                        </div>
+                      )}
+                      <span className="vcv-watching-tile-name">{state.displayName}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <button
+            className="vcv-toggle-panel"
+            onClick={() => setShowParticipants(!showParticipants)}
+            title={showParticipants ? 'Hide participants' : 'Show participants'}
+          >
+            {showParticipants ? '▶' : '◀'}
+          </button>
+        </div>
+      ) : isFocused && focusedEntry ? (
+        <div className="vcv-focused-container">
+          <div className="vcv-focused-header">
+            <span className="vcv-focused-name">{focusedEntry[1].displayName}</span>
+            <div className="vcv-focused-actions">
+              {activeSharers.has(focusedUserId!) && (
+                <button
+                  className="vcv-focused-chip"
+                  onClick={() => requestWatch(focusedUserId!)}
+                >
+                  Watch Screen
+                </button>
+              )}
+              <button className="vcv-focused-close" onClick={() => setFocusedUserId(null)}>✕</button>
+            </div>
+          </div>
+          <div className="vcv-focused-video-area">
+            {hasCamera(focusedUserId!) ? (
+              <VideoTile
+                userId={focusedUserId!}
+                isLocal={focusedUserId === currentUser?.id}
+                version={cameraStreamVersion}
+              />
+            ) : (
+              <div className="vcv-focused-avatar">
+                {(() => {
+                  const avatarUrl = getMemberAvatar(focusedUserId!);
+                  return avatarUrl
+                    ? <img src={avatarUrl} alt={focusedEntry[1].displayName} />
+                    : <span>{focusedEntry[1].displayName.charAt(0).toUpperCase()}</span>;
+                })()}
+              </div>
+            )}
+          </div>
+          <div className="vcv-participant-strip">
+            {participantEntries.map(([userId, state]) => {
+              const isSpeaking = speakingUsers.has(userId);
+              const avatarUrl = getMemberAvatar(userId);
+              const userHasCamera = hasCamera(userId);
+              return (
+                <div
+                  key={userId}
+                  className={`vcv-strip-card${userId === focusedUserId ? ' focused' : ''}`}
+                  onClick={() => setFocusedUserId(userId)}
+                >
+                  {userHasCamera ? (
+                    <VideoTile userId={userId} isLocal={userId === currentUser?.id} version={cameraStreamVersion} />
+                  ) : (
+                    <div className={`vcv-avatar-ring${isSpeaking ? ' speaking' : ''}`}>
+                      <div className="vcv-avatar">
+                        {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
+                      </div>
+                    </div>
+                  )}
+                  <span className="vcv-name">{state.displayName}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div className="vcv-scroll-area">
@@ -64,17 +199,27 @@ export default function VoiceChannelView() {
                 ? activeSharers.has(userId)
                 : !!channelSharers?.has(userId);
               const avatarUrl = getMemberAvatar(userId);
+              const userHasCamera = isConnected && hasCamera(userId);
 
               return (
-                <div key={userId} className="vcv-card">
-                  <div className={`vcv-avatar-ring${isSpeaking ? ' speaking' : ''}`}>
-                    <div className="vcv-avatar">
-                      {avatarUrl
-                        ? <img src={avatarUrl} alt={state.displayName} />
-                        : state.displayName.charAt(0).toUpperCase()
-                      }
+                <div
+                  key={userId}
+                  className={`vcv-card${userHasCamera ? ' has-video' : ''}`}
+                  onClick={() => isConnected && setFocusedUserId(userId)}
+                  style={{ cursor: isConnected ? 'pointer' : undefined }}
+                >
+                  {userHasCamera ? (
+                    <VideoTile userId={userId} isLocal={isSelf} version={cameraStreamVersion} />
+                  ) : (
+                    <div className={`vcv-avatar-ring${isSpeaking ? ' speaking' : ''}`}>
+                      <div className="vcv-avatar">
+                        {avatarUrl
+                          ? <img src={avatarUrl} alt={state.displayName} />
+                          : state.displayName.charAt(0).toUpperCase()
+                        }
+                      </div>
                     </div>
-                  </div>
+                  )}
                   {(memberIsMuted || memberIsDeafened) && (
                     <div className="vcv-mute-overlay">
                       {memberIsMuted && <span>🔇</span>}
@@ -106,6 +251,8 @@ export default function VoiceChannelView() {
           </button>
         </div>
       )}
+    </div>
+    {isConnected && isVoiceChatOpen && <VoiceChatPanel />}
     </div>
   );
 }

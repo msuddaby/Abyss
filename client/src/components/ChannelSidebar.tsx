@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
@@ -12,6 +12,8 @@ import AdminPanelModal from './AdminPanelModal';
 import ConfirmModal from './ConfirmModal';
 import EditChannelModal from './EditChannelModal';
 import ChannelPermissionsModal from './ChannelPermissionsModal';
+import ServerNotificationModal from './ServerNotificationModal';
+import ChannelNotificationModal from './ChannelNotificationModal';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels } = useServerStore();
@@ -36,6 +38,10 @@ export default function ChannelSidebar() {
   const [channelToDelete, setChannelToDelete] = useState<Channel | null>(null);
   const [channelToEdit, setChannelToEdit] = useState<Channel | null>(null);
   const [channelToEditPermissions, setChannelToEditPermissions] = useState<Channel | null>(null);
+  const [showNotifSettings, setShowNotifSettings] = useState(false);
+  const [notifChannel, setNotifChannel] = useState<Channel | null>(null);
+  const [showServerDropdown, setShowServerDropdown] = useState(false);
+  const serverDropdownRef = useRef<HTMLDivElement>(null);
   const [contextMenuChannel, setContextMenuChannel] = useState<Channel | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
@@ -102,8 +108,21 @@ export default function ChannelSidebar() {
     }
   }, [contextMenuChannel, contextMenuPos]);
 
+  const isServerMuted = useNotificationSettingsStore((s) => activeServer ? s.isServerMuted(activeServer.id) : false);
+  const channelSettingsMap = useNotificationSettingsStore((s) => s.channelSettings);
+
+  useEffect(() => {
+    if (!showServerDropdown) return;
+    const handleClick = (e: MouseEvent) => {
+      if (serverDropdownRef.current && !serverDropdownRef.current.contains(e.target as Node)) {
+        setShowServerDropdown(false);
+      }
+    };
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [showServerDropdown]);
+
   const handleChannelContextMenu = (channel: Channel) => (e: React.MouseEvent) => {
-    if (!canManageChannels) return;
     e.preventDefault();
     e.stopPropagation();
     setContextMenuPos({ x: e.clientX, y: e.clientY });
@@ -331,14 +350,36 @@ export default function ChannelSidebar() {
 
   return (
     <div className="channel-sidebar">
-      <div className="channel-sidebar-header">
-        <span className="server-name">{activeServer.name}</span>
+      <div className="channel-sidebar-header" ref={serverDropdownRef}>
+        <button className="server-name-btn" onClick={() => setShowServerDropdown(!showServerDropdown)}>
+          <span className="server-name">{activeServer.name}</span>
+          {isServerMuted && <span className="mute-icon" title="Muted">&#128277;&#xFE0E;</span>}
+          <svg className="server-dropdown-arrow" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M7 10l5 5 5-5z" />
+          </svg>
+        </button>
         {showServerSettingsBtn && (
           <button className="server-settings-btn" onClick={() => setShowServerSettings(true)} title="Server Settings">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
             </svg>
           </button>
+        )}
+        {showServerDropdown && (
+          <div className="server-dropdown-menu">
+            <button
+              className="server-dropdown-item"
+              onClick={() => { setShowNotifSettings(true); setShowServerDropdown(false); }}
+            >
+              Notification Settings
+            </button>
+            <button
+              className="server-dropdown-item"
+              onClick={() => { setShowInvite(true); setShowServerDropdown(false); }}
+            >
+              Invite People
+            </button>
+          </div>
         )}
       </div>
       <div className="channel-sidebar-actions">
@@ -355,6 +396,8 @@ export default function ChannelSidebar() {
               const unread = channelUnreads.get(channel.id);
               const hasUnread = unread?.hasUnread && activeChannel?.id !== channel.id;
               const mentionCount = unread?.mentionCount || 0;
+              const chMuted = channelSettingsMap.get(channel.id);
+              const isChMuted = chMuted?.muteUntil ? new Date(chMuted.muteUntil) > new Date() : false;
               return (
                 <div
                   key={channel.id}
@@ -368,11 +411,12 @@ export default function ChannelSidebar() {
                 >
                   {hasUnread && <div className="channel-unread-dot" />}
                   <button
-                    className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}${hasUnread ? ' unread' : ''}`}
+                    className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}${hasUnread ? ' unread' : ''}${isChMuted ? ' muted-channel' : ''}`}
                     onClick={() => handleChannelClick(channel)}
                   >
                     <span className="channel-hash">#</span>
                     {channel.name}
+                    {isChMuted && <span className="channel-mute-icon" title="Muted">&#128277;&#xFE0E;</span>}
                     {mentionCount > 0 && activeChannel?.id !== channel.id && (
                       <span className="mention-badge">{mentionCount}</span>
                     )}
@@ -431,29 +475,40 @@ export default function ChannelSidebar() {
         <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
           <button
             className="context-menu-item"
-            onClick={() => { setChannelToEdit(contextMenuChannel); setContextMenuChannel(null); }}
+            onClick={() => { setNotifChannel(contextMenuChannel); setContextMenuChannel(null); }}
           >
-            Edit Channel
+            Notification Settings
           </button>
-          <button
-            className="context-menu-item"
-            onClick={() => { setChannelToEditPermissions(contextMenuChannel); setContextMenuChannel(null); }}
-          >
-            Channel Permissions
-          </button>
-          <button
-            className="context-menu-item danger"
-            onClick={() => { setChannelToDelete(contextMenuChannel); setContextMenuChannel(null); }}
-          >
-            Delete Channel
-          </button>
+          {canManageChannels && (
+            <>
+              <button
+                className="context-menu-item"
+                onClick={() => { setChannelToEdit(contextMenuChannel); setContextMenuChannel(null); }}
+              >
+                Edit Channel
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => { setChannelToEditPermissions(contextMenuChannel); setContextMenuChannel(null); }}
+              >
+                Channel Permissions
+              </button>
+              <button
+                className="context-menu-item danger"
+                onClick={() => { setChannelToDelete(contextMenuChannel); setContextMenuChannel(null); }}
+              >
+                Delete Channel
+              </button>
+            </>
+          )}
         </div>
       )}
       {channelToEdit && activeServer && (
         <EditChannelModal
           initialName={channelToEdit.name}
           channelType={channelToEdit.type}
-          onSave={async (name) => { await renameChannel(activeServer.id, channelToEdit.id, name); }}
+          initialPersistentChat={channelToEdit.persistentChat}
+          onSave={async (name, persistentChat) => { await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat); }}
           onClose={() => setChannelToEdit(null)}
         />
       )}
@@ -473,6 +528,20 @@ export default function ChannelSidebar() {
           danger
           onConfirm={() => deleteChannel(activeServer.id, channelToDelete.id)}
           onClose={() => setChannelToDelete(null)}
+        />
+      )}
+      {showNotifSettings && activeServer && (
+        <ServerNotificationModal
+          serverId={activeServer.id}
+          onClose={() => setShowNotifSettings(false)}
+        />
+      )}
+      {notifChannel && activeServer && (
+        <ChannelNotificationModal
+          serverId={activeServer.id}
+          channelId={notifChannel.id}
+          channelName={notifChannel.name}
+          onClose={() => setNotifChannel(null)}
         />
       )}
     </div>

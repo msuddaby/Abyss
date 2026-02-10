@@ -9,7 +9,7 @@ import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
 import PinnedMessagesModal from '../components/PinnedMessagesModal';
 import UpdateBanner from '../components/UpdateBanner';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore } from '@abyss/shared';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useVoiceStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 
 export default function MainLayout() {
@@ -22,7 +22,21 @@ export default function MainLayout() {
   const closeSearch = useSearchStore((s) => s.closeSearch);
   const signalRStatus = useSignalRStore((s) => s.status);
   const fetchConfig = useAppConfigStore((s) => s.fetchConfig);
+  const currentChannelId = useVoiceStore((s) => s.currentChannelId);
+  const isVoiceChatOpen = useVoiceStore((s) => s.isVoiceChatOpen);
+  const toggleVoiceChat = useVoiceStore((s) => s.toggleVoiceChat);
   const [showPins, setShowPins] = useState(false);
+  const [memberListVisible, setMemberListVisible] = useState(() => {
+    const saved = localStorage.getItem('memberListVisible');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const toggleMemberList = () => {
+    setMemberListVisible((prev) => {
+      localStorage.setItem('memberListVisible', String(!prev));
+      return !prev;
+    });
+  };
 
   useSignalRListeners();
   useEffect(() => {
@@ -99,6 +113,13 @@ export default function MainLayout() {
                   >
                     📌
                   </button>
+                  <button
+                    className={`member-list-toggle-btn${memberListVisible ? ' active' : ''}`}
+                    onClick={toggleMemberList}
+                    title="Toggle member list"
+                  >
+                    👥
+                  </button>
                 </div>
               </div>
               <MessageList />
@@ -116,6 +137,24 @@ export default function MainLayout() {
               <div className="channel-header">
                 <span className="channel-voice-icon">🔊</span>
                 <span className="channel-name">{activeChannel.name}</span>
+                <div className="channel-header-actions">
+                  {currentChannelId === activeChannel.id && (
+                    <button
+                      className={`voice-chat-toggle-btn${isVoiceChatOpen ? ' active' : ''}`}
+                      onClick={toggleVoiceChat}
+                      title="Toggle voice chat"
+                    >
+                      💬
+                    </button>
+                  )}
+                  <button
+                    className={`member-list-toggle-btn${memberListVisible ? ' active' : ''}`}
+                    onClick={toggleMemberList}
+                    title="Toggle member list"
+                  >
+                    👥
+                  </button>
+                </div>
               </div>
               <VoiceChannelView />
             </div>
@@ -127,7 +166,7 @@ export default function MainLayout() {
           </div>
         )}
       </div>
-      {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : <MemberList />)}
+      {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : memberListVisible ? <MemberList /> : null)}
     </div>
   );
 }

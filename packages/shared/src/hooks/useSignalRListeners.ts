@@ -10,9 +10,11 @@ import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
+import { useNotificationSettingsStore } from '../stores/notificationSettingsStore.js';
+import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerRole, CustomEmoji, DmChannel } from '../types/index.js';
+import type { Server, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences } from '../types/index.js';
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
@@ -23,6 +25,10 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
     useServerStore.getState().setVoiceChannelSharers(data);
   }).catch(console.error);
 
+  conn.invoke('GetServerVoiceCameras', serverId).then((data: Record<string, string[]>) => {
+    useServerStore.getState().setVoiceChannelCameras(data);
+  }).catch(console.error);
+
   conn.invoke('GetOnlineUsers', serverId).then((userIds: string[]) => {
     usePresenceStore.getState().setOnlineUsers(userIds);
   }).catch(console.error);
@@ -30,6 +36,8 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetUnreadState', serverId).then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
     useUnreadStore.getState().setChannelUnreads(serverId, unreads);
   }).catch(console.error);
+
+  useNotificationSettingsStore.getState().fetchSettings(serverId);
 }
 
 export function refreshSignalRState(conn: HubConnection) {
@@ -44,6 +52,9 @@ export function refreshSignalRState(conn: HubConnection) {
   conn.invoke('GetDmUnreads').then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
     useUnreadStore.getState().setDmUnreads(unreads);
   }).catch(console.error);
+
+  // Fetch user preferences from server (source of truth)
+  useUserPreferencesStore.getState().fetchPreferences();
 
   const server = useServerStore.getState().activeServer;
   if (server) {
@@ -79,6 +90,7 @@ export function useSignalRListeners() {
         'UserOnline', 'UserOffline', 'UserIsTyping',
         'VoiceUserJoinedChannel', 'VoiceUserLeftChannel', 'VoiceUserStateUpdated',
         'ScreenShareStartedInChannel', 'ScreenShareStoppedInChannel',
+        'CameraStartedInChannel', 'CameraStoppedInChannel',
         'UserProfileUpdated', 'MemberRolesUpdated', 'MemberKicked', 'MemberBanned', 'MemberUnbanned',
         'RoleCreated', 'RoleUpdated', 'RoleDeleted',
         'EmojiCreated', 'EmojiUpdated', 'EmojiDeleted',
@@ -87,6 +99,7 @@ export function useSignalRListeners() {
         'NewUnreadMessage', 'MentionReceived',
         'DmChannelCreated',
         'Error', 'ConfigUpdated',
+        'ServerDefaultNotificationLevelChanged', 'NotificationSettingsChanged', 'UserPreferencesChanged',
       ];
       for (const e of events) conn.off(e);
 
@@ -127,6 +140,14 @@ export function useSignalRListeners() {
 
       conn.on('ScreenShareStoppedInChannel', (channelId: string, userId: string) => {
         useServerStore.getState().voiceSharerStopped(channelId, userId);
+      });
+
+      conn.on('CameraStartedInChannel', (channelId: string, userId: string) => {
+        useServerStore.getState().voiceCameraStarted(channelId, userId);
+      });
+
+      conn.on('CameraStoppedInChannel', (channelId: string, userId: string) => {
+        useServerStore.getState().voiceCameraStopped(channelId, userId);
       });
 
       conn.on('UserProfileUpdated', () => {
@@ -302,6 +323,19 @@ export function useSignalRListeners() {
         }
       });
 
+      conn.on('ServerDefaultNotificationLevelChanged', (serverId: string, level: number) => {
+        useServerStore.getState().updateServerLocal({ ...useServerStore.getState().servers.find(s => s.id === serverId)!, defaultNotificationLevel: level });
+      });
+
+      conn.on('NotificationSettingsChanged', (serverId: string, settings: ServerNotifSettings) => {
+        useNotificationSettingsStore.getState().setServerSetting(serverId, settings);
+      });
+
+      conn.on('UserPreferencesChanged', (prefs: UserPreferences) => {
+        useUserPreferencesStore.getState().applyToVoiceStore(prefs);
+        useUserPreferencesStore.setState({ preferences: prefs });
+      });
+
       refreshSignalRState(conn);
     }).catch(console.error);
   }, []);
@@ -334,6 +368,9 @@ export function useSignalRListeners() {
         }).catch(console.error);
         c.invoke('GetServerVoiceSharers', activeServer.id).then((data: Record<string, string[]>) => {
           useServerStore.getState().setVoiceChannelSharers(data);
+        }).catch(console.error);
+        c.invoke('GetServerVoiceCameras', activeServer.id).then((data: Record<string, string[]>) => {
+          useServerStore.getState().setVoiceChannelCameras(data);
         }).catch(console.error);
       }
     }, 30_000);

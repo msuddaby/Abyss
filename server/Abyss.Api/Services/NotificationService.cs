@@ -41,6 +41,42 @@ public class NotificationService
         return new MentionParseResult(userIds, hasEveryone, hasHere);
     }
 
+    public async Task<bool> ShouldNotify(
+        string userId, Guid serverId, Guid channelId, NotificationType type)
+    {
+        // 1. Channel muted?
+        var channelSetting = await _db.UserChannelNotificationSettings
+            .FirstOrDefaultAsync(s => s.ChannelId == channelId && s.UserId == userId);
+        if (channelSetting?.MuteUntil != null && channelSetting.MuteUntil > DateTime.UtcNow)
+            return false;
+
+        // 2. Server muted?
+        var serverSetting = await _db.UserServerNotificationSettings
+            .FirstOrDefaultAsync(s => s.ServerId == serverId && s.UserId == userId);
+        if (serverSetting?.MuteUntil != null && serverSetting.MuteUntil > DateTime.UtcNow)
+            return false;
+
+        // 3. SuppressEveryone + @everyone/@here type?
+        if (serverSetting?.SuppressEveryone == true &&
+            (type == NotificationType.EveryoneMention || type == NotificationType.HereMention))
+            return false;
+
+        // 4. Resolve effective level
+        var server = await _db.Servers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serverId);
+        var defaultLevel = server?.DefaultNotificationLevel ?? NotificationLevel.AllMessages;
+        var effectiveLevel = channelSetting?.NotificationLevel
+            ?? serverSetting?.NotificationLevel
+            ?? defaultLevel;
+
+        // 5. Apply level
+        return effectiveLevel switch
+        {
+            NotificationLevel.Nothing => false,
+            NotificationLevel.OnlyMentions => type == NotificationType.UserMention || type == NotificationType.ReplyMention,
+            _ => true // AllMessages
+        };
+    }
+
     public async Task<List<Notification>> CreateMentionNotifications(
         Message message, Guid serverId, Guid channelId,
         HashSet<string> onlineUserIds)
@@ -48,6 +84,36 @@ public class NotificationService
         var mentions = ParseMentions(message.Content);
         var notifications = new List<Notification>();
         var notifiedUsers = new HashSet<string>();
+
+        // Batch-load notification settings for all server members
+        var serverSettings = await _db.UserServerNotificationSettings
+            .Where(s => s.ServerId == serverId)
+            .ToDictionaryAsync(s => s.UserId);
+        var channelSettings = await _db.UserChannelNotificationSettings
+            .Where(s => s.ChannelId == channelId)
+            .ToDictionaryAsync(s => s.UserId);
+        var server = await _db.Servers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serverId);
+        var defaultLevel = server?.DefaultNotificationLevel ?? NotificationLevel.AllMessages;
+
+        bool ShouldNotifyLocal(string userId, NotificationType type)
+        {
+            channelSettings.TryGetValue(userId, out var chSetting);
+            serverSettings.TryGetValue(userId, out var svSetting);
+
+            if (chSetting?.MuteUntil != null && chSetting.MuteUntil > DateTime.UtcNow) return false;
+            if (svSetting?.MuteUntil != null && svSetting.MuteUntil > DateTime.UtcNow) return false;
+            if (svSetting?.SuppressEveryone == true &&
+                (type == NotificationType.EveryoneMention || type == NotificationType.HereMention))
+                return false;
+
+            var effectiveLevel = chSetting?.NotificationLevel ?? svSetting?.NotificationLevel ?? defaultLevel;
+            return effectiveLevel switch
+            {
+                NotificationLevel.Nothing => false,
+                NotificationLevel.OnlyMentions => type == NotificationType.UserMention || type == NotificationType.ReplyMention,
+                _ => true
+            };
+        }
 
         // Direct user mentions
         foreach (var userId in mentions.UserIds)
@@ -60,6 +126,7 @@ public class NotificationService
                 .AnyAsync(sm => sm.ServerId == serverId && sm.UserId == userId);
             if (!isMember) continue;
             if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
+            if (!ShouldNotifyLocal(userId, NotificationType.UserMention)) continue;
 
             notifications.Add(new Notification
             {
@@ -86,6 +153,7 @@ public class NotificationService
             {
                 if (!notifiedUsers.Add(userId)) continue;
                 if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
+                if (!ShouldNotifyLocal(userId, NotificationType.EveryoneMention)) continue;
                 notifications.Add(new Notification
                 {
                     Id = Guid.NewGuid(),
@@ -114,6 +182,7 @@ public class NotificationService
             {
                 if (!notifiedUsers.Add(userId)) continue;
                 if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
+                if (!ShouldNotifyLocal(userId, NotificationType.HereMention)) continue;
                 notifications.Add(new Notification
                 {
                     Id = Guid.NewGuid(),

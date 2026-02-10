@@ -3,9 +3,9 @@ import { useVoiceStore, useServerStore, hasChannelPermission, Permission } from 
 import { useWebRTC, attemptAudioUnlock } from '../hooks/useWebRTC';
 
 export default function VoiceControls() {
-  const { currentChannelId, isScreenSharing, voiceMode, isPttActive, pttKey, setVoiceMode, needsAudioUnlock } = useVoiceStore();
+  const { currentChannelId, isScreenSharing, isCameraOn, voiceMode, isPttActive, pttKey, setVoiceMode, needsAudioUnlock } = useVoiceStore();
   const channels = useServerStore((s) => s.channels);
-  const { leaveVoice, startScreenShare, stopScreenShare } = useWebRTC();
+  const { leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera } = useWebRTC();
 
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
@@ -15,7 +15,10 @@ export default function VoiceControls() {
     if (!canStream && isScreenSharing) {
       stopScreenShare();
     }
-  }, [canStream, isScreenSharing, stopScreenShare]);
+    if (!canStream && isCameraOn) {
+      stopCamera();
+    }
+  }, [canStream, isScreenSharing, isCameraOn, stopScreenShare, stopCamera]);
 
   if (!currentChannelId) return null;
 
@@ -46,6 +49,15 @@ export default function VoiceControls() {
           <span className="ptt-hint">
             {isPttActive ? '🎤' : `[${pttKey.startsWith('Mouse') ? `M${pttKey.slice(5)}` : pttKey}]`}
           </span>
+        )}
+        {canStream && (
+          <button
+            className={`voice-ctrl-btn ${isCameraOn ? 'active' : ''}`}
+            onClick={isCameraOn ? stopCamera : startCamera}
+            title={isCameraOn ? 'Stop Camera' : 'Start Camera'}
+          >
+            📷
+          </button>
         )}
         {canStream && (
           <button

@@ -45,7 +45,7 @@ public class InvitesController : ControllerBase
 
         var alreadyMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == invite.ServerId && sm.UserId == UserId);
         if (alreadyMember)
-            return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId));
+            return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
 
         _db.ServerMembers.Add(new ServerMember
         {
@@ -58,6 +58,6 @@ public class InvitesController : ControllerBase
 
         await _systemMessages.SendMemberJoinLeaveAsync(invite.ServerId, UserId, joined: true);
 
-        return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId));
+        return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
     }
 }

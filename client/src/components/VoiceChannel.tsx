@@ -13,13 +13,16 @@ interface Props {
 export default function VoiceChannel({ channel, isActive, isConnected, onSelect, onJoin, onLeave }: Props) {
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
+  const voiceChannelCameras = useServerStore((s) => s.voiceChannelCameras);
   const members = useServerStore((s) => s.members);
   const currentUser = useAuthStore((s) => s.user);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
+  const setFocusedUserId = useVoiceStore((s) => s.setFocusedUserId);
   const canConnect = hasChannelPermission(channel.permissions, Permission.Connect);
 
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
+  const channelCameras = voiceChannelCameras.get(channel.id);
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canModerateVoice = currentMember ? hasPermission(currentMember, Permission.MuteMembers) : false;
@@ -61,12 +64,21 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
               : null;
 
             return (
-              <div key={userId} className="voice-participant">
+              <div
+                key={userId}
+                className="voice-participant"
+                onClick={() => {
+                  onSelect();
+                  setFocusedUserId(userId);
+                }}
+                style={{ cursor: 'pointer' }}
+              >
                 <span className={`participant-avatar${speakingUsers.has(userId) ? ' speaking' : ''}`}>
                   {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
                 </span>
                 <span className="participant-name">{state.displayName}</span>
                 <div className="voice-participant-right">
+                  {channelCameras?.has(userId) && <span className="camera-badge">CAM</span>}
                   {channelSharers?.has(userId) && <span className="live-badge">LIVE</span>}
                   {showModeration && (
                     <div className="voice-participant-actions">

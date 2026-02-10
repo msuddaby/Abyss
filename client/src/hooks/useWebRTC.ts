@@ -6,6 +6,8 @@ import {
   subscribeTurnCredentials,
   useVoiceStore,
   useAuthStore,
+  useServerStore,
+  useVoiceChatStore,
 } from "@abyss/shared";
 
 const STUN_URL =
@@ -26,6 +28,27 @@ let currentOutputDeviceId: string = "default";
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
 const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
+
+// Camera state
+let cameraStream: MediaStream | null = null;
+const cameraVideoStreams: Map<string, MediaStream> = new Map(); // peerId → remote camera stream
+const cameraTrackSenders: Map<string, RTCRtpSender> = new Map(); // peerId → sender
+const pendingTrackTypes: Map<string, string[]> = new Map(); // peerId → FIFO queue of "camera"|"screen"
+
+// Signaling queue — serializes WebRTC signaling operations per peer to prevent races
+const signalingQueues: Map<string, Promise<void>> = new Map();
+
+function enqueueSignaling(
+  peerId: string,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const prev = signalingQueues.get(peerId) ?? Promise.resolve();
+  const next = prev.then(() => fn(), () => fn()).catch((err) => {
+    console.error(`Signaling error for ${peerId}:`, err);
+  });
+  signalingQueues.set(peerId, next);
+  return next;
+}
 
 // Audio analysis state
 let audioContext: AudioContext | null = null;
@@ -409,6 +432,14 @@ export function getLocalScreenStream(): MediaStream | null {
   return screenStream;
 }
 
+export function getCameraVideoStream(userId: string): MediaStream | undefined {
+  return cameraVideoStreams.get(userId);
+}
+
+export function getLocalCameraStream(): MediaStream | null {
+  return cameraStream;
+}
+
 function buildIceServersFromTurn(creds: {
   urls: string[];
   username: string;
@@ -456,17 +487,19 @@ async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
 
 async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
-  if (pc.signalingState !== "stable") return;
   iceRestartInFlight.add(peerId);
   try {
-    const offer = await pc.createOffer({ iceRestart: true });
-    await pc.setLocalDescription(offer);
-    const conn = getConnection();
-    await conn.invoke(
-      "SendSignal",
-      peerId,
-      JSON.stringify({ type: "offer", sdp: offer.sdp }),
-    );
+    await enqueueSignaling(peerId, async () => {
+      if (pc.signalingState !== "stable") return;
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      const conn = getConnection();
+      await conn.invoke(
+        "SendSignal",
+        peerId,
+        JSON.stringify({ type: "offer", sdp: offer.sdp }),
+      );
+    });
   } catch (err) {
     console.warn(`ICE restart failed for ${peerId}:`, err);
   } finally {
@@ -533,8 +566,32 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         });
       addAnalyser(peerId, stream);
     } else if (track.kind === "video") {
-      screenVideoStreams.set(peerId, stream);
-      useVoiceStore.getState().bumpScreenStreamVersion();
+      const trackTypes = pendingTrackTypes.get(peerId);
+      let trackType = trackTypes?.shift();
+      if (!trackTypes?.length) pendingTrackTypes.delete(peerId);
+
+      // Fallback disambiguation if track-info was lost or raced
+      if (!trackType) {
+        const store = useVoiceStore.getState();
+        if (store.watchingUserId === peerId && !screenVideoStreams.has(peerId)) {
+          trackType = "screen";
+          console.warn(`track-info race: inferring screen track from ${peerId} (watching)`);
+        } else if (store.activeSharers.has(peerId) && !screenVideoStreams.has(peerId) && cameraVideoStreams.has(peerId)) {
+          trackType = "screen";
+          console.warn(`track-info race: inferring screen track from ${peerId} (sharer + has camera)`);
+        } else {
+          trackType = "camera";
+          console.warn(`track-info race: defaulting to camera track from ${peerId}`);
+        }
+      }
+
+      if (trackType === "screen") {
+        screenVideoStreams.set(peerId, stream);
+        useVoiceStore.getState().bumpScreenStreamVersion();
+      } else {
+        cameraVideoStreams.set(peerId, stream);
+        useVoiceStore.getState().bumpCameraStreamVersion();
+      }
     }
   };
 
@@ -554,9 +611,13 @@ function closePeer(peerId: string) {
   }
   removeAnalyser(peerId);
   screenVideoStreams.delete(peerId);
+  cameraVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
+  pendingTrackTypes.delete(peerId);
   screenTrackSenders.delete(peerId);
+  cameraTrackSenders.delete(peerId);
   iceRestartInFlight.delete(peerId);
+  signalingQueues.delete(peerId);
 }
 
 function cleanupAll() {
@@ -570,8 +631,12 @@ function cleanupAll() {
   audioElements.clear();
   cleanupAnalysers();
   screenVideoStreams.clear();
+  cameraVideoStreams.clear();
   pendingCandidates.clear();
+  pendingTrackTypes.clear();
   screenTrackSenders.clear();
+  cameraTrackSenders.clear();
+  signalingQueues.clear();
   useVoiceStore.getState().setNeedsAudioUnlock(false);
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
@@ -580,6 +645,10 @@ function cleanupAll() {
   if (screenStream) {
     screenStream.getTracks().forEach((track) => track.stop());
     screenStream = null;
+  }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
   }
 }
 
@@ -664,17 +733,18 @@ async function stopScreenShareInternal() {
   const conn = getConnection();
 
   // Remove all screen tracks from all viewers we're sending to and renegotiate
-  for (const [viewerId, senders] of screenTrackSenders) {
-    const pc = peers.get(viewerId);
-    if (pc) {
-      senders.forEach((sender) => pc.removeTrack(sender));
+  const shareEntries = Array.from(screenTrackSenders.entries());
+  await Promise.all(
+    shareEntries.map(([viewerId, senders]) =>
+      enqueueSignaling(viewerId, async () => {
+        const pc = peers.get(viewerId);
+        if (!pc) return;
+        senders.forEach((sender) => pc.removeTrack(sender));
 
-      // Only renegotiate if signaling state is stable and ICE isn't failed
-      if (
-        pc.signalingState === "stable" &&
-        pc.iceConnectionState !== "failed"
-      ) {
-        try {
+        if (
+          pc.signalingState === "stable" &&
+          pc.iceConnectionState !== "failed"
+        ) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           await conn.invoke(
@@ -682,19 +752,14 @@ async function stopScreenShareInternal() {
             viewerId,
             JSON.stringify({ type: "offer", sdp: offer.sdp }),
           );
-        } catch (err) {
-          console.error(
-            `Renegotiation (stop share) failed for ${viewerId}:`,
-            err,
+        } else {
+          console.warn(
+            `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
           );
         }
-      } else {
-        console.warn(
-          `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
-        );
-      }
-    }
-  }
+      }),
+    ),
+  );
   screenTrackSenders.clear();
 
   // Stop screen tracks
@@ -710,38 +775,156 @@ async function stopScreenShareInternal() {
   }
 }
 
-// Called when a viewer requests to watch our stream
-async function addVideoTrackForViewer(viewerUserId: string) {
-  const activeScreenStream = screenStream;
-  if (!activeScreenStream) return;
-  const pc = peers.get(viewerUserId);
-  if (!pc) return;
+// Camera functions
+async function startCameraInternal() {
+  const voiceState = useVoiceStore.getState();
+  if (!voiceState.currentChannelId) return;
 
-  // Add all tracks from screen stream (video + audio if available)
-  const senders: RTCRtpSender[] = [];
-  activeScreenStream.getTracks().forEach((track) => {
-    console.log(`Adding screen ${track.kind} track for viewer ${viewerUserId}`);
-    const sender = pc.addTrack(track, activeScreenStream);
-    senders.push(sender);
-  });
-
-  if (senders.length === 0) return;
-  screenTrackSenders.set(viewerUserId, senders);
-
-  // Only renegotiate if signaling state is stable and ICE isn't failed
-  if (pc.signalingState !== "stable" || pc.iceConnectionState === "failed") {
-    console.warn(
-      `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
-    );
-    // Remove the senders we just added since we can't renegotiate
-    senders.forEach((sender) => pc.removeTrack(sender));
-    screenTrackSenders.delete(viewerUserId);
+  try {
+    const videoConstraints: MediaTrackConstraints = {
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+    };
+    if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
+      videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
+    }
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: videoConstraints,
+      audio: false,
+    });
+  } catch (err) {
+    console.error("Could not get camera:", err);
     return;
   }
 
-  // Renegotiate
+  const videoTrack = cameraStream.getVideoTracks()[0];
+  videoTrack.onended = () => {
+    stopCameraInternal();
+  };
+
+  // Add camera track to all existing peers (eager)
   const conn = getConnection();
-  try {
+  for (const [peerId, pc] of peers) {
+    await addCameraTrackToPeer(peerId, pc, conn);
+  }
+
+  voiceState.setCameraOn(true);
+  await conn.invoke("NotifyCamera", voiceState.currentChannelId, true);
+}
+
+async function stopCameraInternal() {
+  const voiceState = useVoiceStore.getState();
+  const conn = getConnection();
+
+  // Remove camera track from all peers and renegotiate
+  const camEntries = Array.from(cameraTrackSenders.entries());
+  await Promise.all(
+    camEntries.map(([peerId, sender]) =>
+      enqueueSignaling(peerId, async () => {
+        const pc = peers.get(peerId);
+        if (!pc) return;
+        pc.removeTrack(sender);
+        if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          await conn.invoke(
+            "SendSignal",
+            peerId,
+            JSON.stringify({ type: "offer", sdp: offer.sdp }),
+          );
+        }
+      }),
+    ),
+  );
+  cameraTrackSenders.clear();
+
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+
+  voiceState.setCameraOn(false);
+
+  if (voiceState.currentChannelId) {
+    await conn.invoke("NotifyCamera", voiceState.currentChannelId, false);
+  }
+}
+
+async function addCameraTrackToPeer(
+  peerId: string,
+  pc: RTCPeerConnection,
+  conn: ReturnType<typeof getConnection>,
+) {
+  await enqueueSignaling(peerId, async () => {
+    if (!cameraStream) return;
+    const videoTrack = cameraStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    // Send track-info before adding track
+    await conn.invoke(
+      "SendSignal",
+      peerId,
+      JSON.stringify({ type: "track-info", trackType: "camera" }),
+    );
+
+    const sender = pc.addTrack(videoTrack, cameraStream);
+    cameraTrackSenders.set(peerId, sender);
+
+    // Renegotiate
+    if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await conn.invoke(
+        "SendSignal",
+        peerId,
+        JSON.stringify({ type: "offer", sdp: offer.sdp }),
+      );
+    }
+  });
+}
+
+// Called when a viewer requests to watch our stream
+async function addVideoTrackForViewer(viewerUserId: string) {
+  await enqueueSignaling(viewerUserId, async () => {
+    const activeScreenStream = screenStream;
+    if (!activeScreenStream) return;
+    const pc = peers.get(viewerUserId);
+    if (!pc) return;
+
+    // Send track-info before adding screen video track
+    const conn = getConnection();
+    await conn.invoke(
+      "SendSignal",
+      viewerUserId,
+      JSON.stringify({ type: "track-info", trackType: "screen" }),
+    );
+
+    // Add all tracks from screen stream (video + audio if available)
+    const senders: RTCRtpSender[] = [];
+    activeScreenStream.getTracks().forEach((track) => {
+      console.log(
+        `Adding screen ${track.kind} track for viewer ${viewerUserId}`,
+      );
+      const sender = pc.addTrack(track, activeScreenStream);
+      senders.push(sender);
+    });
+
+    if (senders.length === 0) return;
+    screenTrackSenders.set(viewerUserId, senders);
+
+    // Only renegotiate if signaling state is stable and ICE isn't failed
+    if (
+      pc.signalingState !== "stable" ||
+      pc.iceConnectionState === "failed"
+    ) {
+      console.warn(
+        `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
+      );
+      senders.forEach((sender) => pc.removeTrack(sender));
+      screenTrackSenders.delete(viewerUserId);
+      return;
+    }
+
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await conn.invoke(
@@ -749,35 +932,30 @@ async function addVideoTrackForViewer(viewerUserId: string) {
       viewerUserId,
       JSON.stringify({ type: "offer", sdp: offer.sdp }),
     );
-  } catch (err) {
-    console.error(
-      `Renegotiation (add viewer track) failed for ${viewerUserId}:`,
-      err,
-    );
-  }
+  });
 }
 
 // Called when a viewer stops watching our stream
 async function removeVideoTrackForViewer(viewerUserId: string) {
-  const senders = screenTrackSenders.get(viewerUserId);
-  const pc = peers.get(viewerUserId);
-  if (!senders || !pc) return;
+  await enqueueSignaling(viewerUserId, async () => {
+    const senders = screenTrackSenders.get(viewerUserId);
+    const pc = peers.get(viewerUserId);
+    if (!senders || !pc) return;
 
-  // Remove all screen tracks (video + audio)
-  senders.forEach((sender) => pc.removeTrack(sender));
-  screenTrackSenders.delete(viewerUserId);
+    senders.forEach((sender) => pc.removeTrack(sender));
+    screenTrackSenders.delete(viewerUserId);
 
-  // Only renegotiate if signaling state is stable and ICE isn't failed
-  if (pc.signalingState !== "stable" || pc.iceConnectionState === "failed") {
-    console.warn(
-      `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
-    );
-    return;
-  }
+    if (
+      pc.signalingState !== "stable" ||
+      pc.iceConnectionState === "failed"
+    ) {
+      console.warn(
+        `Skipping renegotiation for ${viewerUserId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
+      );
+      return;
+    }
 
-  // Renegotiate
-  const conn = getConnection();
-  try {
+    const conn = getConnection();
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await conn.invoke(
@@ -785,12 +963,7 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
       viewerUserId,
       JSON.stringify({ type: "offer", sdp: offer.sdp }),
     );
-  } catch (err) {
-    console.error(
-      `Renegotiation (remove viewer track) failed for ${viewerUserId}:`,
-      err,
-    );
-  }
+  });
 }
 
 // Exported for ScreenShareView to call
@@ -825,22 +998,37 @@ function setupSignalRListeners() {
     const currentUser = useAuthStore.getState().user;
     if (userId === currentUser?.id || !localStream) return;
 
-    // Existing user creates offer for the new peer
-    const pc = createPeerConnection(userId);
+    await enqueueSignaling(userId, async () => {
+      const pc = createPeerConnection(userId);
 
-    // Add audio tracks only — screen track is added lazily on WatchStreamRequested
-    localStream
-      .getTracks()
-      .forEach((track) => pc.addTrack(track, localStream!));
+      // Add audio tracks only — screen track is added lazily on WatchStreamRequested
+      localStream!
+        .getTracks()
+        .forEach((track) => pc.addTrack(track, localStream!));
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    console.log(`Sending offer to ${userId}`);
-    await conn.invoke(
-      "SendSignal",
-      userId,
-      JSON.stringify({ type: "offer", sdp: offer.sdp }),
-    );
+      // Add camera track if camera is on (eager — send track-info first)
+      if (cameraStream) {
+        const camTrack = cameraStream.getVideoTracks()[0];
+        if (camTrack) {
+          await conn.invoke(
+            "SendSignal",
+            userId,
+            JSON.stringify({ type: "track-info", trackType: "camera" }),
+          );
+          const sender = pc.addTrack(camTrack, cameraStream);
+          cameraTrackSenders.set(userId, sender);
+        }
+      }
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      console.log(`Sending offer to ${userId}`);
+      await conn.invoke(
+        "SendSignal",
+        userId,
+        JSON.stringify({ type: "offer", sdp: offer.sdp }),
+      );
+    });
   });
 
   conn.on("UserLeftVoice", (userId: string) => {
@@ -852,55 +1040,80 @@ function setupSignalRListeners() {
   conn.on("ReceiveSignal", async (fromUserId: string, signal: string) => {
     const data = JSON.parse(signal);
 
-    if (data.type === "offer") {
-      console.log(`Received offer from ${fromUserId}`);
+    if (data.type === "track-info") {
+      // Queue track type for disambiguation in ontrack
+      if (!pendingTrackTypes.has(fromUserId)) {
+        pendingTrackTypes.set(fromUserId, []);
+      }
+      pendingTrackTypes.get(fromUserId)!.push(data.trackType);
+      return;
+    }
 
-      // Check if peer already exists and is usable — support renegotiation
-      let pc = peers.get(fromUserId);
-      if (pc && pc.signalingState !== "closed") {
-        // Renegotiation: reuse existing connection
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
-        );
-        await applyPendingCandidates(fromUserId);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        console.log(`Sending renegotiation answer to ${fromUserId}`);
-        await conn.invoke(
-          "SendSignal",
-          fromUserId,
-          JSON.stringify({ type: "answer", sdp: answer.sdp }),
-        );
-      } else {
-        // New connection — audio only, screen track added lazily
-        pc = createPeerConnection(fromUserId);
-        if (localStream) {
-          localStream
-            .getTracks()
-            .forEach((track) => pc!.addTrack(track, localStream!));
+    if (data.type === "offer") {
+      await enqueueSignaling(fromUserId, async () => {
+        console.log(`Received offer from ${fromUserId}`);
+
+        let pc = peers.get(fromUserId);
+        if (pc && pc.signalingState !== "closed") {
+          // Renegotiation: reuse existing connection
+          await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+          );
+          await applyPendingCandidates(fromUserId);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          console.log(`Sending renegotiation answer to ${fromUserId}`);
+          await conn.invoke(
+            "SendSignal",
+            fromUserId,
+            JSON.stringify({ type: "answer", sdp: answer.sdp }),
+          );
+        } else {
+          // New connection — audio only, screen track added lazily
+          pc = createPeerConnection(fromUserId);
+          if (localStream) {
+            localStream
+              .getTracks()
+              .forEach((track) => pc!.addTrack(track, localStream!));
+          }
+          // Add camera track if camera is on (eager — send track-info before answer)
+          if (cameraStream) {
+            const camTrack = cameraStream.getVideoTracks()[0];
+            if (camTrack) {
+              await conn.invoke(
+                "SendSignal",
+                fromUserId,
+                JSON.stringify({ type: "track-info", trackType: "camera" }),
+              );
+              const sender = pc.addTrack(camTrack, cameraStream);
+              cameraTrackSenders.set(fromUserId, sender);
+            }
+          }
+          await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+          );
+          await applyPendingCandidates(fromUserId);
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          console.log(`Sending answer to ${fromUserId}`);
+          await conn.invoke(
+            "SendSignal",
+            fromUserId,
+            JSON.stringify({ type: "answer", sdp: answer.sdp }),
+          );
         }
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
-        );
-        await applyPendingCandidates(fromUserId);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        console.log(`Sending answer to ${fromUserId}`);
-        await conn.invoke(
-          "SendSignal",
-          fromUserId,
-          JSON.stringify({ type: "answer", sdp: answer.sdp }),
-        );
-      }
+      });
     } else if (data.type === "answer") {
-      console.log(`Received answer from ${fromUserId}`);
-      const pc = peers.get(fromUserId);
-      if (pc) {
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
-        );
-        await applyPendingCandidates(fromUserId);
-      }
+      await enqueueSignaling(fromUserId, async () => {
+        console.log(`Received answer from ${fromUserId}`);
+        const pc = peers.get(fromUserId);
+        if (pc) {
+          await pc.setRemoteDescription(
+            new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+          );
+          await applyPendingCandidates(fromUserId);
+        }
+      });
     } else if (data.candidate) {
       const pc = peers.get(fromUserId);
       if (pc && pc.remoteDescription) {
@@ -951,6 +1164,30 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setActiveSharers(new Map(Object.entries(sharers)));
   });
 
+  // Camera events
+  conn.on("CameraStarted", (userId: string, displayName: string) => {
+    useVoiceStore.getState().addActiveCamera(userId, displayName);
+    const currentUser = useAuthStore.getState().user;
+    if (userId === currentUser?.id) {
+      useVoiceStore.getState().setCameraOn(true);
+    }
+  });
+
+  conn.on("CameraStopped", (userId: string) => {
+    const store = useVoiceStore.getState();
+    store.removeActiveCamera(userId);
+    cameraVideoStreams.delete(userId);
+    store.bumpCameraStreamVersion();
+    const currentUser = useAuthStore.getState().user;
+    if (userId === currentUser?.id) {
+      store.setCameraOn(false);
+    }
+  });
+
+  conn.on("ActiveCameras", (cameras: Record<string, string>) => {
+    useVoiceStore.getState().setActiveCameras(new Map(Object.entries(cameras)));
+  });
+
   // Sharer receives: viewer wants to watch
   conn.on("WatchStreamRequested", (viewerUserId: string) => {
     console.log(`WatchStreamRequested from ${viewerUserId}`);
@@ -973,6 +1210,9 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setScreenSharing(false);
     useVoiceStore.getState().setActiveSharers(new Map());
     useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
   });
 }
 
@@ -1266,6 +1506,10 @@ export function useWebRTC() {
         voiceState.isMuted,
         voiceState.isDeafened,
       );
+
+      // Initialize voice chat store
+      const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+      useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
     },
     [buildAudioConstraintsResolved, currentChannelId, setCurrentChannel],
   );
@@ -1281,6 +1525,11 @@ export function useWebRTC() {
     useVoiceStore.getState().setScreenSharing(false);
     useVoiceStore.getState().setActiveSharers(new Map());
     useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
+    useVoiceStore.getState().setVoiceChatOpen(false);
+    useVoiceChatStore.getState().clear();
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
   const startScreenShare = useCallback(async () => {
@@ -1291,5 +1540,13 @@ export function useWebRTC() {
     await stopScreenShareInternal();
   }, []);
 
-  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare };
+  const startCamera = useCallback(async () => {
+    await startCameraInternal();
+  }, []);
+
+  const stopCamera = useCallback(async () => {
+    await stopCameraInternal();
+  }, []);
+
+  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera };
 }

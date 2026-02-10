@@ -39,7 +39,7 @@ public class ServersController : ControllerBase
         var servers = await _db.ServerMembers
             .Where(sm => sm.UserId == UserId)
             .Select(sm => sm.Server)
-            .Select(s => new ServerDto(s.Id, s.Name, s.IconUrl, s.OwnerId, s.JoinLeaveMessagesEnabled, s.JoinLeaveChannelId))
+            .Select(s => new ServerDto(s.Id, s.Name, s.IconUrl, s.OwnerId, s.JoinLeaveMessagesEnabled, s.JoinLeaveChannelId, (int)s.DefaultNotificationLevel))
             .ToListAsync();
         return Ok(servers);
     }
@@ -98,7 +98,7 @@ public class ServersController : ControllerBase
         server.JoinLeaveChannelId = generalChannel.Id;
 
         await _db.SaveChangesAsync();
-        return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId));
+        return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId, (int)server.DefaultNotificationLevel));
     }
 
     [HttpPatch("{serverId}")]
@@ -164,12 +164,12 @@ public class ServersController : ControllerBase
             }
         }
 
-        if (!didChange) return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId));
+        if (!didChange) return Ok(new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId, (int)server.DefaultNotificationLevel));
 
         await _db.SaveChangesAsync();
         await _perms.LogAsync(serverId, AuditAction.ServerUpdated, UserId, targetName: server.Name);
 
-        var dto = new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId);
+        var dto = new ServerDto(server.Id, server.Name, server.IconUrl, server.OwnerId, server.JoinLeaveMessagesEnabled, server.JoinLeaveChannelId, (int)server.DefaultNotificationLevel);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ServerUpdated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -198,7 +198,8 @@ public class ServersController : ControllerBase
                 channel.Type.ToString(),
                 channel.ServerId,
                 channel.Position,
-                perms & PermissionService.ChannelPermissionMask));
+                perms & PermissionService.ChannelPermissionMask,
+                channel.PersistentChat));
         }
 
         return Ok(result);
@@ -230,7 +231,7 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
             targetName: $"#{channel.Name}", details: channelType.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelCreated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -245,12 +246,14 @@ public class ServersController : ControllerBase
         if (channel == null) return NotFound();
 
         channel.Name = req.Name.Trim();
+        if (req.PersistentChat.HasValue && channel.Type == ChannelType.Voice)
+            channel.PersistentChat = req.PersistentChat.Value;
         await _db.SaveChangesAsync();
 
         await _perms.LogAsync(serverId, AuditAction.ChannelUpdated, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelUpdated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -341,7 +344,7 @@ public class ServersController : ControllerBase
             .Where(c => c.ServerId == serverId)
             .OrderBy(c => c.Type)
             .ThenBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null))
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat))
             .ToListAsync();
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);
@@ -449,8 +452,11 @@ public class ServersController : ControllerBase
 
         var targetUser = await _db.Users.FindAsync(userId);
 
-        // Remove role assignments
+        // Remove role assignments and notification settings
         _db.ServerMemberRoles.RemoveRange(_db.ServerMemberRoles.Where(smr => smr.ServerId == serverId && smr.UserId == userId));
+        _db.UserServerNotificationSettings.RemoveRange(_db.UserServerNotificationSettings.Where(s => s.ServerId == serverId && s.UserId == userId));
+        var channelIds = await _db.Channels.Where(c => c.ServerId == serverId).Select(c => c.Id).ToListAsync();
+        _db.UserChannelNotificationSettings.RemoveRange(_db.UserChannelNotificationSettings.Where(s => s.UserId == userId && channelIds.Contains(s.ChannelId)));
         _db.ServerMembers.Remove(target);
         await _db.SaveChangesAsync();
 
@@ -470,6 +476,9 @@ public class ServersController : ControllerBase
         if (member.IsOwner) return BadRequest("Server owner cannot leave.");
 
         _db.ServerMemberRoles.RemoveRange(_db.ServerMemberRoles.Where(smr => smr.ServerId == serverId && smr.UserId == UserId));
+        _db.UserServerNotificationSettings.RemoveRange(_db.UserServerNotificationSettings.Where(s => s.ServerId == serverId && s.UserId == UserId));
+        var leaveChannelIds = await _db.Channels.Where(c => c.ServerId == serverId).Select(c => c.Id).ToListAsync();
+        _db.UserChannelNotificationSettings.RemoveRange(_db.UserChannelNotificationSettings.Where(s => s.UserId == UserId && leaveChannelIds.Contains(s.ChannelId)));
         _db.ServerMembers.Remove(member);
         await _db.SaveChangesAsync();
 
@@ -526,6 +535,8 @@ public class ServersController : ControllerBase
             }
         }
 
+        _db.UserChannelNotificationSettings.RemoveRange(
+            _db.UserChannelNotificationSettings.Where(s => s.ChannelId == channelId));
         _db.Channels.Remove(channel);
         await _db.SaveChangesAsync();
 
@@ -554,12 +565,14 @@ public class ServersController : ControllerBase
         _db.Reactions.RemoveRange(_db.Reactions.Where(r => messageIds.Contains(r.MessageId)));
         _db.Attachments.RemoveRange(_db.Attachments.Where(a => a.MessageId.HasValue && messageIds.Contains(a.MessageId.Value)));
         _db.Messages.RemoveRange(_db.Messages.Where(m => channelIds.Contains(m.ChannelId)));
+        _db.UserChannelNotificationSettings.RemoveRange(_db.UserChannelNotificationSettings.Where(s => channelIds.Contains(s.ChannelId)));
         _db.Channels.RemoveRange(_db.Channels.Where(c => c.ServerId == serverId));
         _db.Invites.RemoveRange(_db.Invites.Where(i => i.ServerId == serverId));
         _db.AuditLogs.RemoveRange(_db.AuditLogs.Where(a => a.ServerId == serverId));
         _db.ServerMemberRoles.RemoveRange(_db.ServerMemberRoles.Where(smr => smr.ServerId == serverId));
         _db.ServerRoles.RemoveRange(_db.ServerRoles.Where(r => r.ServerId == serverId));
         _db.ServerBans.RemoveRange(_db.ServerBans.Where(b => b.ServerId == serverId));
+        _db.UserServerNotificationSettings.RemoveRange(_db.UserServerNotificationSettings.Where(s => s.ServerId == serverId));
         _db.ServerMembers.RemoveRange(_db.ServerMembers.Where(sm => sm.ServerId == serverId));
         _db.Servers.Remove(server);
 

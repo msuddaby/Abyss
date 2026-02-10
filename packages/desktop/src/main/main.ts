@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
@@ -16,6 +16,49 @@ let mainWindow: BrowserWindow | null = null;
 let shortcutManager: GlobalShortcutManager | null = null;
 let updateManager: UpdateManager | null = null;
 let isQuitting = false;
+
+function setupScreenShareHandler(win: BrowserWindow) {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true,
+      });
+
+      const serialized = sources.map((source) => ({
+        id: source.id,
+        name: source.name,
+        thumbnail: source.thumbnail.toDataURL(),
+        appIcon: source.appIcon ? source.appIcon.toDataURL() : null,
+        isScreen: source.id.startsWith('screen:'),
+      }));
+
+      win.webContents.send('screen-share-sources', serialized);
+
+      // Wait for renderer to pick a source (or cancel)
+      const sourceId = await new Promise<string | null>((resolve) => {
+        const handler = (_event: any, id: string | null) => {
+          resolve(id);
+        };
+        ipcMain.once('screen-share-selected', handler);
+      });
+
+      if (sourceId) {
+        const selected = sources.find((s) => s.id === sourceId);
+        if (selected) {
+          callback({ video: selected, audio: 'loopback' });
+          return;
+        }
+      }
+
+      // Cancel — rejects getDisplayMedia, caught by existing catch block
+      callback({});
+    } catch {
+      callback({});
+    }
+  });
+}
 
 function createWindow() {
   // Restore window state
@@ -90,6 +133,9 @@ function createWindow() {
   if (app.isPackaged) {
     updateManager = new UpdateManager(mainWindow);
   }
+
+  // Setup screen share handler (intercepts getDisplayMedia)
+  setupScreenShareHandler(mainWindow);
 
   // Setup IPC handlers
   setupIpcHandlers(mainWindow, shortcutManager, updateManager ?? undefined);

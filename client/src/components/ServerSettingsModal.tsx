@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useServerStore, useAuthStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn } from '@abyss/shared';
+import { useServerStore, useAuthStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -161,6 +161,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [serverError, setServerError] = useState('');
   const [joinLeaveEnabled, setJoinLeaveEnabled] = useState(activeServer?.joinLeaveMessagesEnabled ?? true);
   const [joinLeaveChannelId, setJoinLeaveChannelId] = useState<string>('');
+  const [defaultNotifLevel, setDefaultNotifLevel] = useState(activeServer?.defaultNotificationLevel ?? 0);
 
   useEffect(() => {
     if (tab === 'audit' && canViewAuditLog) {
@@ -202,6 +203,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   };
 
   const nonDefaultRoles = [...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position);
+  const everyoneRole = roles.find((r) => r.isDefault) ?? null;
 
   const startCreateRole = () => {
     setEditingRole(null);
@@ -248,7 +250,6 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     if (swapIdx < 0 || swapIdx >= nonDefaultRoles.length) return;
     const reordered = [...nonDefaultRoles];
     [reordered[idx], reordered[swapIdx]] = [reordered[swapIdx], reordered[idx]];
-    // Backend expects IDs in low-to-high position order (position 1 first)
     const { reorderRoles } = useServerStore.getState();
     await reorderRoles(serverId, [...reordered].reverse().map((r) => r.id));
   };
@@ -279,6 +280,11 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
         joinLeaveMessagesEnabled: joinLeaveEnabled,
         joinLeaveChannelId: joinLeaveEnabled ? (joinLeaveChannelId || undefined) : undefined,
       });
+      if (defaultNotifLevel !== (activeServer.defaultNotificationLevel ?? 0)) {
+        await api.patch(`/servers/${serverId}/default-notification-level`, defaultNotifLevel, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       setServerIconFile(null);
       setServerIconPreview(null);
     } catch (err: unknown) {
@@ -291,473 +297,540 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
 
   const showEditor = creating || editingRole != null;
 
+  const TAB_LABELS: Record<Tab, string> = {
+    server: 'Server',
+    members: 'Members',
+    roles: 'Roles',
+    emojis: 'Emojis',
+    bans: 'Bans',
+    audit: 'Audit Log',
+    danger: 'Danger Zone',
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal server-settings-modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Server Settings</h2>
-        <div className="settings-tabs">
-          <div className="settings-tabs-scroll" role="tablist" aria-label="Server settings sections">
-            {canManageServer && (
-              <button className={`settings-tab ${tab === 'server' ? 'active' : ''}`} onClick={() => setTab('server')}>Server</button>
-            )}
-            {canManageAnyMembers && (
-              <button className={`settings-tab ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
-            )}
-            {canManageRoles && (
-              <button className={`settings-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
-            )}
-            {canManageEmojis && (
-              <button className={`settings-tab ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
-            )}
-            {canBan && (
-              <button className={`settings-tab ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
-            )}
-            {canViewAuditLog && (
-              <button className={`settings-tab ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
-            )}
-            {isOwner && (
-              <button className={`settings-tab ${tab === 'danger' ? 'active' : ''}`} onClick={() => setTab('danger')}>Danger Zone</button>
-            )}
-          </div>
+      <div className="modal user-settings-modal server-settings-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="us-sidebar">
+          <div className="us-sidebar-header">{activeServer?.name ?? 'Server'}</div>
+          {canManageServer && (
+            <button className={`us-nav-item ${tab === 'server' ? 'active' : ''}`} onClick={() => setTab('server')}>Server</button>
+          )}
+          {canManageAnyMembers && (
+            <button className={`us-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
+          )}
+          {canManageRoles && (
+            <button className={`us-nav-item ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
+          )}
+          {canManageEmojis && (
+            <button className={`us-nav-item ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
+          )}
+          {canBan && (
+            <>
+              <div className="us-nav-separator" />
+              <button className={`us-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+            </>
+          )}
+          {canViewAuditLog && (
+            <button className={`us-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
+          )}
+          {isOwner && (
+            <>
+              <div className="us-nav-separator" />
+              <button className={`us-nav-item ${tab === 'danger' ? 'active' : ''}`} onClick={() => setTab('danger')}>Danger Zone</button>
+            </>
+          )}
         </div>
 
-        {tab === 'server' && canManageServer && (
-          <div className="server-tab">
-            <div className="server-settings-card">
-              <div className="server-icon-row">
-                <button className="server-icon-preview" onClick={() => document.getElementById('server-icon-input')?.click()}>
-                  {(() => {
-                    const iconUrl = serverIconPreview
-                      ?? (activeServer?.iconUrl
-                        ? (activeServer.iconUrl.startsWith('http') ? activeServer.iconUrl : `${getApiBase()}${activeServer.iconUrl}`)
-                        : null);
-                    if (iconUrl) return <img src={iconUrl} alt={activeServer?.name ?? 'Server icon'} />;
-                    return <span>{(activeServer?.name ?? '?').charAt(0).toUpperCase()}</span>;
-                  })()}
-                </button>
-                <div className="server-icon-actions">
-                  <label className="server-icon-upload-btn">
-                    Change Icon
-                    <input
-                      id="server-icon-input"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                      onChange={(e) => handleServerIconChange(e.target.files?.[0] ?? null)}
-                    />
-                  </label>
-                  <span className="server-icon-hint">PNG, JPG, or WEBP (max 5MB)</span>
+        <div className="us-content">
+          <div className="us-content-header">
+            <h2>{TAB_LABELS[tab]}</h2>
+            <button className="us-close" onClick={onClose}>&times;</button>
+          </div>
+
+          <div className="us-content-body">
+            {tab === 'server' && canManageServer && (
+              <>
+                <div className="us-card">
+                  <div className="us-card-title">Server Icon</div>
+                  <div className="server-icon-row">
+                    <button className="server-icon-preview" onClick={() => document.getElementById('server-icon-input')?.click()}>
+                      {(() => {
+                        const iconUrl = serverIconPreview
+                          ?? (activeServer?.iconUrl
+                            ? (activeServer.iconUrl.startsWith('http') ? activeServer.iconUrl : `${getApiBase()}${activeServer.iconUrl}`)
+                            : null);
+                        if (iconUrl) return <img src={iconUrl} alt={activeServer?.name ?? 'Server icon'} />;
+                        return <span>{(activeServer?.name ?? '?').charAt(0).toUpperCase()}</span>;
+                      })()}
+                    </button>
+                    <div className="server-icon-actions">
+                      <label className="server-icon-upload-btn">
+                        Change Icon
+                        <input
+                          id="server-icon-input"
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          onChange={(e) => handleServerIconChange(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                      <span className="server-icon-hint">PNG, JPG, or WEBP (max 5MB)</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              <label className="server-name-label">Server Name</label>
-              <input
-                className="server-name-input"
-                value={serverName}
-                onChange={(e) => { setServerName(e.target.value); setServerError(''); }}
-                placeholder="Server name"
-              />
-
-              <div className="server-settings-section">
-                <label className="server-setting-row">
+                <div className="us-card">
+                  <div className="us-card-title">Server Name</div>
                   <input
-                    type="checkbox"
-                    checked={joinLeaveEnabled}
-                    onChange={(e) => setJoinLeaveEnabled(e.target.checked)}
+                    className="server-name-input"
+                    value={serverName}
+                    onChange={(e) => { setServerName(e.target.value); setServerError(''); }}
+                    placeholder="Server name"
                   />
-                  <span>Post a message when members join or leave</span>
-                </label>
-                <div className="server-setting-row">
-                  <span className="server-setting-label">Channel</span>
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Join / Leave Messages</div>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={joinLeaveEnabled}
+                      onChange={(e) => setJoinLeaveEnabled(e.target.checked)}
+                    />
+                    Post a message when members join or leave
+                  </label>
+                  <div className="server-setting-row" style={{ marginTop: 8 }}>
+                    <span className="server-setting-label">Channel</span>
+                    <select
+                      className="settings-select"
+                      value={joinLeaveChannelId}
+                      disabled={!joinLeaveEnabled || channels.filter((c) => c.type === 'Text').length === 0}
+                      onChange={(e) => setJoinLeaveChannelId(e.target.value)}
+                    >
+                      {channels.filter((c) => c.type === 'Text').map((c) => (
+                        <option key={c.id} value={c.id}>#{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {channels.filter((c) => c.type === 'Text').length === 0 && (
+                    <div className="settings-help">No text channels available.</div>
+                  )}
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Default Notification Level</div>
+                  <div className="settings-help" style={{ marginTop: 0 }}>
+                    This sets the default for all members who haven't customized their settings.
+                  </div>
                   <select
-                    className="server-setting-select"
-                    value={joinLeaveChannelId}
-                    disabled={!joinLeaveEnabled || channels.filter((c) => c.type === 'Text').length === 0}
-                    onChange={(e) => setJoinLeaveChannelId(e.target.value)}
+                    className="settings-select"
+                    value={defaultNotifLevel}
+                    onChange={(e) => setDefaultNotifLevel(Number(e.target.value))}
                   >
-                    {channels.filter((c) => c.type === 'Text').map((c) => (
-                      <option key={c.id} value={c.id}>#{c.name}</option>
-                    ))}
+                    <option value={NotificationLevel.AllMessages}>All Messages</option>
+                    <option value={NotificationLevel.OnlyMentions}>Only Mentions</option>
+                    <option value={NotificationLevel.Nothing}>Nothing</option>
                   </select>
                 </div>
-                {channels.filter((c) => c.type === 'Text').length === 0 && (
-                  <div className="server-setting-hint">No text channels available. Create one to enable join/leave messages.</div>
-                )}
-              </div>
 
-              {serverError && <div className="server-error">{serverError}</div>}
+                {serverError && <div className="server-error">{serverError}</div>}
 
-              <div className="modal-actions">
-                <button onClick={handleSaveServer} disabled={!serverName.trim() || serverSaving}>
-                  {serverSaving ? 'Saving...' : 'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+                <div className="us-card-actions">
+                  <button className="btn-secondary" onClick={onClose}>Cancel</button>
+                  <button onClick={handleSaveServer} disabled={!serverName.trim() || serverSaving}>
+                    {serverSaving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </>
+            )}
 
-        {tab === 'members' && canManageAnyMembers && (
-          <div className="members-tab">
-            <input
-              className="members-search"
-              placeholder="Search members..."
-              value={memberSearch}
-              onChange={(e) => setMemberSearch(e.target.value)}
-            />
-            <div className="members-manage-list">
-              {members
-                .filter((m) => m.user.displayName.toLowerCase().includes(memberSearch.toLowerCase()) || m.user.username.toLowerCase().includes(memberSearch.toLowerCase()))
-                .map((m) => {
-                  const displayColor = getDisplayColor(m);
-                  const highestRole = getHighestRole(m);
-                  const isSelf = m.userId === currentUser?.id;
-                  const canActOnMember = !isSelf && currentMember && canActOn(currentMember, m);
-                  const showManageRoles = canManageRoles && (canActOnMember || (isSelf && isOwner));
-                  const showKick = canKick && canActOnMember;
-                  const showBan = canBan && canActOnMember;
+            {tab === 'members' && canManageAnyMembers && (
+              <>
+                <div className="us-card">
+                  <input
+                    className="members-search"
+                    placeholder="Search members..."
+                    value={memberSearch}
+                    onChange={(e) => setMemberSearch(e.target.value)}
+                  />
+                </div>
+                <div className="members-manage-list">
+                  {members
+                    .filter((m) => m.user.displayName.toLowerCase().includes(memberSearch.toLowerCase()) || m.user.username.toLowerCase().includes(memberSearch.toLowerCase()))
+                    .map((m) => {
+                      const displayColor = getDisplayColor(m);
+                      const highestRole = getHighestRole(m);
+                      const isSelf = m.userId === currentUser?.id;
+                      const canActOnMember = !isSelf && currentMember && canActOn(currentMember, m);
+                      const showManageRoles = canManageRoles && (canActOnMember || (isSelf && isOwner));
+                      const showKick = canKick && canActOnMember;
+                      const showBan = canBan && canActOnMember;
 
-                  return (
-                    <div key={m.userId} className="member-manage-row">
-                      <div className="member-manage-info">
-                        <div className="member-manage-avatar">
-                          {m.user.avatarUrl ? (
-                            <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${getApiBase()}${m.user.avatarUrl}`} alt={m.user.displayName} />
-                          ) : (
-                            <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
-                          )}
-                        </div>
-                        <div className="member-manage-details">
-                          <span className="member-manage-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
-                          <span className="member-manage-username">@{m.user.username}</span>
-                        </div>
-                        {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}
-                        {!m.isOwner && highestRole && (
-                          <span className="member-badge" style={{ background: highestRole.color, color: '#fff' }}>{highestRole.name}</span>
-                        )}
-                      </div>
-                      <div className="member-manage-actions">
-                        {showManageRoles && (
-                          <button className="btn-secondary" onClick={() => {
-                            setRoleAssignTarget(m);
-                            setSelectedRoleIds(m.roles.filter((r) => !r.isDefault).map((r) => r.id));
-                          }}>Roles</button>
-                        )}
-                        {showKick && (
-                          <button className="btn-danger-sm" onClick={() => kickMember(serverId, m.userId)}>Kick</button>
-                        )}
-                        {showBan && (
-                          <button className="btn-danger-sm" onClick={() => {
-                            const reason = prompt('Ban reason (optional):');
-                            banMember(serverId, m.userId, reason || undefined);
-                          }}>Ban</button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-            {roleAssignTarget && (
-              <div className="modal-overlay" onClick={() => setRoleAssignTarget(null)}>
-                <div className="modal role-assign-modal" onClick={(e) => e.stopPropagation()}>
-                  <h2>Manage Roles</h2>
-                  <div className="role-assign-target">
-                    <div className="member-manage-avatar">
-                      {roleAssignTarget.user.avatarUrl ? (
-                        <img src={roleAssignTarget.user.avatarUrl.startsWith('http') ? roleAssignTarget.user.avatarUrl : `${getApiBase()}${roleAssignTarget.user.avatarUrl}`} alt={roleAssignTarget.user.displayName} />
-                      ) : (
-                        <span>{roleAssignTarget.user.displayName.charAt(0).toUpperCase()}</span>
-                      )}
-                    </div>
-                    <span className="role-assign-target-name">{roleAssignTarget.user.displayName}</span>
-                  </div>
-                  <div className="role-assign-list">
-                    {[...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position).map((role) => {
-                      const checked = selectedRoleIds.includes(role.id);
                       return (
-                        <div
-                          key={role.id}
-                          className={`role-assign-item${checked ? ' active' : ''}`}
-                          onClick={() => {
-                            if (checked) {
-                              setSelectedRoleIds(selectedRoleIds.filter((id) => id !== role.id));
-                            } else {
-                              setSelectedRoleIds([...selectedRoleIds, role.id]);
-                            }
-                          }}
-                        >
-                          <span className="role-assign-color" style={{ background: role.color }} />
-                          <span className="role-assign-name">{role.name}</span>
-                          <div className={`toggle-switch small${checked ? ' on' : ''}`}>
-                            <div className="toggle-knob" />
+                        <div key={m.userId} className="member-manage-row">
+                          <div className="member-manage-info">
+                            <div className="member-manage-avatar">
+                              {m.user.avatarUrl ? (
+                                <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${getApiBase()}${m.user.avatarUrl}`} alt={m.user.displayName} />
+                              ) : (
+                                <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
+                              )}
+                            </div>
+                            <div className="member-manage-details">
+                              <span className="member-manage-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
+                              <span className="member-manage-username">@{m.user.username}</span>
+                            </div>
+                            {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}
+                            {!m.isOwner && highestRole && (
+                              <span className="member-badge" style={{ background: highestRole.color, color: '#fff' }}>{highestRole.name}</span>
+                            )}
+                          </div>
+                          <div className="member-manage-actions">
+                            {showManageRoles && (
+                              <button className="btn-secondary" onClick={() => {
+                                setRoleAssignTarget(m);
+                                setSelectedRoleIds(m.roles.filter((r) => !r.isDefault).map((r) => r.id));
+                              }}>Roles</button>
+                            )}
+                            {showKick && (
+                              <button className="btn-danger-sm" onClick={() => kickMember(serverId, m.userId)}>Kick</button>
+                            )}
+                            {showBan && (
+                              <button className="btn-danger-sm" onClick={() => {
+                                const reason = prompt('Ban reason (optional):');
+                                banMember(serverId, m.userId, reason || undefined);
+                              }}>Ban</button>
+                            )}
                           </div>
                         </div>
                       );
                     })}
-                    {roles.filter((r) => !r.isDefault).length === 0 && (
-                      <p className="role-assign-empty">No roles created yet. Create roles in the Roles tab.</p>
-                    )}
-                  </div>
-                  <div className="modal-actions">
-                    <button className="btn-secondary" onClick={() => setRoleAssignTarget(null)}>Cancel</button>
-                    <button onClick={async () => {
-                      const { updateMemberRoles } = useServerStore.getState();
-                      await updateMemberRoles(serverId, roleAssignTarget.userId, selectedRoleIds);
-                      setRoleAssignTarget(null);
-                    }}>Save</button>
-                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === 'roles' && canManageRoles && (
-          <div className="roles-tab">
-            {!showEditor ? (
-              <>
-                <button className="role-create-btn" onClick={startCreateRole}>
-                  <span className="role-create-icon">+</span>
-                  Create Role
-                </button>
-                <div className="role-list">
-                  {nonDefaultRoles.map((role, i) => {
-                    const memberCount = members.filter((m) => m.roles.some((r) => r.id === role.id)).length;
-                    return (
-                      <div key={role.id} className="role-item" onClick={() => startEditRole(role)}>
-                        <div className="role-item-color-bar" style={{ background: role.color }} />
-                        <div className="role-item-content">
-                          <div className="role-item-header">
-                            <span className="role-item-name" style={{ color: role.color }}>{role.name}</span>
-                            <span className="role-item-meta">{memberCount} {memberCount === 1 ? 'member' : 'members'}</span>
-                          </div>
+                {roleAssignTarget && (
+                  <div className="modal-overlay" onClick={() => setRoleAssignTarget(null)}>
+                    <div className="modal role-assign-modal" onClick={(e) => e.stopPropagation()}>
+                      <h2>Manage Roles</h2>
+                      <div className="role-assign-target">
+                        <div className="member-manage-avatar">
+                          {roleAssignTarget.user.avatarUrl ? (
+                            <img src={roleAssignTarget.user.avatarUrl.startsWith('http') ? roleAssignTarget.user.avatarUrl : `${getApiBase()}${roleAssignTarget.user.avatarUrl}`} alt={roleAssignTarget.user.displayName} />
+                          ) : (
+                            <span>{roleAssignTarget.user.displayName.charAt(0).toUpperCase()}</span>
+                          )}
                         </div>
-                        <div className="role-item-actions">
-                          <button className="role-move-btn" disabled={i === 0} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'up'); }} title="Move Up">&uarr;</button>
-                          <button className="role-move-btn" disabled={i === nonDefaultRoles.length - 1} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'down'); }} title="Move Down">&darr;</button>
-                          <button className="role-delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.id); }} title="Delete Role">&times;</button>
-                        </div>
+                        <span className="role-assign-target-name">{roleAssignTarget.user.displayName}</span>
                       </div>
-                    );
-                  })}
-                  {nonDefaultRoles.length === 0 && (
-                    <div className="role-list-empty">
-                      <span className="role-list-empty-icon">&#x1F3F7;&#xFE0F;</span>
-                      <p>No custom roles yet</p>
-                      <span>Create a role to organize your members and manage permissions.</span>
+                      <div className="role-assign-list">
+                        {[...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position).map((role) => {
+                          const checked = selectedRoleIds.includes(role.id);
+                          return (
+                            <div
+                              key={role.id}
+                              className={`role-assign-item${checked ? ' active' : ''}`}
+                              onClick={() => {
+                                if (checked) {
+                                  setSelectedRoleIds(selectedRoleIds.filter((id) => id !== role.id));
+                                } else {
+                                  setSelectedRoleIds([...selectedRoleIds, role.id]);
+                                }
+                              }}
+                            >
+                              <span className="role-assign-color" style={{ background: role.color }} />
+                              <span className="role-assign-name">{role.name}</span>
+                              <div className={`toggle-switch small${checked ? ' on' : ''}`}>
+                                <div className="toggle-knob" />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {roles.filter((r) => !r.isDefault).length === 0 && (
+                          <p className="role-assign-empty">No roles created yet. Create roles in the Roles tab.</p>
+                        )}
+                      </div>
+                      <div className="modal-actions">
+                        <button className="btn-secondary" onClick={() => setRoleAssignTarget(null)}>Cancel</button>
+                        <button onClick={async () => {
+                          const { updateMemberRoles } = useServerStore.getState();
+                          await updateMemberRoles(serverId, roleAssignTarget.userId, selectedRoleIds);
+                          setRoleAssignTarget(null);
+                        }}>Save</button>
+                      </div>
                     </div>
-                  )}
-                </div>
-              </>
-            ) : (
-              <div className="role-editor">
-                <div className="role-editor-header">
-                  <button className="role-editor-back" onClick={() => { setEditingRole(null); setCreating(false); }} title="Back to roles">&larr;</button>
-                  <h3>{creating ? 'Create Role' : 'Edit Role'}</h3>
-                </div>
-
-                <div className="role-editor-preview">
-                  <span className="role-pill" style={{ borderColor: roleColor, color: roleColor }}>
-                    <span className="role-pill-dot" style={{ background: roleColor }} />
-                    {roleName || 'Role Name'}
-                  </span>
-                </div>
-
-                <div className="role-editor-section">
-                  <label className="role-editor-label">Role Name</label>
-                  <input className="role-editor-input" value={roleName} onChange={(e) => setRoleName(e.target.value)} placeholder="e.g. Moderator" />
-                </div>
-
-                <div className="role-editor-section">
-                  <label className="role-editor-label">Color</label>
-                  <div className="role-color-presets">
-                    {ROLE_COLOR_PRESETS.map((c) => (
-                      <button
-                        key={c}
-                        className={`role-color-swatch${roleColor === c ? ' active' : ''}`}
-                        style={{ background: c }}
-                        onClick={() => setRoleColor(c)}
-                        title={c}
-                      />
-                    ))}
-                    <label className="role-color-custom" title="Custom color">
-                      <input type="color" value={roleColor} onChange={(e) => setRoleColor(e.target.value)} />
-                      <span className="role-color-custom-icon">&#9998;</span>
-                    </label>
                   </div>
-                </div>
+                )}
+              </>
+            )}
 
-                <div className="role-editor-section">
-                  <label className="role-editor-toggle">
-                    <div className={`toggle-switch${roleDisplaySeparately ? ' on' : ''}`} onClick={() => setRoleDisplaySeparately(!roleDisplaySeparately)}>
-                      <div className="toggle-knob" />
+            {tab === 'roles' && canManageRoles && (
+              <div className="roles-tab">
+                {!showEditor ? (
+                  <>
+                    <button className="role-create-btn" onClick={startCreateRole}>
+                      <span className="role-create-icon">+</span>
+                      Create Role
+                    </button>
+                    <div className="role-list">
+                      {nonDefaultRoles.map((role, i) => {
+                        const memberCount = members.filter((m) => m.roles.some((r) => r.id === role.id)).length;
+                        return (
+                          <div key={role.id} className="role-item" onClick={() => startEditRole(role)}>
+                            <div className="role-item-color-bar" style={{ background: role.color }} />
+                            <div className="role-item-content">
+                              <div className="role-item-header">
+                                <span className="role-item-name" style={{ color: role.color }}>{role.name}</span>
+                                <span className="role-item-meta">{memberCount} {memberCount === 1 ? 'member' : 'members'}</span>
+                              </div>
+                            </div>
+                            <div className="role-item-actions">
+                              <button className="role-move-btn" disabled={i === 0} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'up'); }} title="Move Up">&uarr;</button>
+                              <button className="role-move-btn" disabled={i === nonDefaultRoles.length - 1} onClick={(e) => { e.stopPropagation(); handleMoveRole(role.id, 'down'); }} title="Move Down">&darr;</button>
+                              <button className="role-delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteRole(role.id); }} title="Delete Role">&times;</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {nonDefaultRoles.length === 0 && (
+                        <div className="role-list-empty">
+                          <span className="role-list-empty-icon">&#x1F3F7;&#xFE0F;</span>
+                          <p>No custom roles yet</p>
+                          <span>Create a role to organize your members and manage permissions.</span>
+                        </div>
+                      )}
+                      {everyoneRole && (
+                        <>
+                          <div className="role-list-separator">
+                            <span>Default Permissions</span>
+                          </div>
+                          <div className="role-item" onClick={() => startEditRole(everyoneRole)}>
+                            <div className="role-item-color-bar" style={{ background: '#99aab5' }} />
+                            <div className="role-item-content">
+                              <div className="role-item-header">
+                                <span className="role-item-name" style={{ color: '#99aab5' }}>@everyone</span>
+                                <span className="role-item-meta">All members</span>
+                              </div>
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
-                    <span>Display role members separately</span>
-                  </label>
-                </div>
+                  </>
+                ) : (
+                  <div className="role-editor">
+                    <div className="role-editor-header">
+                      <button className="role-editor-back" onClick={() => { setEditingRole(null); setCreating(false); }} title="Back to roles">&larr;</button>
+                      <h3>{creating ? 'Create Role' : editingRole?.isDefault ? '@everyone Permissions' : 'Edit Role'}</h3>
+                    </div>
 
-                <div className="role-editor-section">
-                  <label className="role-editor-label">Permissions</label>
-                  {PERMISSION_SECTIONS.map(({ section, perms }) => (
-                    <div key={section} className="permission-section">
-                      <div className="permission-section-header">{section}</div>
-                      {perms.map(({ perm, label, description }) => (
-                        <div key={perm} className="permission-row" onClick={() => togglePerm(perm)}>
-                          <div className="permission-info">
-                            <span className="permission-name">{label}</span>
-                            <span className="permission-desc">{description}</span>
+                    {!editingRole?.isDefault && (
+                      <>
+                        <div className="role-editor-preview">
+                          <span className="role-pill" style={{ borderColor: roleColor, color: roleColor }}>
+                            <span className="role-pill-dot" style={{ background: roleColor }} />
+                            {roleName || 'Role Name'}
+                          </span>
+                        </div>
+
+                        <div className="role-editor-section">
+                          <label className="role-editor-label">Role Name</label>
+                          <input className="role-editor-input" value={roleName} onChange={(e) => setRoleName(e.target.value)} placeholder="e.g. Moderator" />
+                        </div>
+
+                        <div className="role-editor-section">
+                          <label className="role-editor-label">Color</label>
+                          <div className="role-color-presets">
+                            {ROLE_COLOR_PRESETS.map((c) => (
+                              <button
+                                key={c}
+                                className={`role-color-swatch${roleColor === c ? ' active' : ''}`}
+                                style={{ background: c }}
+                                onClick={() => setRoleColor(c)}
+                                title={c}
+                              />
+                            ))}
+                            <label className="role-color-custom" title="Custom color">
+                              <input type="color" value={roleColor} onChange={(e) => setRoleColor(e.target.value)} />
+                              <span className="role-color-custom-icon">&#9998;</span>
+                            </label>
                           </div>
-                          <div className={`toggle-switch${(rolePerms & perm) !== 0 ? ' on' : ''}`}>
-                            <div className="toggle-knob" />
-                          </div>
+                        </div>
+
+                        <div className="role-editor-section">
+                          <label className="role-editor-toggle">
+                            <div className={`toggle-switch${roleDisplaySeparately ? ' on' : ''}`} onClick={() => setRoleDisplaySeparately(!roleDisplaySeparately)}>
+                              <div className="toggle-knob" />
+                            </div>
+                            <span>Display role members separately</span>
+                          </label>
+                        </div>
+                      </>
+                    )}
+
+                    <div className="role-editor-section">
+                      <label className="role-editor-label">Permissions</label>
+                      {PERMISSION_SECTIONS.map(({ section, perms }) => (
+                        <div key={section} className="permission-section">
+                          <div className="permission-section-header">{section}</div>
+                          {perms.map(({ perm, label, description }) => (
+                            <div key={perm} className="permission-row" onClick={() => togglePerm(perm)}>
+                              <div className="permission-info">
+                                <span className="permission-name">{label}</span>
+                                <span className="permission-desc">{description}</span>
+                              </div>
+                              <div className={`toggle-switch${(rolePerms & perm) !== 0 ? ' on' : ''}`}>
+                                <div className="toggle-knob" />
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
-                  ))}
-                </div>
 
-                <div className="modal-actions">
-                  <button className="btn-secondary" onClick={() => { setEditingRole(null); setCreating(false); }}>Cancel</button>
-                  <button onClick={handleSaveRole} disabled={!roleName.trim()}>
-                    {creating ? 'Create' : 'Save Changes'}
-                  </button>
+                    <div className="us-card-actions">
+                      <button className="btn-secondary" onClick={() => { setEditingRole(null); setCreating(false); }}>Cancel</button>
+                      <button onClick={handleSaveRole} disabled={!roleName.trim()}>
+                        {creating ? 'Create' : 'Save Changes'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'emojis' && canManageEmojis && (
+              <div className="emojis-tab">
+                <div className="us-card">
+                  <div className="us-card-title">Upload Emoji ({emojis.length} / 50)</div>
+                  <div className="emoji-upload-row">
+                    <input
+                      type="file"
+                      accept="image/png,image/gif,image/webp"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setEmojiFile(f);
+                        setEmojiError('');
+                        if (f) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => setEmojiPreview(ev.target?.result as string);
+                          reader.readAsDataURL(f);
+                          if (!emojiName) {
+                            const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 32);
+                            if (base.length >= 2) setEmojiName(base);
+                          }
+                        } else {
+                          setEmojiPreview(null);
+                        }
+                      }}
+                    />
+                    {emojiPreview && <img src={emojiPreview} alt="preview" className="emoji-upload-preview" />}
+                  </div>
+                  <div className="emoji-upload-row">
+                    <input
+                      type="text"
+                      placeholder="emoji_name"
+                      value={emojiName}
+                      onChange={(e) => { setEmojiName(e.target.value); setEmojiError(''); }}
+                      maxLength={32}
+                    />
+                    <button
+                      disabled={!emojiFile || !emojiName || emojiUploading}
+                      onClick={async () => {
+                        if (!emojiFile || !emojiName) return;
+                        setEmojiUploading(true);
+                        setEmojiError('');
+                        try {
+                          const fd = new FormData();
+                          fd.append('file', emojiFile);
+                          fd.append('name', emojiName);
+                          await useServerStore.getState().uploadEmoji(serverId, fd);
+                          setEmojiName('');
+                          setEmojiFile(null);
+                          setEmojiPreview(null);
+                        } catch (err: unknown) {
+                          const msg = (err as { response?: { data?: string } })?.response?.data;
+                          setEmojiError(typeof msg === 'string' ? msg : 'Upload failed');
+                        } finally {
+                          setEmojiUploading(false);
+                        }
+                      }}
+                    >
+                      {emojiUploading ? 'Uploading...' : 'Upload'}
+                    </button>
+                  </div>
+                  {emojiError && <p className="emoji-error">{emojiError}</p>}
+                </div>
+                <div className="emoji-list">
+                  {emojis.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No custom emojis yet.</p>}
+                  {emojis.map((emoji) => (
+                    <div key={emoji.id} className="emoji-item">
+                      <img src={`${getApiBase()}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
+                      <span className="emoji-item-name">:{emoji.name}:</span>
+                      <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
-          </div>
-        )}
 
-        {tab === 'emojis' && canManageEmojis && (
-          <div className="emojis-tab">
-            <div className="emoji-upload-form">
-              <h3>Upload Emoji ({emojis.length} / 50)</h3>
-              <div className="emoji-upload-row">
-                <input
-                  type="file"
-                  accept="image/png,image/gif,image/webp"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0] ?? null;
-                    setEmojiFile(f);
-                    setEmojiError('');
-                    if (f) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => setEmojiPreview(ev.target?.result as string);
-                      reader.readAsDataURL(f);
-                      if (!emojiName) {
-                        const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 32);
-                        if (base.length >= 2) setEmojiName(base);
-                      }
-                    } else {
-                      setEmojiPreview(null);
-                    }
-                  }}
-                />
-                {emojiPreview && <img src={emojiPreview} alt="preview" className="emoji-upload-preview" />}
+            {tab === 'bans' && canBan && (
+              <div className="ban-list">
+                {bans.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No banned users.</p>}
+                {bans.map((ban) => (
+                  <div key={ban.id} className="ban-item">
+                    <div className="ban-info">
+                      <span className="ban-user">{ban.user.displayName}</span>
+                      <span className="ban-username">@{ban.user.username}</span>
+                      {ban.reason && <span className="ban-reason">Reason: {ban.reason}</span>}
+                      <span className="ban-meta">Banned by {ban.bannedBy.displayName} on {formatTimestamp(ban.createdAt)}</span>
+                    </div>
+                    <button className="sidebar-action-btn" onClick={() => unbanMember(serverId, ban.userId)}>Unban</button>
+                  </div>
+                ))}
               </div>
-              <div className="emoji-upload-row">
-                <input
-                  type="text"
-                  placeholder="emoji_name"
-                  value={emojiName}
-                  onChange={(e) => { setEmojiName(e.target.value); setEmojiError(''); }}
-                  maxLength={32}
-                />
+            )}
+
+            {tab === 'audit' && canViewAuditLog && (
+              <div className="audit-log-list">
+                {logs.length === 0 && <p className="audit-empty">No audit log entries yet.</p>}
+                {logs.map((log) => (
+                  <div key={log.id} className="audit-log-item">
+                    <span className="audit-icon">{ACTION_ICONS[log.action] || '?'}</span>
+                    <div className="audit-details">
+                      <span className="audit-actor">{log.actor.displayName}</span>
+                      {' '}
+                      <span className="audit-action">{ACTION_LABELS[log.action] || log.action}</span>
+                      {log.targetName && <span className="audit-target"> {log.targetName}</span>}
+                      {log.details && <span className="audit-extra"> ({log.details})</span>}
+                      <span className="audit-time">{formatTimestamp(log.createdAt)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {tab === 'danger' && isOwner && (
+              <div className="us-card danger-zone">
+                <div className="us-card-title">Delete Server</div>
+                <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
+                  Deleting a server is permanent and cannot be undone. All channels, messages, and members will be lost.
+                </p>
+                <label>
+                  Type <strong>{activeServer?.name}</strong> to confirm
+                  <input
+                    value={confirmName}
+                    onChange={(e) => setConfirmName(e.target.value)}
+                    placeholder="Server name"
+                  />
+                </label>
                 <button
-                  disabled={!emojiFile || !emojiName || emojiUploading}
-                  onClick={async () => {
-                    if (!emojiFile || !emojiName) return;
-                    setEmojiUploading(true);
-                    setEmojiError('');
-                    try {
-                      const fd = new FormData();
-                      fd.append('file', emojiFile);
-                      fd.append('name', emojiName);
-                      await useServerStore.getState().uploadEmoji(serverId, fd);
-                      setEmojiName('');
-                      setEmojiFile(null);
-                      setEmojiPreview(null);
-                    } catch (err: unknown) {
-                      const msg = (err as { response?: { data?: string } })?.response?.data;
-                      setEmojiError(typeof msg === 'string' ? msg : 'Upload failed');
-                    } finally {
-                      setEmojiUploading(false);
-                    }
-                  }}
+                  className="btn-danger"
+                  disabled={confirmName !== activeServer?.name || deleting}
+                  onClick={handleDelete}
+                  style={{ marginTop: 8 }}
                 >
-                  {emojiUploading ? 'Uploading...' : 'Upload'}
+                  {deleting ? 'Deleting...' : 'Delete Server'}
                 </button>
               </div>
-              {emojiError && <p className="emoji-error">{emojiError}</p>}
-            </div>
-            <div className="emoji-list">
-              {emojis.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No custom emojis yet.</p>}
-              {emojis.map((emoji) => (
-                <div key={emoji.id} className="emoji-item">
-                  <img src={`${getApiBase()}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
-                  <span className="emoji-item-name">:{emoji.name}:</span>
-                  <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
-                </div>
-              ))}
-            </div>
+            )}
           </div>
-        )}
-
-        {tab === 'bans' && canBan && (
-          <div className="ban-list">
-            {bans.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No banned users.</p>}
-            {bans.map((ban) => (
-              <div key={ban.id} className="ban-item">
-                <div className="ban-info">
-                  <span className="ban-user">{ban.user.displayName}</span>
-                  <span className="ban-username">@{ban.user.username}</span>
-                  {ban.reason && <span className="ban-reason">Reason: {ban.reason}</span>}
-                  <span className="ban-meta">Banned by {ban.bannedBy.displayName} on {formatTimestamp(ban.createdAt)}</span>
-                </div>
-                <button className="sidebar-action-btn" onClick={() => unbanMember(serverId, ban.userId)}>Unban</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'audit' && canViewAuditLog && (
-          <div className="audit-log-list">
-            {logs.length === 0 && <p className="audit-empty">No audit log entries yet.</p>}
-            {logs.map((log) => (
-              <div key={log.id} className="audit-log-item">
-                <span className="audit-icon">{ACTION_ICONS[log.action] || '?'}</span>
-                <div className="audit-details">
-                  <span className="audit-actor">{log.actor.displayName}</span>
-                  {' '}
-                  <span className="audit-action">{ACTION_LABELS[log.action] || log.action}</span>
-                  {log.targetName && <span className="audit-target"> {log.targetName}</span>}
-                  {log.details && <span className="audit-extra"> ({log.details})</span>}
-                  <span className="audit-time">{formatTimestamp(log.createdAt)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === 'danger' && isOwner && (
-          <div className="danger-zone">
-            <p>Deleting a server is permanent and cannot be undone. All channels, messages, and members will be lost.</p>
-            <label>
-              Type <strong>{activeServer?.name}</strong> to confirm
-              <input
-                value={confirmName}
-                onChange={(e) => setConfirmName(e.target.value)}
-                placeholder="Server name"
-              />
-            </label>
-            <button
-              className="btn-danger"
-              disabled={confirmName !== activeServer?.name || deleting}
-              onClick={handleDelete}
-            >
-              {deleting ? 'Deleting...' : 'Delete Server'}
-            </button>
-          </div>
-        )}
-        <div className="modal-actions">
-          <button className="btn-secondary" onClick={onClose}>Close</button>
         </div>
       </div>
     </div>

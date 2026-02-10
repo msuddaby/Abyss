@@ -9,6 +9,7 @@ public class Server
     public AppUser Owner { get; set; } = null!;
     public bool JoinLeaveMessagesEnabled { get; set; } = true;
     public Guid? JoinLeaveChannelId { get; set; }
+    public NotificationLevel DefaultNotificationLevel { get; set; } = NotificationLevel.AllMessages;
     public ICollection<ServerMember> Members { get; set; } = new List<ServerMember>();
     public ICollection<Channel> Channels { get; set; } = new List<Channel>();
     public ICollection<ServerRole> Roles { get; set; } = new List<ServerRole>();

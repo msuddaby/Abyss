@@ -16,20 +16,36 @@ export default function ScreenShareView() {
     const video = videoRef.current;
     if (!video || !watchingUserId) return;
 
-    let stream: MediaStream | null | undefined;
-    if (isWatchingSelf) {
-      stream = getLocalScreenStream();
-    } else {
-      stream = getScreenVideoStream(watchingUserId);
-    }
+    const stream = isWatchingSelf
+      ? getLocalScreenStream()
+      : getScreenVideoStream(watchingUserId);
 
-    if (stream) {
-      video.srcObject = stream;
+    if (!stream) return;
+
+    video.srcObject = stream;
+
+    const tryPlay = () => {
       video.play().catch((err) => console.error('Screen share video play failed:', err));
+    };
+
+    // Play immediately
+    tryPlay();
+
+    // Retry on loadedmetadata in case the track wasn't producing frames yet
+    video.addEventListener('loadedmetadata', tryPlay);
+
+    // Handle track unmute — tracks may start muted during renegotiation
+    const videoTrack = stream.getVideoTracks()[0];
+    const onUnmute = () => tryPlay();
+    if (videoTrack) {
+      videoTrack.addEventListener('unmute', onUnmute);
     }
 
     return () => {
-      video.srcObject = null;
+      video.removeEventListener('loadedmetadata', tryPlay);
+      if (videoTrack) {
+        videoTrack.removeEventListener('unmute', onUnmute);
+      }
     };
   }, [watchingUserId, isWatchingSelf, screenStreamVersion]);
 

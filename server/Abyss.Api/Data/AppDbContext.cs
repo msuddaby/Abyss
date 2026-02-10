@@ -28,6 +28,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PinnedMessage> PinnedMessages => Set<PinnedMessage>();
     public DbSet<ChannelPermissionOverride> ChannelPermissionOverrides => Set<ChannelPermissionOverride>();
+    public DbSet<UserServerNotificationSetting> UserServerNotificationSettings => Set<UserServerNotificationSetting>();
+    public DbSet<UserChannelNotificationSetting> UserChannelNotificationSettings => Set<UserChannelNotificationSetting>();
+    public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -315,5 +318,48 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<PinnedMessage>()
             .HasIndex(pm => new { pm.ChannelId, pm.PinnedAt });
+
+        // UserServerNotificationSetting
+        builder.Entity<UserServerNotificationSetting>()
+            .HasKey(ns => new { ns.ServerId, ns.UserId });
+
+        builder.Entity<UserServerNotificationSetting>()
+            .HasOne(ns => ns.Server)
+            .WithMany()
+            .HasForeignKey(ns => ns.ServerId);
+
+        builder.Entity<UserServerNotificationSetting>()
+            .HasOne(ns => ns.User)
+            .WithMany()
+            .HasForeignKey(ns => ns.UserId);
+
+        builder.Entity<UserServerNotificationSetting>()
+            .HasIndex(ns => ns.UserId);
+
+        // UserChannelNotificationSetting
+        builder.Entity<UserChannelNotificationSetting>()
+            .HasKey(ns => new { ns.ChannelId, ns.UserId });
+
+        builder.Entity<UserChannelNotificationSetting>()
+            .HasOne(ns => ns.Channel)
+            .WithMany()
+            .HasForeignKey(ns => ns.ChannelId);
+
+        builder.Entity<UserChannelNotificationSetting>()
+            .HasOne(ns => ns.User)
+            .WithMany()
+            .HasForeignKey(ns => ns.UserId);
+
+        builder.Entity<UserChannelNotificationSetting>()
+            .HasIndex(ns => ns.UserId);
+
+        // UserPreferences
+        builder.Entity<UserPreferences>()
+            .HasKey(up => up.UserId);
+
+        builder.Entity<UserPreferences>()
+            .HasOne(up => up.User)
+            .WithMany()
+            .HasForeignKey(up => up.UserId);
     }
 }

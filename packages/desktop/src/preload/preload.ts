@@ -92,6 +92,19 @@ contextBridge.exposeInMainWorld('electron', {
     };
   },
 
+  // Screen share source picker
+  onScreenShareSources: (callback: (sources: any[]) => void) => {
+    const subscription = (_event: any, sources: any[]) => callback(sources);
+    ipcRenderer.on('screen-share-sources', subscription);
+    return () => {
+      ipcRenderer.removeListener('screen-share-sources', subscription);
+    };
+  },
+
+  selectScreenShareSource: (sourceId: string | null) => {
+    ipcRenderer.send('screen-share-selected', sourceId);
+  },
+
   // Auto-updater (only available in production builds)
   updates: {
     checkForUpdates: async () => {

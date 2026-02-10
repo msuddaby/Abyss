@@ -48,7 +48,7 @@ function getTextBeforeCursor(): { text: string; node: Text; offset: number } | n
   return { text, node, offset };
 }
 
-export default function MessageInput() {
+export default function MessageInput({ channelId: channelIdOverride }: { channelId?: string } = {}) {
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<Array<string | null>>([]);
   const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
@@ -63,6 +63,8 @@ export default function MessageInput() {
   const [emojiPickerStyle, setEmojiPickerStyle] = useState<React.CSSProperties | null>(null);
   const [contentLength, setContentLength] = useState(0);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -85,11 +87,12 @@ export default function MessageInput() {
   const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
   const addToast = useToastStore((s) => s.addToast);
 
-  const effectiveChannelId = isDmMode ? activeDmChannel?.id : activeChannel?.id;
+  const isVoiceChat = !!channelIdOverride;
+  const effectiveChannelId = channelIdOverride || (isDmMode ? activeDmChannel?.id : activeChannel?.id);
   const isChannelActive = !!effectiveChannelId;
-  const canSendMessages = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
-  const canAttachFiles = isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
-  const canMentionEveryone = isDmMode ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
+  const canSendMessages = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
+  const canAttachFiles = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
+  const canMentionEveryone = (isVoiceChat || isDmMode) ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
 
   const customEmojiCategory = useMemo(() =>
     emojis.length > 0 ? [{
@@ -476,17 +479,23 @@ export default function MessageInput() {
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
+    const clipboardFiles = Array.from(e.clipboardData.files);
+    if (clipboardFiles.length > 0) {
+      e.preventDefault();
+      addFiles(clipboardFiles);
+      return;
+    }
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
     document.execCommand('insertText', false, text);
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const addFiles = (selected: File[]) => {
+    if (selected.length === 0) return;
     if (!canAttachFiles) {
       addToast('You do not have permission to attach files in this channel.', 'error');
       return;
     }
-    const selected = Array.from(e.target.files || []);
     setFiles((prev) => [...prev, ...selected]);
     const newPreviews = selected.map((file) => (file.type.startsWith("image/") ? "" : null));
     setPreviews((prev) => {
@@ -509,6 +518,10 @@ export default function MessageInput() {
     });
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addFiles(Array.from(e.target.files || []));
+  };
+
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
     setPreviews((prev) => prev.filter((_, i) => i !== index));
@@ -521,6 +534,38 @@ export default function MessageInput() {
       });
       return next;
     });
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.types.includes('Files')) {
+      setDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) {
+      setDragging(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setDragging(false);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    addFiles(droppedFiles);
   };
 
   const handleSubmit = async () => {
@@ -598,7 +643,18 @@ export default function MessageInput() {
   };
 
   return (
-    <div className="message-input-container">
+    <div
+      className="message-input-container"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {dragging && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-content">Drop files to upload</div>
+        </div>
+      )}
       {replyingTo && (
         <div className="reply-bar">
           <span className="reply-bar-text">Replying to <strong>{replyingTo.author.displayName}</strong></span>
@@ -687,7 +743,7 @@ export default function MessageInput() {
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,video/*,audio/*"
+              accept="*/*"
               multiple
               hidden
               onChange={handleFileSelect}
@@ -703,11 +759,13 @@ export default function MessageInput() {
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           data-placeholder={
-            isDmMode && activeDmChannel
-              ? `Message @${activeDmChannel.otherUser.displayName}`
-              : activeChannel
-                ? (canSendMessages ? `Message #${activeChannel.name}` : `You do not have permission to send messages`)
-                : "Select a channel"
+            isVoiceChat
+              ? "Message voice chat"
+              : isDmMode && activeDmChannel
+                ? `Message @${activeDmChannel.otherUser.displayName}`
+                : activeChannel
+                  ? (canSendMessages ? `Message #${activeChannel.name}` : `You do not have permission to send messages`)
+                  : "Select a channel"
           }
           role="textbox"
         />

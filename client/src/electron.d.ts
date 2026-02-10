@@ -23,6 +23,14 @@ interface ElectronUpdates {
   onUpdateStatusChanged: (callback: (state: UpdateInfo) => void) => () => void;
 }
 
+interface ScreenShareSource {
+  id: string;
+  name: string;
+  thumbnail: string;
+  appIcon: string | null;
+  isScreen: boolean;
+}
+
 interface Window {
   electron?: {
     // PTT key management
@@ -39,6 +47,10 @@ interface Window {
     // Notifications
     showNotification: (title: string, body: string, data?: any) => void;
     onNotificationClicked: (callback: (data: any) => void) => () => void; // Returns unsubscribe function
+
+    // Screen share source picker
+    onScreenShareSources: (callback: (sources: ScreenShareSource[]) => void) => () => void;
+    selectScreenShareSource: (sourceId: string | null) => void;
 
     // Window state
     isFocused: () => Promise<boolean>;

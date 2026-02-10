@@ -20,6 +20,50 @@ export interface Server {
   ownerId: string;
   joinLeaveMessagesEnabled: boolean;
   joinLeaveChannelId?: string | null;
+  defaultNotificationLevel: number;
+}
+
+export const NotificationLevel = {
+  AllMessages: 0,
+  OnlyMentions: 1,
+  Nothing: 2,
+} as const;
+
+const NotificationLevelNames: Record<number, string> = {
+  0: 'All Messages',
+  1: 'Only Mentions',
+  2: 'Nothing',
+};
+
+export function getNotificationLevelName(level: number): string {
+  return NotificationLevelNames[level] ?? 'All Messages';
+}
+
+export const VoiceInputMode = {
+  VoiceActivity: 0,
+  PushToTalk: 1,
+} as const;
+
+export interface ServerNotifSettings {
+  notificationLevel: number | null;
+  muteUntil: string | null;
+  suppressEveryone: boolean;
+}
+
+export interface ChannelNotifSettings {
+  notificationLevel: number | null;
+  muteUntil: string | null;
+}
+
+export interface UserPreferences {
+  inputMode: number;
+  joinMuted: boolean;
+  joinDeafened: boolean;
+  inputSensitivity: number;
+  noiseSuppression: boolean;
+  echoCancellation: boolean;
+  autoGainControl: boolean;
+  uiPreferences: string | null;
 }
 
 export interface Channel {
@@ -29,6 +73,7 @@ export interface Channel {
   serverId: string;
   position: number;
   permissions?: number;
+  persistentChat?: boolean;
 }
 
 export interface ServerRole {

@@ -12,12 +12,17 @@ interface VoiceState {
   activeSharers: Map<string, string>; // userId -> displayName of all sharers in channel
   watchingUserId: string | null; // who we're currently watching
   screenStreamVersion: number;
+  isCameraOn: boolean;
+  activeCameras: Map<string, string>; // userId -> displayName of camera users
+  cameraStreamVersion: number;
+  focusedUserId: string | null;
   speakingUsers: Set<string>;
   voiceMode: VoiceMode;
   pttKey: string;
   isPttActive: boolean;
   inputDeviceId: string;
   outputDeviceId: string;
+  cameraDeviceId: string;
   noiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
@@ -37,11 +42,18 @@ interface VoiceState {
   setActiveSharers: (sharers: Map<string, string>) => void;
   setWatching: (userId: string | null) => void;
   bumpScreenStreamVersion: () => void;
+  setCameraOn: (on: boolean) => void;
+  addActiveCamera: (userId: string, displayName: string) => void;
+  removeActiveCamera: (userId: string) => void;
+  setActiveCameras: (cameras: Map<string, string>) => void;
+  bumpCameraStreamVersion: () => void;
+  setFocusedUserId: (userId: string | null) => void;
   setVoiceMode: (mode: VoiceMode) => void;
   setPttKey: (key: string) => void;
   setPttActive: (active: boolean) => void;
   setInputDeviceId: (deviceId: string) => void;
   setOutputDeviceId: (deviceId: string) => void;
+  setCameraDeviceId: (deviceId: string) => void;
   setNoiseSuppression: (enabled: boolean) => void;
   setEchoCancellation: (enabled: boolean) => void;
   setAutoGainControl: (enabled: boolean) => void;
@@ -51,6 +63,9 @@ interface VoiceState {
   speakerOn: boolean;
   toggleSpeaker: () => void;
   setSpeaking: (userId: string, speaking: boolean) => void;
+  isVoiceChatOpen: boolean;
+  toggleVoiceChat: () => void;
+  setVoiceChatOpen: (open: boolean) => void;
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -62,6 +77,10 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   activeSharers: new Map(),
   watchingUserId: null,
   screenStreamVersion: 0,
+  isCameraOn: false,
+  activeCameras: new Map(),
+  cameraStreamVersion: 0,
+  focusedUserId: null,
   speakingUsers: new Set<string>(),
   voiceMode: 'voice-activity' as VoiceMode,
   pttKey: '`',
@@ -69,6 +88,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   isPttActive: false,
   inputDeviceId: 'default',
   outputDeviceId: 'default',
+  cameraDeviceId: 'default',
   noiseSuppression: true,
   echoCancellation: true,
   autoGainControl: true,
@@ -91,16 +111,24 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((s) => {
       const next = new Map(s.participants);
       next.delete(userId);
-      let sharerUpdate: Partial<VoiceState> = {};
+      let extra: Partial<VoiceState> = {};
       if (s.activeSharers.has(userId)) {
         const nextSharers = new Map(s.activeSharers);
         nextSharers.delete(userId);
-        sharerUpdate.activeSharers = nextSharers;
+        extra.activeSharers = nextSharers;
+      }
+      if (s.activeCameras.has(userId)) {
+        const nextCameras = new Map(s.activeCameras);
+        nextCameras.delete(userId);
+        extra.activeCameras = nextCameras;
       }
       if (s.watchingUserId === userId) {
-        sharerUpdate.watchingUserId = null;
+        extra.watchingUserId = null;
       }
-      return { participants: next, ...sharerUpdate };
+      if (s.focusedUserId === userId) {
+        extra.focusedUserId = null;
+      }
+      return { participants: next, ...extra };
     }),
 
   toggleMute: () => set((s) => {
@@ -141,9 +169,40 @@ export const useVoiceStore = create<VoiceState>((set) => ({
 
   bumpScreenStreamVersion: () =>
     set((s) => ({ screenStreamVersion: s.screenStreamVersion + 1 })),
+
+  setCameraOn: (on) => set({ isCameraOn: on }),
+
+  addActiveCamera: (userId, displayName) =>
+    set((s) => {
+      const next = new Map(s.activeCameras);
+      next.set(userId, displayName);
+      return { activeCameras: next };
+    }),
+
+  removeActiveCamera: (userId) =>
+    set((s) => {
+      const next = new Map(s.activeCameras);
+      next.delete(userId);
+      const clearFocus = s.focusedUserId === userId ? { focusedUserId: null } : {};
+      return { activeCameras: next, ...clearFocus };
+    }),
+
+  setActiveCameras: (cameras) => set({ activeCameras: cameras }),
+
+  bumpCameraStreamVersion: () =>
+    set((s) => ({ cameraStreamVersion: s.cameraStreamVersion + 1 })),
+
+  setFocusedUserId: (userId) => set({ focusedUserId: userId }),
+
   setVoiceMode: (mode) => {
     getStorage().setItem('voiceMode', mode);
     set({ voiceMode: mode, isPttActive: false });
+    // Sync to server (lazy import to avoid circular deps)
+    import('./userPreferencesStore.js').then(m =>
+      m.useUserPreferencesStore.getState().updatePreferences({
+        inputMode: mode === 'push-to-talk' ? 1 : 0,
+      })
+    );
   },
   setPttKey: (key) => {
     getStorage().setItem('pttKey', key);
@@ -158,22 +217,38 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     getStorage().setItem('outputDeviceId', deviceId);
     set({ outputDeviceId: deviceId });
   },
+  setCameraDeviceId: (deviceId) => {
+    getStorage().setItem('cameraDeviceId', deviceId);
+    set({ cameraDeviceId: deviceId });
+  },
   setNoiseSuppression: (enabled) => {
     getStorage().setItem('noiseSuppression', String(enabled));
     set({ noiseSuppression: enabled });
+    import('./userPreferencesStore.js').then(m =>
+      m.useUserPreferencesStore.getState().updatePreferences({ noiseSuppression: enabled })
+    );
   },
   setEchoCancellation: (enabled) => {
     getStorage().setItem('echoCancellation', String(enabled));
     set({ echoCancellation: enabled });
+    import('./userPreferencesStore.js').then(m =>
+      m.useUserPreferencesStore.getState().updatePreferences({ echoCancellation: enabled })
+    );
   },
   setAutoGainControl: (enabled) => {
     getStorage().setItem('autoGainControl', String(enabled));
     set({ autoGainControl: enabled });
+    import('./userPreferencesStore.js').then(m =>
+      m.useUserPreferencesStore.getState().updatePreferences({ autoGainControl: enabled })
+    );
   },
   setInputSensitivity: (value) => {
     const next = Math.min(1, Math.max(0, value));
     getStorage().setItem('inputSensitivity', String(next));
     set({ inputSensitivity: next });
+    import('./userPreferencesStore.js').then(m =>
+      m.useUserPreferencesStore.getState().updatePreferences({ inputSensitivity: next })
+    );
   },
   setLocalInputLevel: (value) => {
     const next = Math.min(1, Math.max(0, value));
@@ -194,6 +269,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       else next.delete(userId);
       return { speakingUsers: next };
     }),
+  isVoiceChatOpen: false,
+  toggleVoiceChat: () => set((s) => ({ isVoiceChatOpen: !s.isVoiceChatOpen })),
+  setVoiceChatOpen: (open) => set({ isVoiceChatOpen: open }),
 }));
 
 /**
@@ -214,6 +292,7 @@ export function hydrateVoiceStore() {
     speakerOn: boolOr('speakerOn', true),
     inputDeviceId: s.getItem('inputDeviceId') || 'default',
     outputDeviceId: s.getItem('outputDeviceId') || 'default',
+    cameraDeviceId: s.getItem('cameraDeviceId') || 'default',
     noiseSuppression: boolOr('noiseSuppression', true),
     echoCancellation: boolOr('echoCancellation', true),
     autoGainControl: boolOr('autoGainControl', true),

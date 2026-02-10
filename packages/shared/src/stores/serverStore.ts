@@ -8,6 +8,8 @@ import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, Cu
 type VoiceChannelUsersMap = Map<string, Map<string, VoiceUserState>>;
 // channelId -> Set<userId> of active screen sharers
 type VoiceChannelSharersMap = Map<string, Set<string>>;
+// channelId -> Set<userId> of active camera users
+type VoiceChannelCamerasMap = Map<string, Set<string>>;
 type UploadFile = { uri: string; name: string; type?: string } | { name: string; type?: string; size?: number };
 
 interface ServerState {
@@ -21,6 +23,7 @@ interface ServerState {
   emojis: CustomEmoji[];
   voiceChannelUsers: VoiceChannelUsersMap;
   voiceChannelSharers: VoiceChannelSharersMap;
+  voiceChannelCameras: VoiceChannelCamerasMap;
   fetchServers: () => Promise<void>;
   fetchChannels: (serverId: string) => Promise<Channel[]>;
   setActiveServer: (server: Server) => Promise<void>;
@@ -28,7 +31,7 @@ interface ServerState {
   createServer: (name: string) => Promise<Server>;
   updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
   createChannel: (serverId: string, name: string, type: 'Text' | 'Voice') => Promise<Channel>;
-  renameChannel: (serverId: string, channelId: string, name: string) => Promise<Channel>;
+  renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean) => Promise<Channel>;
   reorderChannels: (serverId: string, type: 'Text' | 'Voice', channelIds: string[]) => Promise<void>;
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
@@ -53,6 +56,9 @@ interface ServerState {
   setVoiceChannelSharers: (data: Record<string, string[]>) => void;
   voiceSharerStarted: (channelId: string, userId: string) => void;
   voiceSharerStopped: (channelId: string, userId: string) => void;
+  setVoiceChannelCameras: (data: Record<string, string[]>) => void;
+  voiceCameraStarted: (channelId: string, userId: string) => void;
+  voiceCameraStopped: (channelId: string, userId: string) => void;
   removeChannel: (channelId: string) => void;
   removeServer: (serverId: string) => void;
   removeMember: (userId: string) => void;
@@ -100,6 +106,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   emojis: [],
   voiceChannelUsers: new Map(),
   voiceChannelSharers: new Map(),
+  voiceChannelCameras: new Map(),
 
   fetchServers: async () => {
     const res = await api.get('/servers');
@@ -126,7 +133,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   },
 
   setActiveServer: async (server) => {
-    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map() });
+    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() });
     getStorage().setItem('activeServerId', server.id);
     const channels = await get().fetchChannels(server.id);
 
@@ -186,8 +193,8 @@ export const useServerStore = create<ServerState>((set, get) => ({
     return channel;
   },
 
-  renameChannel: async (serverId, channelId, name) => {
-    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name });
+  renameChannel: async (serverId, channelId, name, persistentChat) => {
+    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name, persistentChat });
     const channel = res.data;
     set((s) => ({
       channels: s.channels.map((c) => (c.id === channelId ? channel : c)),
@@ -394,6 +401,39 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return { voiceChannelSharers: next };
     }),
 
+  setVoiceChannelCameras: (data) => {
+    const map: VoiceChannelCamerasMap = new Map();
+    for (const [channelId, userIds] of Object.entries(data)) {
+      map.set(channelId, new Set(userIds));
+    }
+    set({ voiceChannelCameras: map });
+  },
+
+  voiceCameraStarted: (channelId, userId) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelCameras);
+      const cameras = new Set(next.get(channelId) || []);
+      cameras.add(userId);
+      next.set(channelId, cameras);
+      return { voiceChannelCameras: next };
+    }),
+
+  voiceCameraStopped: (channelId, userId) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelCameras);
+      const cameras = next.get(channelId);
+      if (cameras) {
+        const updated = new Set(cameras);
+        updated.delete(userId);
+        if (updated.size === 0) {
+          next.delete(channelId);
+        } else {
+          next.set(channelId, updated);
+        }
+      }
+      return { voiceChannelCameras: next };
+    }),
+
   removeChannel: (channelId) =>
     set((s) => {
       const channels = s.channels.filter((c) => c.id !== channelId);
@@ -405,7 +445,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set((s) => {
       const servers = s.servers.filter((sv) => sv.id !== serverId);
       if (s.activeServer?.id === serverId) {
-        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map() };
+        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() };
       }
       return { servers };
     }),
@@ -431,10 +471,20 @@ export const useServerStore = create<ServerState>((set, get) => ({
           else nextSharers.set(channelId, updated);
         }
       }
+      const nextCameras = new Map(s.voiceChannelCameras);
+      for (const [channelId, cameras] of nextCameras) {
+        if (cameras.has(userId)) {
+          const updated = new Set(cameras);
+          updated.delete(userId);
+          if (updated.size === 0) nextCameras.delete(channelId);
+          else nextCameras.set(channelId, updated);
+        }
+      }
       return {
         members: s.members.filter((m) => m.userId !== userId),
         voiceChannelUsers: nextVoice,
         voiceChannelSharers: nextSharers,
+        voiceChannelCameras: nextCameras,
       };
     }),
 
@@ -525,5 +575,5 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set((s) => ({ emojis: s.emojis.filter((e) => e.id !== emojiId) })),
 
   clearActiveServer: () =>
-    set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map() }),
+    set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() }),
 }));

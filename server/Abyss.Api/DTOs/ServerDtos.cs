@@ -11,11 +11,11 @@ public class UpdateServerRequest
     public bool? JoinLeaveMessagesEnabled { get; set; }
     public Guid? JoinLeaveChannelId { get; set; }
 }
-public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, bool JoinLeaveMessagesEnabled, Guid? JoinLeaveChannelId);
+public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, bool JoinLeaveMessagesEnabled, Guid? JoinLeaveChannelId, int DefaultNotificationLevel = 0);
 public record CreateChannelRequest(string Name, string Type);
-public record UpdateChannelRequest(string Name);
+public record UpdateChannelRequest(string Name, bool? PersistentChat = null);
 public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
-public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null);
+public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false);
 public record ChannelPermissionOverrideDto(Guid RoleId, long Allow, long Deny);
 public record ChannelPermissionsDto(List<ChannelPermissionOverrideDto> Overrides);
 public record ServerMemberDto(Guid ServerId, string UserId, UserDto User, bool IsOwner, List<ServerRoleDto> Roles, DateTime JoinedAt);
@@ -43,3 +43,43 @@ public record DmUnreadDto(Guid ChannelId, bool HasUnread, int MentionCount);
 public record SearchResultDto(MessageDto Message, string ChannelName);
 public record SearchResponseDto(List<SearchResultDto> Results, int TotalCount);
 public record VoiceUserStateDto(string DisplayName, bool IsMuted, bool IsDeafened, bool IsServerMuted, bool IsServerDeafened);
+
+// Notification settings DTOs
+public record ServerNotificationSettingsDto(int? NotificationLevel, DateTime? MuteUntil, bool SuppressEveryone);
+public record ChannelNotificationSettingsDto(int? NotificationLevel, DateTime? MuteUntil);
+public class UpdateServerNotificationSettingsRequest
+{
+    public int? NotificationLevel { get; set; }
+    public DateTime? MuteUntil { get; set; }
+    public bool? SuppressEveryone { get; set; }
+}
+public class UpdateChannelNotificationSettingsRequest
+{
+    public int? NotificationLevel { get; set; }
+    public DateTime? MuteUntil { get; set; }
+}
+public record UserNotificationOverviewDto(
+    ServerNotificationSettingsDto ServerSettings,
+    Dictionary<Guid, ChannelNotificationSettingsDto> ChannelSettings);
+
+// User preferences DTOs
+public record UserPreferencesDto(
+    int InputMode,
+    bool JoinMuted,
+    bool JoinDeafened,
+    double InputSensitivity,
+    bool NoiseSuppression,
+    bool EchoCancellation,
+    bool AutoGainControl,
+    string? UiPreferences);
+public class UpdateUserPreferencesRequest
+{
+    public int? InputMode { get; set; }
+    public bool? JoinMuted { get; set; }
+    public bool? JoinDeafened { get; set; }
+    public double? InputSensitivity { get; set; }
+    public bool? NoiseSuppression { get; set; }
+    public bool? EchoCancellation { get; set; }
+    public bool? AutoGainControl { get; set; }
+    public string? UiPreferences { get; set; }
+}

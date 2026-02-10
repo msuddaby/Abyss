@@ -12,6 +12,8 @@
   --bg-accent-hover: #239885;
   --bg-modifier-hover: rgba(255, 255, 255, 0.06);
   --bg-modifier-active: rgba(255, 255, 255, 0.12);
+  --bg-modifier-selected: rgba(255, 255, 255, 0.08);
+  --bg-modifier-accent: rgba(255, 255, 255, 0.04);
   --text-primary: #e7e3dc;
   --text-secondary: #b5b0a6;
   --text-muted: #8a8479;
@@ -26,6 +28,11 @@
   --brand-primary: #2cb7a0;
   --danger: #d1605a;
   --success: #6bbf59;
+  --bg-floating: #111316;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --border-color: #2a2d32;
+  --accent-primary: #2cb7a0;
+  --text-danger: #d1605a;
 }
 
 body {

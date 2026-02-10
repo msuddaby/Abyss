@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import MainLayout from './pages/MainLayout';
 import ToastHost from './components/ToastHost';
+import ScreenSharePicker from './components/ScreenSharePicker';
 import './App.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -35,6 +36,7 @@ function App() {
   return (
     <Router>
       <ToastHost />
+      {window.electron && <ScreenSharePicker />}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />

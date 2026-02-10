@@ -3,6 +3,7 @@ using System;
 using Abyss.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Abyss.Api.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260210201853_AddPersistentChatToChannel")]
+    partial class AddPersistentChatToChannel
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -601,9 +604,6 @@ namespace Abyss.Api.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<int>("DefaultNotificationLevel")
-                        .HasColumnType("integer");
-
                     b.Property<string>("IconUrl")
                         .HasColumnType("text");
 
@@ -736,85 +736,6 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ServerId");
 
                     b.ToTable("ServerRoles");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserChannelNotificationSetting", b =>
-                {
-                    b.Property<Guid>("ChannelId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("MuteUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("NotificationLevel")
-                        .HasColumnType("integer");
-
-                    b.HasKey("ChannelId", "UserId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("UserChannelNotificationSettings");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserPreferences", b =>
-                {
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<bool>("AutoGainControl")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("EchoCancellation")
-                        .HasColumnType("boolean");
-
-                    b.Property<int>("InputMode")
-                        .HasColumnType("integer");
-
-                    b.Property<double>("InputSensitivity")
-                        .HasColumnType("double precision");
-
-                    b.Property<bool>("JoinDeafened")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("JoinMuted")
-                        .HasColumnType("boolean");
-
-                    b.Property<bool>("NoiseSuppression")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("UiPreferences")
-                        .HasColumnType("text");
-
-                    b.HasKey("UserId");
-
-                    b.ToTable("UserPreferences");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserServerNotificationSetting", b =>
-                {
-                    b.Property<Guid>("ServerId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("UserId")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("MuteUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int?>("NotificationLevel")
-                        .HasColumnType("integer");
-
-                    b.Property<bool>("SuppressEveryone")
-                        .HasColumnType("boolean");
-
-                    b.HasKey("ServerId", "UserId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("UserServerNotificationSettings");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -1299,55 +1220,6 @@ namespace Abyss.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Server");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserChannelNotificationSetting", b =>
-                {
-                    b.HasOne("Abyss.Api.Models.Channel", "Channel")
-                        .WithMany()
-                        .HasForeignKey("ChannelId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Abyss.Api.Models.AppUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Channel");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserPreferences", b =>
-                {
-                    b.HasOne("Abyss.Api.Models.AppUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("Abyss.Api.Models.UserServerNotificationSetting", b =>
-                {
-                    b.HasOne("Abyss.Api.Models.Server", "Server")
-                        .WithMany()
-                        .HasForeignKey("ServerId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Abyss.Api.Models.AppUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Server");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>

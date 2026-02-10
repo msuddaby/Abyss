@@ -28,13 +28,19 @@ let peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
 let remoteStreams: Map<string, MediaStream> = new Map();
 let screenVideoStreams: Map<string, MediaStream> = new Map();
+let cameraVideoStreams: Map<string, MediaStream> = new Map();
 let pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
+let pendingTrackTypes: Map<string, string[]> = new Map();
 // Track which connection object we registered on, so we can re-register if connection is recreated
 let registeredOnConnection: any = null;
 
 // Exported for ScreenShareView to access remote video streams
 export function getScreenVideoStream(userId: string): MediaStream | undefined {
   return screenVideoStreams.get(userId);
+}
+
+export function getCameraVideoStream(userId: string): MediaStream | undefined {
+  return cameraVideoStreams.get(userId);
 }
 
 // Exported for ScreenShareView to call
@@ -94,12 +100,21 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       track.enabled = !isDeafened;
       console.log(`[WebRTC] Remote audio track enabled=${!isDeafened} for ${peerId}`);
     } else if (track.kind === 'video') {
-      // Screen share video track from a sharer
-      if (event.streams && event.streams.length > 0) {
-        screenVideoStreams.set(peerId, event.streams[0]);
+      const trackTypes = pendingTrackTypes.get(peerId);
+      const trackType = trackTypes?.shift();
+      if (!trackTypes?.length) pendingTrackTypes.delete(peerId);
+
+      const stream = event.streams && event.streams.length > 0 ? event.streams[0] : null;
+      if (trackType === 'screen') {
+        if (stream) screenVideoStreams.set(peerId, stream);
+        useVoiceStore.getState().bumpScreenStreamVersion();
+        console.log(`[WebRTC] Got remote screen video track from ${peerId}`);
+      } else {
+        // Default to camera (or explicit "camera")
+        if (stream) cameraVideoStreams.set(peerId, stream);
+        useVoiceStore.getState().bumpCameraStreamVersion();
+        console.log(`[WebRTC] Got remote camera video track from ${peerId}`);
       }
-      useVoiceStore.getState().bumpScreenStreamVersion();
-      console.log(`[WebRTC] Got remote screen video track from ${peerId}`);
     }
   };
 
@@ -114,7 +129,9 @@ function closePeer(peerId: string) {
   }
   remoteStreams.delete(peerId);
   screenVideoStreams.delete(peerId);
+  cameraVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
+  pendingTrackTypes.delete(peerId);
   iceRestartInFlight.delete(peerId);
 }
 
@@ -123,7 +140,9 @@ function cleanupAll() {
   peers.clear();
   remoteStreams.clear();
   screenVideoStreams.clear();
+  cameraVideoStreams.clear();
   pendingCandidates.clear();
+  pendingTrackTypes.clear();
   if (localStream) {
     localStream.getTracks().forEach((track: any) => track.stop());
     localStream = null;
@@ -210,6 +229,7 @@ async function restartIceForAllPeers() {
 const VOICE_EVENTS = [
   'UserJoinedVoice', 'UserLeftVoice', 'ReceiveSignal', 'VoiceChannelUsers',
   'ScreenShareStarted', 'ScreenShareStopped', 'ActiveSharers',
+  'CameraStarted', 'CameraStopped', 'ActiveCameras',
   'WatchStreamRequested', 'StopWatchingRequested',
 ];
 
@@ -261,6 +281,14 @@ function setupSignalRListeners() {
   conn.on('ReceiveSignal', async (fromUserId: string, signal: string) => {
     try {
       const data = JSON.parse(signal);
+
+      if (data.type === 'track-info') {
+        if (!pendingTrackTypes.has(fromUserId)) {
+          pendingTrackTypes.set(fromUserId, []);
+        }
+        pendingTrackTypes.get(fromUserId)!.push(data.trackType);
+        return;
+      }
 
       if (data.type === 'offer') {
         console.log(`[WebRTC] Received offer from ${fromUserId}`);
@@ -344,6 +372,30 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setActiveSharers(new Map(Object.entries(sharers)));
   });
 
+  // Camera events
+  conn.on('CameraStarted', (userId: string, displayName: string) => {
+    useVoiceStore.getState().addActiveCamera(userId, displayName);
+    const currentUser = useAuthStore.getState().user;
+    if (userId === currentUser?.id) {
+      useVoiceStore.getState().setCameraOn(true);
+    }
+  });
+
+  conn.on('CameraStopped', (userId: string) => {
+    const store = useVoiceStore.getState();
+    store.removeActiveCamera(userId);
+    cameraVideoStreams.delete(userId);
+    store.bumpCameraStreamVersion();
+    const currentUser = useAuthStore.getState().user;
+    if (userId === currentUser?.id) {
+      store.setCameraOn(false);
+    }
+  });
+
+  conn.on('ActiveCameras', (cameras: Record<string, string>) => {
+    useVoiceStore.getState().setActiveCameras(new Map(Object.entries(cameras)));
+  });
+
   // Screen sharing from mobile not supported (Phase 8b) — these are no-ops
   conn.on('WatchStreamRequested', (viewerUserId: string) => {
     console.log(`[WebRTC] WatchStreamRequested from ${viewerUserId} — mobile sharing not supported`);
@@ -364,6 +416,9 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setScreenSharing(false);
     useVoiceStore.getState().setActiveSharers(new Map());
     useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
   });
 }
 
@@ -512,6 +567,9 @@ export function useWebRTC() {
     useVoiceStore.getState().setScreenSharing(false);
     useVoiceStore.getState().setActiveSharers(new Map());
     useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
   return { joinVoice, leaveVoice };
