@@ -33,6 +33,8 @@ interface ScreenShareSource {
 
 interface Window {
   electron?: {
+    platform: string;
+
     // PTT key management
     registerPttKey: (key: string) => void;
     unregisterPttKey: () => void;

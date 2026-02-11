@@ -704,7 +704,7 @@ export default function UserSettingsModal({
                       checked={noiseSuppression}
                       onChange={(e) => setNoiseSuppression(e.target.checked)}
                     />
-                    Noise Suppression
+                    ANTI WILL BREATHING TECHNOLOGY
                   </label>
                   <label className="settings-toggle">
                     <input

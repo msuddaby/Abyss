@@ -135,8 +135,8 @@ function createWindow() {
   }
 
   // Setup screen share handler (intercepts getDisplayMedia)
-  // On Linux, the system's xdg-desktop-portal already provides a native screen picker
-  // via PipeWire — using the custom handler causes a double-dialog issue
+  // On Linux, the renderer uses getUserMedia with chromeMediaSource instead of
+  // getDisplayMedia to avoid the PipeWire double-dialog issue
   if (process.platform !== 'linux') {
     setupScreenShareHandler(mainWindow);
   }

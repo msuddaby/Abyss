@@ -821,10 +821,26 @@ async function startScreenShareInternal() {
 
   voiceState.setScreenShareLoading(true);
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: true,
-    });
+    const isLinuxElectron = window.electron?.platform === 'linux';
+
+    if (isLinuxElectron) {
+      // On Linux Electron, use getUserMedia with chromeMediaSource to avoid the
+      // PipeWire double-dialog issue (getDisplayMedia + setDisplayMediaRequestHandler
+      // each trigger separate PipeWire portal sessions)
+      screenStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          mandatory: {
+            chromeMediaSource: 'desktop',
+          },
+        } as any,
+        audio: false,
+      });
+    } else {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+    }
 
     const videoTrack = screenStream.getVideoTracks()[0];
 

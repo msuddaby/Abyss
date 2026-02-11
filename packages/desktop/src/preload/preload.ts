@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 // Expose protected methods that allow the renderer process to use
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electron', {
+  platform: process.platform,
+
   // PTT key management
   registerPttKey: (key: string) => {
     ipcRenderer.send('register-ptt-key', key);
