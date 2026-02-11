@@ -552,12 +552,14 @@ async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
   }
 }
 
-async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
+async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
   iceRestartInFlight.add(peerId);
   try {
     await enqueueSignaling(peerId, async () => {
-      if (pc.signalingState !== "stable") return;
+      // Always use the current PC from the map — the passed-in reference may be stale
+      const pc = peers.get(peerId);
+      if (!pc || pc.signalingState !== "stable") return;
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       const conn = getConnection();
@@ -576,8 +578,8 @@ async function restartIceForPeer(peerId: string, pc: RTCPeerConnection) {
 
 async function restartIceForAllPeers() {
   const entries = Array.from(peers.entries());
-  for (const [peerId, pc] of entries) {
-    await restartIceForPeer(peerId, pc);
+  for (const [peerId] of entries) {
+    await restartIceForPeer(peerId);
   }
 }
 
@@ -600,9 +602,24 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
     const voiceState = useVoiceStore.getState();
 
-    if (pc.iceConnectionState === "disconnected") {
+    if (pc.iceConnectionState === "checking") {
+      // Browsers (especially Firefox) can stall at "checking" without ever
+      // reaching "failed". Set a hard timeout so we don't wait forever.
+      if (!iceReconnectTimers.has(peerId)) {
+        const timer = setTimeout(() => {
+          iceReconnectTimers.delete(peerId);
+          if (pc.iceConnectionState === "checking") {
+            console.warn(`ICE stuck at checking for ${peerId}, restarting...`);
+            restartIceForPeer(peerId, pc);
+          }
+        }, 15_000);
+        iceReconnectTimers.set(peerId, timer);
+      }
+    } else if (pc.iceConnectionState === "disconnected") {
       voiceState.setConnectionState("reconnecting");
-      // Give 5s to recover before forcing ICE restart
+      // Clear any checking timer, start a shorter recovery timer
+      const existing = iceReconnectTimers.get(peerId);
+      if (existing) clearTimeout(existing);
       const timer = setTimeout(() => {
         if (pc.iceConnectionState === "disconnected") {
           console.warn(`ICE still disconnected for ${peerId}, restarting...`);
@@ -727,6 +744,8 @@ function closePeer(peerId: string) {
   cameraTrackSenders.delete(peerId);
   iceRestartInFlight.delete(peerId);
   signalingQueues.delete(peerId);
+  const timer = iceReconnectTimers.get(peerId);
+  if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
 }
 
 function cleanupAll() {
