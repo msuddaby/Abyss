@@ -366,7 +366,7 @@ export default function MessageItem({
           <div className="message-attachments">
             {message.attachments.map((att) => (
               <div key={att.id} className="attachment">
-                {att.contentType.startsWith("image/") ? (
+                {att.contentType.startsWith("image/") && !att.contentType.includes("svg") ? (
                   <img
                     src={`${getApiBase()}${att.filePath}`}
                     alt={att.fileName}

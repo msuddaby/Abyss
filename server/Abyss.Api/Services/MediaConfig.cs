@@ -62,6 +62,7 @@ public class MediaConfig
         [".bmp"] = ("image", "image/"),
 
         // Documents
+        [".svg"] = ("document", "image/svg"),
         [".pdf"] = ("document", "application/pdf"),
         [".txt"] = ("document", "text/"),
         [".md"] = ("document", "text/"),

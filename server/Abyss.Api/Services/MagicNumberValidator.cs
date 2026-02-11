@@ -105,6 +105,16 @@ public class MagicNumberValidator
                 }
             }
 
+            // SVG detection (XML-based, no fixed magic number)
+            stream.Position = 0;
+            var svgBuffer = new byte[Math.Min(1024, (int)stream.Length)];
+            var svgRead = stream.Read(svgBuffer, 0, svgBuffer.Length);
+            var svgText = System.Text.Encoding.UTF8.GetString(svgBuffer, 0, svgRead);
+            if (svgText.Contains("<svg", StringComparison.OrdinalIgnoreCase))
+            {
+                return "image/svg+xml";
+            }
+
             // Text files (as fallback)
             stream.Position = 0;
             var testBuffer = new byte[Math.Min(512, (int)stream.Length)];

@@ -134,6 +134,8 @@ public class ServersController : ControllerBase
         {
             if (req.Icon.Length == 0) return BadRequest("No file");
             if (req.Icon.Length > 5 * 1024 * 1024) return BadRequest("File too large (max 5MB)");
+            var imageError = ImageService.ValidateImageFile(req.Icon);
+            if (imageError != null) return BadRequest(imageError);
             server.IconUrl = await _imageService.ProcessAvatarAsync(req.Icon);
             didChange = true;
         }

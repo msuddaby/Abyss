@@ -170,6 +170,9 @@ public class AuthController : ControllerBase
         if (file.Length == 0) return BadRequest("No file");
         if (file.Length > 5 * 1024 * 1024) return BadRequest("File too large (max 5MB)");
 
+        var imageError = ImageService.ValidateImageFile(file);
+        if (imageError != null) return BadRequest(imageError);
+
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();

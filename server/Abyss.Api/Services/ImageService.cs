@@ -8,6 +8,11 @@ public class ImageService
     private readonly string _emojisDir;
     private readonly string _videoPostersDir;
 
+    private static readonly HashSet<string> AllowedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"
+    };
+
     public ImageService(IWebHostEnvironment env)
     {
         var webRoot = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
@@ -17,6 +22,23 @@ public class ImageService
         Directory.CreateDirectory(_uploadsDir);
         Directory.CreateDirectory(_emojisDir);
         Directory.CreateDirectory(_videoPostersDir);
+    }
+
+    /// <summary>
+    /// Validate that a file is a safe raster image (not SVG or other non-raster formats).
+    /// </summary>
+    public static string? ValidateImageFile(IFormFile file)
+    {
+        var ext = Path.GetExtension(file.FileName);
+        if (string.IsNullOrEmpty(ext) || !AllowedImageExtensions.Contains(ext))
+            return $"File type '{ext}' is not allowed. Only JPG, PNG, GIF, WebP, and BMP images are accepted.";
+
+        using var stream = file.OpenReadStream();
+        var detectedMime = MagicNumberValidator.DetectMimeType(stream);
+        if (detectedMime != null && detectedMime.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
+            return "SVG files are not allowed.";
+
+        return null;
     }
 
     /// <summary>
