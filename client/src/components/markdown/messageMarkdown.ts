@@ -158,6 +158,13 @@ markdown.renderer.rules.link_open = ((
   return self.renderToken(tokens, idx, options);
 }) as RenderRule;
 
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node.getAttribute("href")) {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
+
 export function renderMarkdownSafe(content: string, env: MarkdownEnv) {
   const raw = markdown.render(content, env);
   return DOMPurify.sanitize(raw, {
