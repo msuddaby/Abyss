@@ -22,6 +22,7 @@ const peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
 let screenStream: MediaStream | null = null;
 const audioElements: Map<string, HTMLAudioElement> = new Map();
+const screenAudioElements: Map<string, HTMLAudioElement> = new Map();
 const screenVideoStreams: Map<string, MediaStream> = new Map();
 const pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegistered = false;
@@ -367,6 +368,15 @@ export async function attemptAudioUnlock() {
       }),
     );
   });
+  screenAudioElements.forEach((audio) => {
+    if (!audio.srcObject) return;
+    plays.push(
+      audio.play().catch((err) => {
+        console.warn("Screen audio unlock play failed:", err);
+        failed = true;
+      }),
+    );
+  });
   if (plays.length > 0) {
     await Promise.all(plays);
   }
@@ -464,6 +474,13 @@ function startAudioKeepAlive() {
         });
       }
     });
+    screenAudioElements.forEach((audio) => {
+      if (audio.srcObject && audio.paused) {
+        audio.play().catch((err) => {
+          console.warn("Keep-alive: Failed to resume screen audio element:", err);
+        });
+      }
+    });
   }, 5000); // Check every 5 seconds
 }
 
@@ -552,6 +569,38 @@ async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
   }
 }
 
+// Nuclear recovery: tear down a broken PC and build a fresh one with a new offer.
+// Used when ICE restart fails (e.g. ERROR_CONTENT from SDP state corruption).
+async function recreatePeer(peerId: string) {
+  await enqueueSignaling(peerId, async () => {
+    console.warn(`Recreating peer connection for ${peerId}`);
+    const pc = createPeerConnection(peerId);
+    if (localStream) {
+      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
+    }
+    const conn = getConnection();
+    if (cameraStream) {
+      const camTrack = cameraStream.getVideoTracks()[0];
+      if (camTrack) {
+        await conn.invoke(
+          "SendSignal",
+          peerId,
+          JSON.stringify({ type: "track-info", trackType: "camera" }),
+        );
+        const sender = pc.addTrack(camTrack, cameraStream);
+        cameraTrackSenders.set(peerId, sender);
+      }
+    }
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await conn.invoke(
+      "SendSignal",
+      peerId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
+  });
+}
+
 async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
   iceRestartInFlight.add(peerId);
@@ -570,7 +619,10 @@ async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
       );
     });
   } catch (err) {
-    console.warn(`ICE restart failed for ${peerId}:`, err);
+    console.warn(`ICE restart failed for ${peerId}, recreating peer:`, err);
+    await recreatePeer(peerId).catch((e) =>
+      console.error(`Peer recreation also failed for ${peerId}:`, e),
+    );
   } finally {
     iceRestartInFlight.delete(peerId);
   }
@@ -659,26 +711,58 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         : new MediaStream([track]);
 
     if (track.kind === "audio") {
-      let audio = audioElements.get(peerId);
-      if (!audio) {
-        audio = new Audio();
-        audio.autoplay = true;
-        // Ensure audio continues in background
-        audio.setAttribute("playsinline", "true");
-        audio.volume = 1.0;
-        audioElements.set(peerId, audio);
+      // Check if this is screen audio vs mic audio
+      const trackTypes = pendingTrackTypes.get(peerId);
+      const nextType = trackTypes?.[0];
+      const isScreenAudio = nextType === "screen-audio";
+      if (isScreenAudio) {
+        trackTypes!.shift();
+        if (!trackTypes!.length) pendingTrackTypes.delete(peerId);
       }
-      applyOutputDevice(audio, currentOutputDeviceId);
-      audio.srcObject = stream;
-      audio.muted = useVoiceStore.getState().isDeafened;
-      audio
-        .play()
-        .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
-        .catch((err) => {
-          console.error("Audio play failed:", err);
-          useVoiceStore.getState().setNeedsAudioUnlock(true);
-        });
-      addAnalyser(peerId, stream);
+
+      if (isScreenAudio) {
+        // Screen/tab audio — play through a separate element so it doesn't
+        // overwrite the mic audio stream.
+        let audio = screenAudioElements.get(peerId);
+        if (!audio) {
+          audio = new Audio();
+          audio.autoplay = true;
+          audio.setAttribute("playsinline", "true");
+          audio.volume = 1.0;
+          screenAudioElements.set(peerId, audio);
+        }
+        applyOutputDevice(audio, currentOutputDeviceId);
+        audio.srcObject = stream;
+        audio.muted = useVoiceStore.getState().isDeafened;
+        audio
+          .play()
+          .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+          .catch((err) => {
+            console.error("Screen audio play failed:", err);
+            useVoiceStore.getState().setNeedsAudioUnlock(true);
+          });
+      } else {
+        // Mic audio
+        let audio = audioElements.get(peerId);
+        if (!audio) {
+          audio = new Audio();
+          audio.autoplay = true;
+          audio.setAttribute("playsinline", "true");
+          audio.volume = 1.0;
+          audioElements.set(peerId, audio);
+        }
+        applyOutputDevice(audio, currentOutputDeviceId);
+        audio.srcObject = stream;
+        audio.muted = useVoiceStore.getState().isDeafened;
+        audio
+          .play()
+          .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+          .catch((err) => {
+            console.error("Audio play failed:", err);
+            useVoiceStore.getState().setNeedsAudioUnlock(true);
+          });
+        addAnalyser(peerId, stream);
+      }
     } else if (track.kind === "video") {
       const applyVideoTrack = () => {
         const trackTypes = pendingTrackTypes.get(peerId);
@@ -735,6 +819,11 @@ function closePeer(peerId: string) {
     audio.srcObject = null;
     audioElements.delete(peerId);
   }
+  const screenAudio = screenAudioElements.get(peerId);
+  if (screenAudio) {
+    screenAudio.srcObject = null;
+    screenAudioElements.delete(peerId);
+  }
   removeAnalyser(peerId);
   screenVideoStreams.delete(peerId);
   cameraVideoStreams.delete(peerId);
@@ -757,6 +846,10 @@ function cleanupAll() {
     audio.srcObject = null;
   });
   audioElements.clear();
+  screenAudioElements.forEach((audio) => {
+    audio.srcObject = null;
+  });
+  screenAudioElements.clear();
   cleanupAnalysers();
   screenVideoStreams.clear();
   cameraVideoStreams.clear();
@@ -903,13 +996,18 @@ async function stopScreenShareInternal() {
             pc.signalingState === "stable" &&
             pc.iceConnectionState !== "failed"
           ) {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            await conn.invoke(
-              "SendSignal",
-              viewerId,
-              JSON.stringify({ type: "offer", sdp: offer.sdp }),
-            );
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              await conn.invoke(
+                "SendSignal",
+                viewerId,
+                JSON.stringify({ type: "offer", sdp: offer.sdp }),
+              );
+            } catch (err) {
+              console.warn(`Renegotiation after screen stop failed for ${viewerId}, recreating:`, err);
+              await recreatePeer(viewerId).catch(console.error);
+            }
           } else {
             console.warn(
               `Skipping renegotiation for ${viewerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
@@ -1060,23 +1158,32 @@ async function addVideoTrackForViewer(viewerUserId: string) {
     const pc = peers.get(viewerUserId);
     if (!pc) return;
 
-    // Send track-info before adding screen video track
     const conn = getConnection();
-    await conn.invoke(
-      "SendSignal",
-      viewerUserId,
-      JSON.stringify({ type: "track-info", trackType: "screen" }),
-    );
-
-    // Add all tracks from screen stream (video + audio if available)
     const senders: RTCRtpSender[] = [];
-    activeScreenStream.getTracks().forEach((track) => {
-      console.log(
-        `Adding screen ${track.kind} track for viewer ${viewerUserId}`,
+
+    // Add video tracks with track-info so the receiver knows it's a screen track
+    for (const track of activeScreenStream.getVideoTracks()) {
+      await conn.invoke(
+        "SendSignal",
+        viewerUserId,
+        JSON.stringify({ type: "track-info", trackType: "screen" }),
       );
-      const sender = pc.addTrack(track, activeScreenStream);
-      senders.push(sender);
-    });
+      console.log(`Adding screen video track for viewer ${viewerUserId}`);
+      senders.push(pc.addTrack(track, activeScreenStream));
+    }
+
+    // Add audio tracks (tab/system audio) with a distinct track-info type
+    // so the receiver plays them through a separate element instead of
+    // overwriting the mic audio.
+    for (const track of activeScreenStream.getAudioTracks()) {
+      await conn.invoke(
+        "SendSignal",
+        viewerUserId,
+        JSON.stringify({ type: "track-info", trackType: "screen-audio" }),
+      );
+      console.log(`Adding screen audio track for viewer ${viewerUserId}`);
+      senders.push(pc.addTrack(track, activeScreenStream));
+    }
 
     if (senders.length === 0) return;
     screenTrackSenders.set(viewerUserId, senders);
@@ -1239,18 +1346,51 @@ function setupSignalRListeners() {
 
           // Renegotiation: reuse existing connection — flush stale candidates
           pendingCandidates.delete(fromUserId);
-          await pc.setRemoteDescription(
-            new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
-          );
-          await applyPendingCandidates(fromUserId);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          console.log(`Sending renegotiation answer to ${fromUserId}`);
-          await conn.invoke(
-            "SendSignal",
-            fromUserId,
-            JSON.stringify({ type: "answer", sdp: answer.sdp }),
-          );
+          try {
+            await pc.setRemoteDescription(
+              new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+            );
+            await applyPendingCandidates(fromUserId);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            console.log(`Sending renegotiation answer to ${fromUserId}`);
+            await conn.invoke(
+              "SendSignal",
+              fromUserId,
+              JSON.stringify({ type: "answer", sdp: answer.sdp }),
+            );
+          } catch (err) {
+            console.warn(`Renegotiation failed for ${fromUserId}, recreating:`, err);
+            // SDP state is likely corrupt — rebuild with a fresh connection
+            // Accept the remote offer on a clean PC instead
+            pc = createPeerConnection(fromUserId);
+            if (localStream) {
+              localStream.getTracks().forEach((track) => pc!.addTrack(track, localStream!));
+            }
+            if (cameraStream) {
+              const camTrack = cameraStream.getVideoTracks()[0];
+              if (camTrack) {
+                await conn.invoke(
+                  "SendSignal",
+                  fromUserId,
+                  JSON.stringify({ type: "track-info", trackType: "camera" }),
+                );
+                const sender = pc!.addTrack(camTrack, cameraStream);
+                cameraTrackSenders.set(fromUserId, sender);
+              }
+            }
+            await pc!.setRemoteDescription(
+              new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
+            );
+            const answer = await pc!.createAnswer();
+            await pc!.setLocalDescription(answer);
+            console.log(`Sending fresh answer to ${fromUserId}`);
+            await conn.invoke(
+              "SendSignal",
+              fromUserId,
+              JSON.stringify({ type: "answer", sdp: answer.sdp }),
+            );
+          }
         } else {
           // New connection — audio only, screen track added lazily
           pc = createPeerConnection(fromUserId);
@@ -1506,9 +1646,12 @@ export function useWebRTC() {
     }
   }, [isMuted, voiceMode, isPttActive]);
 
-  // Deafen - mute all remote audio
+  // Deafen - mute all remote audio (mic + screen audio)
   useEffect(() => {
     audioElements.forEach((audio) => {
+      audio.muted = isDeafened;
+    });
+    screenAudioElements.forEach((audio) => {
       audio.muted = isDeafened;
     });
   }, [isDeafened]);
@@ -1517,6 +1660,9 @@ export function useWebRTC() {
   useEffect(() => {
     currentOutputDeviceId = outputDeviceId || "default";
     audioElements.forEach((audio) =>
+      applyOutputDevice(audio, currentOutputDeviceId),
+    );
+    screenAudioElements.forEach((audio) =>
       applyOutputDevice(audio, currentOutputDeviceId),
     );
   }, [outputDeviceId]);
