@@ -44,6 +44,9 @@ const cameraVideoStreams: Map<string, MediaStream> = new Map(); // peerId → re
 const cameraTrackSenders: Map<string, RTCRtpSender> = new Map(); // peerId → sender
 const pendingTrackTypes: Map<string, string[]> = new Map(); // peerId → FIFO queue of "camera"|"screen"
 
+// Per-peer GainNode chain for user volume control (0-200%)
+const gainNodes: Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; dest: MediaStreamAudioDestinationNode }> = new Map();
+
 // Connection stats
 export interface ConnectionStats {
   roundTripTime: number | null;
@@ -534,6 +537,13 @@ export function getLocalCameraStream(): MediaStream | null {
   return cameraStream;
 }
 
+export function applyUserVolume(peerId: string, volume: number) {
+  const entry = gainNodes.get(peerId);
+  if (entry) {
+    entry.gain.gain.value = volume / 100;
+  }
+}
+
 function buildIceServersFromTurn(creds: {
   urls: string[];
   username: string;
@@ -771,7 +781,27 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
           audioElements.set(peerId, audio);
         }
         applyOutputDevice(audio, currentOutputDeviceId);
-        audio.srcObject = stream;
+
+        // Route through GainNode for per-user volume control (0-200%)
+        try {
+          const ctx = ensureAudioContext();
+          // Clean up previous gain chain for this peer
+          const prev = gainNodes.get(peerId);
+          if (prev) prev.source.disconnect();
+          const source = ctx.createMediaStreamSource(stream);
+          const gain = ctx.createGain();
+          const dest = ctx.createMediaStreamDestination();
+          source.connect(gain);
+          gain.connect(dest);
+          const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
+          gain.gain.value = vol / 100;
+          gainNodes.set(peerId, { source, gain, dest });
+          audio.srcObject = dest.stream;
+        } catch (err) {
+          console.warn("GainNode chain failed, using raw stream:", err);
+          audio.srcObject = stream;
+        }
+
         audio.muted = useVoiceStore.getState().isDeafened;
         audio
           .play()
@@ -780,6 +810,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
             console.error("Audio play failed:", err);
             useVoiceStore.getState().setNeedsAudioUnlock(true);
           });
+        // Analyser uses original raw stream (unaffected by volume)
         addAnalyser(peerId, stream);
       }
     } else if (track.kind === "video") {
@@ -844,6 +875,8 @@ function closePeer(peerId: string) {
     screenAudioElements.delete(peerId);
   }
   removeAnalyser(peerId);
+  const gainEntry = gainNodes.get(peerId);
+  if (gainEntry) { gainEntry.source.disconnect(); gainNodes.delete(peerId); }
   screenVideoStreams.delete(peerId);
   cameraVideoStreams.delete(peerId);
   pendingCandidates.delete(peerId);
@@ -871,6 +904,8 @@ function cleanupAll() {
   });
   screenAudioElements.clear();
   cleanupAnalysers();
+  gainNodes.forEach((entry) => entry.source.disconnect());
+  gainNodes.clear();
   screenVideoStreams.clear();
   cameraVideoStreams.clear();
   pendingCandidates.clear();
@@ -1698,6 +1733,21 @@ export function useWebRTC() {
       audio.muted = isDeafened;
     });
   }, [isDeafened]);
+
+  // Sync per-user volume from store to GainNodes
+  useEffect(() => {
+    let prevVolumes = useVoiceStore.getState().userVolumes;
+    const unsub = useVoiceStore.subscribe((state) => {
+      if (state.userVolumes !== prevVolumes) {
+        prevVolumes = state.userVolumes;
+        for (const [peerId, entry] of gainNodes) {
+          const vol = state.userVolumes.get(peerId) ?? 100;
+          entry.gain.gain.value = vol / 100;
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   // Apply output device changes to all remote audio elements
   useEffect(() => {

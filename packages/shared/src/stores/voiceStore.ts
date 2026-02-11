@@ -74,6 +74,10 @@ interface VoiceState {
   isVoiceChatOpen: boolean;
   toggleVoiceChat: () => void;
   setVoiceChatOpen: (open: boolean) => void;
+  voiceChatDesktopNotify: boolean;
+  setVoiceChatDesktopNotify: (enabled: boolean) => void;
+  userVolumes: Map<string, number>; // userId -> 0-200 volume percentage
+  setUserVolume: (userId: string, volume: number) => void;
   // Keybinds (stored as "mod+shift+m" format)
   keybindToggleMute: string;
   keybindToggleDeafen: string;
@@ -111,7 +115,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   localInputLevel: 0,
   needsAudioUnlock: false,
 
-  setCurrentChannel: (channelId) => set({ currentChannelId: channelId }),
+  setCurrentChannel: (channelId) => set(channelId ? { currentChannelId: channelId } : { currentChannelId: null, userVolumes: new Map() }),
 
   setParticipants: (participants) => set({ participants }),
 
@@ -295,6 +299,19 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   isVoiceChatOpen: false,
   toggleVoiceChat: () => set((s) => ({ isVoiceChatOpen: !s.isVoiceChatOpen })),
   setVoiceChatOpen: (open) => set({ isVoiceChatOpen: open }),
+  voiceChatDesktopNotify: false,
+  setVoiceChatDesktopNotify: (enabled) => {
+    getStorage().setItem('voiceChatDesktopNotify', String(enabled));
+    set({ voiceChatDesktopNotify: enabled });
+  },
+  userVolumes: new Map<string, number>(),
+  setUserVolume: (userId, volume) =>
+    set((s) => {
+      const next = new Map(s.userVolumes);
+      if (volume === 100) next.delete(userId);
+      else next.set(userId, Math.max(0, Math.min(200, volume)));
+      return { userVolumes: next };
+    }),
   keybindToggleMute: 'mod+shift+m',
   keybindToggleDeafen: 'mod+shift+d',
   keybindDisconnect: 'mod+shift+e',
@@ -335,6 +352,7 @@ export function hydrateVoiceStore() {
     echoCancellation: boolOr('echoCancellation', true),
     autoGainControl: boolOr('autoGainControl', true),
     inputSensitivity: Number(s.getItem('inputSensitivity')) || 1,
+    voiceChatDesktopNotify: boolOr('voiceChatDesktopNotify', false),
     keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',
     keybindToggleDeafen: s.getItem('keybindToggleDeafen') || 'mod+shift+d',
     keybindDisconnect: s.getItem('keybindDisconnect') || 'mod+shift+e',

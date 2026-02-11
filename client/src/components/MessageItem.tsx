@@ -10,7 +10,6 @@ import {
   hasChannelPermission,
   Permission,
   getDisplayColor,
-  canActOn,
   useDmStore,
 } from "@abyss/shared";
 import type { Message, Attachment } from "@abyss/shared";
@@ -21,20 +20,16 @@ import AttachmentMedia from "./message/AttachmentMedia";
 import MessageReplyIndicator from "./message/MessageReplyIndicator";
 import MessageReactions from "./message/MessageReactions";
 import type { MessageReactionsHandle } from "./message/MessageReactions";
-import MessageContextMenu from "./message/MessageContextMenu";
 import ImagePreviewModal from "./message/ImagePreviewModal";
+import { useContextMenuStore } from "../stores/contextMenuStore";
 
 export default function MessageItem({
   message,
   grouped,
-  contextMenuOpen,
-  setContextMenuMessageId,
   onScrollToMessage,
 }: {
   message: Message;
   grouped?: boolean;
-  contextMenuOpen: boolean;
-  setContextMenuMessageId: (id: string | null) => void;
   onScrollToMessage?: (id: string) => void;
 }) {
   const [profileCard, setProfileCard] = useState<{
@@ -44,10 +39,6 @@ export default function MessageItem({
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [editError, setEditError] = useState<string | null>(null);
-  const [contextMenuPos, setContextMenuPos] = useState<{
-    x: number;
-    y: number;
-  }>({ x: 0, y: 0 });
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(
     null,
   );
@@ -57,21 +48,13 @@ export default function MessageItem({
   const currentUser = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
-  const activeServer = useServerStore((s) => s.activeServer);
   const activeChannel = useServerStore((s) => s.activeChannel);
   const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
   const addToast = useToastStore((s) => s.addToast);
-  const { kickMember, banMember } = useServerStore();
-  const {
-    editMessage,
-    deleteMessage,
-    toggleReaction,
-    setReplyingTo,
-    pinMessage,
-    unpinMessage,
-    isPinned,
-  } = useMessageStore();
+  const { editMessage, deleteMessage, toggleReaction, setReplyingTo } =
+    useMessageStore();
   const isDmMode = useDmStore((s) => s.isDmMode);
+  const openContextMenu = useContextMenuStore((s) => s.open);
 
   const isOwn = currentUser?.id === message.authorId;
   const currentMember = members.find((m) => m.userId === currentUser?.id);
@@ -79,7 +62,6 @@ export default function MessageItem({
     ? hasPermission(currentMember, Permission.ManageMessages)
     : false;
   const canDelete = isOwn || canManageMessages;
-  const canPin = isDmMode || canManageMessages;
   const canAddReactions = isDmMode
     ? true
     : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
@@ -119,13 +101,6 @@ export default function MessageItem({
   const authorAvatarUrl =
     authorMember?.user.avatarUrl ?? message.author.avatarUrl;
 
-  const canKickPerm = currentMember
-    ? hasPermission(currentMember, Permission.KickMembers)
-    : false;
-  const canBanPerm = currentMember
-    ? hasPermission(currentMember, Permission.BanMembers)
-    : false;
-
   useEffect(() => {
     if (editing) {
       editInputRef.current?.focus();
@@ -134,31 +109,19 @@ export default function MessageItem({
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    setContextMenuPos({ x: e.clientX, y: e.clientY });
-    setContextMenuMessageId(message.id);
-  };
-
-  // Admin action conditions for context menu
-  const showAdminActions = !isOwn && authorMember && currentMember;
-  const canKickAuthor = !!(
-    canKickPerm &&
-    showAdminActions &&
-    canActOn(currentMember!, authorMember!)
-  );
-  const canBanAuthor = !!(
-    canBanPerm &&
-    showAdminActions &&
-    canActOn(currentMember!, authorMember!)
-  );
-
-  const handleKick = async () => {
-    if (!activeServer) return;
-    await kickMember(activeServer.id, message.authorId);
-  };
-
-  const handleBan = async () => {
-    if (!activeServer) return;
-    await banMember(activeServer.id, message.authorId);
+    openContextMenu(
+      e.clientX,
+      e.clientY,
+      { message, user: message.author, member: authorMember },
+      {
+        onEdit: () => {
+          setEditContent(message.content);
+          setEditing(true);
+        },
+        onOpenReactionPicker: () => reactionsRef.current?.openPicker(),
+        onViewProfile: () => setProfileCard({ x: e.clientX, y: e.clientY }),
+      },
+    );
   };
 
   const handleAuthorClick = (e: React.MouseEvent) => {
@@ -196,14 +159,6 @@ export default function MessageItem({
 
   const handleDelete = () => {
     deleteMessage(message.id);
-  };
-
-  const handlePinToggle = () => {
-    if (isPinned(message.channelId, message.id)) {
-      unpinMessage(message.id);
-    } else {
-      pinMessage(message.id);
-    }
   };
 
   const handleToggleReaction = (emoji: string) => {
@@ -366,7 +321,8 @@ export default function MessageItem({
           <div className="message-attachments">
             {message.attachments.map((att) => (
               <div key={att.id} className="attachment">
-                {att.contentType.startsWith("image/") && !att.contentType.includes("svg") ? (
+                {att.contentType.startsWith("image/") &&
+                !att.contentType.includes("svg") ? (
                   <img
                     src={`${getApiBase()}${att.filePath}`}
                     alt={att.fileName}
@@ -393,7 +349,10 @@ export default function MessageItem({
           &#8617;
         </button>
         {canAddReactions && (
-          <button onClick={() => reactionsRef.current?.openPicker()} title="Add Reaction">
+          <button
+            onClick={() => reactionsRef.current?.openPicker()}
+            title="Add Reaction"
+          >
             &#128578;
           </button>
         )}
@@ -419,30 +378,6 @@ export default function MessageItem({
           userId={message.authorId}
           position={profileCard}
           onClose={() => setProfileCard(null)}
-        />
-      )}
-      {contextMenuOpen && (
-        <MessageContextMenu
-          position={contextMenuPos}
-          isOwn={isOwn}
-          editing={editing}
-          canDelete={canDelete}
-          canPin={canPin}
-          isPinned={isPinned(message.channelId, message.id)}
-          canAddReactions={canAddReactions}
-          canKickAuthor={canKickAuthor}
-          canBanAuthor={canBanAuthor}
-          onReply={() => setReplyingTo(message)}
-          onOpenPicker={() => reactionsRef.current?.openPicker()}
-          onPinToggle={handlePinToggle}
-          onEdit={() => {
-            setEditContent(message.content);
-            setEditing(true);
-          }}
-          onDelete={handleDelete}
-          onKick={handleKick}
-          onBan={handleBan}
-          onClose={() => setContextMenuMessageId(null)}
         />
       )}
       {previewAttachment && (

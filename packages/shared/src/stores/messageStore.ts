@@ -3,9 +3,17 @@ import api from '../services/api.js';
 import { ensureConnected } from '../services/signalr.js';
 import type { Message, Reaction, PinnedMessage } from '../types/index.js';
 
+interface CachedChannel {
+  messages: Message[];
+  hasMore: boolean;
+}
+
+const MAX_CACHED_CHANNELS = 25;
+
 interface MessageState {
   messages: Message[];
   pinnedByChannel: Record<string, PinnedMessage[]>;
+  channelCache: Record<string, CachedChannel>;
   loading: boolean;
   pinnedLoading: boolean;
   hasMore: boolean;
@@ -41,6 +49,7 @@ interface MessageState {
 export const useMessageStore = create<MessageState>((set, get) => ({
   messages: [],
   pinnedByChannel: {},
+  channelCache: {},
   loading: false,
   pinnedLoading: false,
   hasMore: true,
@@ -52,6 +61,58 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   setHighlightedMessageId: (messageId) => set({ highlightedMessageId: messageId }),
 
   fetchMessages: async (channelId) => {
+    const state = get();
+    const prevChannelId = state.currentChannelId;
+
+    // Save current channel's messages to cache before switching
+    if (prevChannelId && prevChannelId !== channelId && state.messages.length > 0) {
+      const cache = { ...state.channelCache };
+      cache[prevChannelId] = { messages: state.messages, hasMore: state.hasMore };
+      // Evict oldest entry if cache exceeds limit
+      const keys = Object.keys(cache);
+      if (keys.length > MAX_CACHED_CHANNELS) {
+        delete cache[keys[0]];
+      }
+      set({ channelCache: cache });
+    }
+
+    // Check cache for target channel
+    const cached = get().channelCache[channelId];
+    if (cached) {
+      // Cache hit: restore instantly (no loading spinner)
+      set({
+        messages: cached.messages,
+        hasMore: cached.hasMore,
+        hasNewer: false,
+        currentChannelId: channelId,
+        loading: false,
+      });
+
+      // Fetch newer messages in background to fill the gap
+      const newest = cached.messages[cached.messages.length - 1];
+      if (newest) {
+        try {
+          const res = await api.get(`/channels/${channelId}/messages?limit=100&after=${newest.id}`);
+          if (res.data.length > 0 && get().currentChannelId === channelId) {
+            set((s) => {
+              const existingIds = new Set(s.messages.map((m) => m.id));
+              const newMsgs = (res.data as Message[]).filter((m) => !existingIds.has(m.id));
+              if (newMsgs.length === 0) return s;
+              return {
+                messages: [...s.messages, ...newMsgs],
+                hasNewer: res.data.length >= 100,
+              };
+            });
+          }
+        } catch {
+          // Gap fill failed silently — user still sees cached messages
+        }
+      }
+      get().fetchPinnedMessages(channelId).catch(() => {});
+      return;
+    }
+
+    // Cache miss: fetch from API with loading state (original behavior)
     set({ loading: true, messages: [], hasMore: true, hasNewer: false, currentChannelId: channelId });
     const res = await api.get(`/channels/${channelId}/messages?limit=100`);
     set({ messages: res.data, loading: false, hasMore: res.data.length >= 100, hasNewer: false });
@@ -96,9 +157,25 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   addMessage: (message) => {
     set((s) => {
-      if (message.channelId !== s.currentChannelId) return s;
-      if (s.messages.some((m) => m.id === message.id)) return s;
-      return { messages: [...s.messages, message] };
+      // Active channel: append to messages
+      if (message.channelId === s.currentChannelId) {
+        if (s.messages.some((m) => m.id === message.id)) return s;
+        return { messages: [...s.messages, message] };
+      }
+      // Cached channel: append to cache so it's there on switch-back
+      const cached = s.channelCache[message.channelId];
+      if (cached && !cached.messages.some((m) => m.id === message.id)) {
+        return {
+          channelCache: {
+            ...s.channelCache,
+            [message.channelId]: {
+              ...cached,
+              messages: [...cached.messages, message],
+            },
+          },
+        };
+      }
+      return s;
     });
   },
 
@@ -239,6 +316,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   clear: () => set({
     messages: [],
     pinnedByChannel: {},
+    channelCache: {},
     loading: false,
     pinnedLoading: false,
     hasMore: true,

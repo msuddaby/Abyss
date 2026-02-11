@@ -501,6 +501,17 @@
   letter-spacing: 0.5px;
 }
 
+.tts-badge {
+  background: var(--bg-accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  line-height: 1;
+  letter-spacing: 0.5px;
+}
+
 .channel-hash {
   margin-right: 6px;
   color: var(--text-muted);
@@ -3909,6 +3920,25 @@
   margin: 4px 0;
 }
 
+.context-menu-volume {
+  padding: 8px 12px;
+}
+
+.context-menu-volume-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.context-menu-volume input[type="range"] {
+  width: 100%;
+  accent-color: var(--brand-color, #5865f2);
+  cursor: pointer;
+}
+
 /* Channel item wrapper with delete button */
 .channel-item-wrapper {
   position: relative;
@@ -5697,6 +5727,16 @@
   letter-spacing: 0.6px;
 }
 
+.vcv-tts-badge {
+  background: var(--bg-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.6px;
+}
+
 .vcv-name {
   color: var(--text-primary);
   font-size: 13px;
@@ -6096,13 +6136,6 @@
 }
 
 /* Voice Chat Panel */
-.vcv-wrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: row;
-  overflow: hidden;
-}
-
 .voice-chat-panel {
   width: 360px;
   min-width: 360px;
@@ -6157,24 +6190,154 @@
   border-top: 1px solid var(--border);
 }
 
-.voice-chat-toggle-btn {
-  background: none;
+/* Voice Chat FAB (floating action button) */
+.voice-chat-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--bg-accent, #5865f2);
   border: none;
-  font-size: 16px;
+  font-size: 22px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
 
-.voice-chat-toggle-btn:hover {
+.voice-chat-fab:hover {
+  transform: scale(1.08);
+  background: var(--bg-accent-hover, #4752c4);
+}
+
+.voice-chat-fab.active {
+  background: var(--bg-active, rgba(255, 255, 255, 0.15));
+}
+
+.voice-chat-unread-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--error, #ed4245);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Floating voice chat panel */
+.voice-chat-floating-panel {
+  position: fixed;
+  bottom: 82px;
+  right: 24px;
+  width: 380px;
+  height: 500px;
+  z-index: 999;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+}
+
+.voice-chat-floating-panel .voice-chat-panel {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  border-left: none;
+  border-radius: 12px;
+}
+
+/* Voice chat toast (global fixed position) */
+.voice-chat-toast {
+  position: fixed;
+  bottom: 82px;
+  right: 24px;
+  transform: translateY(20px);
+  opacity: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 360px;
+  min-width: 200px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 998;
+  pointer-events: auto;
+}
+
+.voice-chat-toast.visible {
   opacity: 1;
+  transform: translateY(0);
+}
+
+.voice-chat-toast:hover {
   background: var(--bg-hover);
 }
 
-.voice-chat-toggle-btn.active {
-  opacity: 1;
-  background: var(--bg-active, rgba(255, 255, 255, 0.1));
+.voice-chat-toast-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.voice-chat-toast-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.voice-chat-toast-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-accent, #5865f2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.voice-chat-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.voice-chat-toast-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.voice-chat-toast-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .edit-channel-checkbox {

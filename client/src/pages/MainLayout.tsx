@@ -9,7 +9,9 @@ import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
 import PinnedMessagesModal from '../components/PinnedMessagesModal';
 import UpdateBanner from '../components/UpdateBanner';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useVoiceStore } from '@abyss/shared';
+import VoiceChatOverlay from '../components/VoiceChatOverlay';
+import ContextMenu from '../components/contextMenu/ContextMenu';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 
 export default function MainLayout() {
@@ -22,9 +24,6 @@ export default function MainLayout() {
   const closeSearch = useSearchStore((s) => s.closeSearch);
   const signalRStatus = useSignalRStore((s) => s.status);
   const fetchConfig = useAppConfigStore((s) => s.fetchConfig);
-  const currentChannelId = useVoiceStore((s) => s.currentChannelId);
-  const isVoiceChatOpen = useVoiceStore((s) => s.isVoiceChatOpen);
-  const toggleVoiceChat = useVoiceStore((s) => s.toggleVoiceChat);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -138,15 +137,6 @@ export default function MainLayout() {
                 <span className="channel-voice-icon">🔊</span>
                 <span className="channel-name">{activeChannel.name}</span>
                 <div className="channel-header-actions">
-                  {currentChannelId === activeChannel.id && (
-                    <button
-                      className={`voice-chat-toggle-btn${isVoiceChatOpen ? ' active' : ''}`}
-                      onClick={toggleVoiceChat}
-                      title="Toggle voice chat"
-                    >
-                      💬
-                    </button>
-                  )}
                   <button
                     className={`member-list-toggle-btn${memberListVisible ? ' active' : ''}`}
                     onClick={toggleMemberList}
@@ -167,6 +157,8 @@ export default function MainLayout() {
         )}
       </div>
       {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : memberListVisible ? <MemberList /> : null)}
+      <VoiceChatOverlay />
+      <ContextMenu />
     </div>
   );
 }

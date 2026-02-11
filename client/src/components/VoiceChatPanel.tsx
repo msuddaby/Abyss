@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useVoiceChatStore, useVoiceStore } from '@abyss/shared';
 import MessageItem from './MessageItem';
 import MessageInput from './MessageInput';
@@ -11,7 +11,6 @@ export default function VoiceChatPanel() {
   const loadMore = useVoiceChatStore((s) => s.loadMore);
   const toggleVoiceChat = useVoiceStore((s) => s.toggleVoiceChat);
 
-  const [contextMenuMessageId, setContextMenuMessageId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -67,8 +66,6 @@ export default function VoiceChatPanel() {
               <MessageItem
                 message={msg}
                 grouped={grouped}
-                contextMenuOpen={contextMenuMessageId === msg.id}
-                setContextMenuMessageId={setContextMenuMessageId}
                 onScrollToMessage={scrollToMessage}
               />
             </div>

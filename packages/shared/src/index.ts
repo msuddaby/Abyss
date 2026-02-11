@@ -10,6 +10,7 @@ export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, 
 export { getConnection, startConnection, ensureConnected, stopConnection, resetConnection, onReconnected } from './services/signalr.js';
 export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
 export type { TurnCredentials } from './services/turn.js';
+export { showDesktopNotification, isElectron, navigateToNotification, setupNotificationClickListener } from './services/electronNotifications.js';
 
 // Stores
 export { useAuthStore } from './stores/authStore.js';

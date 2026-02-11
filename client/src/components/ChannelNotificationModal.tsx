@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNotificationSettingsStore, useServerStore, NotificationLevel, getNotificationLevelName } from '@abyss/shared';
 
 interface Props {
@@ -23,11 +23,6 @@ export default function ChannelNotificationModal({ serverId, channelId, channelN
 
   const [level, setLevel] = useState<number | null>(setting?.notificationLevel ?? null);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const s = channelSettings.get(channelId);
-    setLevel(s?.notificationLevel ?? null);
-  }, [channelSettings, channelId]);
 
   const isMuted = setting?.muteUntil ? new Date(setting.muteUntil) > new Date() : false;
 

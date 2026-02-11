@@ -1,5 +1,6 @@
-import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasPermission, hasChannelPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useVoiceChatStore, useAuthStore, getApiBase, hasPermission, hasChannelPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import type { Channel } from '@abyss/shared';
+import { useContextMenuStore } from '../stores/contextMenuStore';
 
 interface Props {
   channel: Channel;
@@ -19,6 +20,8 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
   const setFocusedUserId = useVoiceStore((s) => s.setFocusedUserId);
   const canConnect = hasChannelPermission(channel.permissions, Permission.Connect);
+  const ttsUsers = useVoiceChatStore((s) => s.ttsUsers);
+  const openContextMenu = useContextMenuStore((s) => s.open);
 
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
@@ -26,6 +29,17 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canModerateVoice = currentMember ? hasPermission(currentMember, Permission.MuteMembers) : false;
+
+  const handleParticipantContextMenu = (userId: string, e: React.MouseEvent) => {
+    if (userId === currentUser?.id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const member = members.find((m) => m.userId === userId);
+    openContextMenu(e.clientX, e.clientY, {
+      user: member?.user ?? { id: userId, username: '', displayName: channelUsers?.get(userId)?.displayName ?? userId, status: '', bio: '' },
+      member,
+    });
+  };
 
   const handleModerate = async (targetUserId: string, isMuted: boolean, isDeafened: boolean) => {
     try {
@@ -71,6 +85,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
                   onSelect();
                   setFocusedUserId(userId);
                 }}
+                onContextMenu={(e) => handleParticipantContextMenu(userId, e)}
                 style={{ cursor: 'pointer' }}
               >
                 <span className={`participant-avatar${speakingUsers.has(userId) ? ' speaking' : ''}`}>
@@ -78,6 +93,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
                 </span>
                 <span className="participant-name">{state.displayName}</span>
                 <div className="voice-participant-right">
+                  {ttsUsers.has(userId) && <span className="tts-badge">TTS</span>}
                   {channelCameras?.has(userId) && <span className="camera-badge">CAM</span>}
                   {channelSharers?.has(userId) && <span className="live-badge">LIVE</span>}
                   {showModeration && (

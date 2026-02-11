@@ -1,6 +1,10 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { ensureConnected } from '../services/signalr.js';
+import { isElectron } from '../services/electronNotifications.js';
+import { useVoiceStore } from './voiceStore.js';
+import { useAuthStore } from './authStore.js';
+import { useServerStore } from './serverStore.js';
 import type { Message, Reaction } from '../types/index.js';
 
 interface VoiceChatState {
@@ -8,6 +12,8 @@ interface VoiceChatState {
   channelId: string | null;
   loading: boolean;
   hasMore: boolean;
+  unreadCount: number;
+  toastMessage: Message | null;
   setChannel: (channelId: string, persistent?: boolean) => Promise<void>;
   addMessage: (message: Message) => void;
   updateMessage: (messageId: string, content: string, editedAt: string) => void;
@@ -16,6 +22,10 @@ interface VoiceChatState {
   removeReaction: (messageId: string, userId: string, emoji: string) => void;
   sendMessage: (content: string, attachmentIds?: string[]) => Promise<void>;
   loadMore: () => Promise<void>;
+  clearUnread: () => void;
+  dismissToast: () => void;
+  ttsUsers: Set<string>;
+  toggleTtsUser: (userId: string) => void;
   clear: () => void;
 }
 
@@ -24,6 +34,9 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
   channelId: null,
   loading: false,
   hasMore: false,
+  unreadCount: 0,
+  toastMessage: null,
+  ttsUsers: new Set<string>(),
 
   setChannel: async (channelId, persistent) => {
     set({ channelId, messages: [], loading: false, hasMore: false });
@@ -39,11 +52,35 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
   },
 
   addMessage: (message) => {
-    set((s) => {
-      if (message.channelId !== s.channelId) return s;
-      if (s.messages.some((m) => m.id === message.id)) return s;
-      return { messages: [...s.messages, message] };
-    });
+    const current = get();
+    if (message.channelId !== current.channelId) return;
+    if (current.messages.some((m) => m.id === message.id)) return;
+
+    const isOpen = useVoiceStore.getState().isVoiceChatOpen;
+    const myId = useAuthStore.getState().user?.id;
+    const isOwnMessage = message.authorId === myId;
+    const extra: Partial<VoiceChatState> = {};
+    if (!isOpen && !isOwnMessage && !message.isSystem) {
+      extra.unreadCount = current.unreadCount + 1;
+      extra.toastMessage = message;
+    }
+    set({ messages: [...current.messages, message], ...extra });
+
+    // Electron desktop notification
+    if (!isOwnMessage && !message.isSystem && useVoiceStore.getState().voiceChatDesktopNotify && isElectron()) {
+      const preview = message.content.replace(/<:(\w+):\w+>/g, ':$1:').slice(0, 100)
+        || (message.attachments?.length > 0 ? 'sent an attachment' : '');
+      window.electron!.isFocused().then((focused) => {
+        if (!focused) {
+          const serverId = useServerStore.getState().activeServer?.id ?? null;
+          window.electron!.showNotification(
+            `${message.author.displayName} in voice chat`,
+            preview,
+            { channelId: message.channelId, serverId }
+          );
+        }
+      }).catch(() => {});
+    }
   },
 
   updateMessage: (messageId, content, editedAt) => {
@@ -102,7 +139,17 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
     }));
   },
 
+  clearUnread: () => set({ unreadCount: 0 }),
+  dismissToast: () => set({ toastMessage: null }),
+
+  toggleTtsUser: (userId) => {
+    const next = new Set(get().ttsUsers);
+    if (next.has(userId)) next.delete(userId);
+    else next.add(userId);
+    set({ ttsUsers: next });
+  },
+
   clear: () => {
-    set({ messages: [], channelId: null, loading: false, hasMore: false });
+    set({ messages: [], channelId: null, loading: false, hasMore: false, unreadCount: 0, toastMessage: null, ttsUsers: new Set<string>() });
   },
 }));

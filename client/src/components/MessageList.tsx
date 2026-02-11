@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import {
   useAuthStore,
   useMessageStore,
@@ -23,9 +23,6 @@ export default function MessageList() {
   const listRef = useRef<HTMLDivElement>(null);
   const listInnerRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [contextMenuMessageId, setContextMenuMessageId] = useState<
-    string | null
-  >(null);
   const prevChannelRef = useRef<string | null>(null);
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
@@ -412,8 +409,6 @@ export default function MessageList() {
               <MessageItem
                 message={msg}
                 grouped={grouped}
-                contextMenuOpen={contextMenuMessageId === msg.id}
-                setContextMenuMessageId={setContextMenuMessageId}
                 onScrollToMessage={scrollToMessage}
               />
             </div>

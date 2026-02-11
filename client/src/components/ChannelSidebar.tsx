@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useContextMenuStore } from '../stores/contextMenuStore';
 import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
@@ -43,14 +44,12 @@ export default function ChannelSidebar() {
   const [notifChannel, setNotifChannel] = useState<Channel | null>(null);
   const [showServerDropdown, setShowServerDropdown] = useState(false);
   const serverDropdownRef = useRef<HTMLDivElement>(null);
-  const [contextMenuChannel, setContextMenuChannel] = useState<Channel | null>(null);
-  const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'Text' | 'Voice' | null>(null);
   const dmSearchTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dmSearchInputRef = useRef<HTMLInputElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const openContextMenu = useContextMenuStore((s) => s.open);
 
   const currentMember = members.find((m) => m.userId === user?.id);
   const canManageChannels = currentMember ? hasPermission(currentMember, Permission.ManageChannels) : false;
@@ -76,38 +75,6 @@ export default function ChannelSidebar() {
     }
   }, [activeChannel]);
 
-  useEffect(() => {
-    if (!contextMenuChannel) return;
-    const handleClick = () => setContextMenuChannel(null);
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setContextMenuChannel(null);
-    };
-    document.addEventListener('click', handleClick);
-    document.addEventListener('keydown', handleKey);
-    return () => {
-      document.removeEventListener('click', handleClick);
-      document.removeEventListener('keydown', handleKey);
-    };
-  }, [contextMenuChannel]);
-
-  useEffect(() => {
-    if (!contextMenuChannel || !contextMenuRef.current) return;
-    const rect = contextMenuRef.current.getBoundingClientRect();
-    const margin = 8;
-    let left = contextMenuPos.x;
-    let top = contextMenuPos.y;
-    if (left + rect.width > window.innerWidth - margin) {
-      left = window.innerWidth - rect.width - margin;
-    }
-    if (top + rect.height > window.innerHeight - margin) {
-      top = window.innerHeight - rect.height - margin;
-    }
-    if (left < margin) left = margin;
-    if (top < margin) top = margin;
-    if (left !== contextMenuPos.x || top !== contextMenuPos.y) {
-      setContextMenuPos({ x: left, y: top });
-    }
-  }, [contextMenuChannel, contextMenuPos]);
 
   const isServerMuted = useNotificationSettingsStore((s) => activeServer ? s.isServerMuted(activeServer.id) : false);
   const channelSettingsMap = useNotificationSettingsStore((s) => s.channelSettings);
@@ -126,8 +93,17 @@ export default function ChannelSidebar() {
   const handleChannelContextMenu = (channel: Channel) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenuPos({ x: e.clientX, y: e.clientY });
-    setContextMenuChannel(channel);
+    openContextMenu(e.clientX, e.clientY,
+      { channel },
+      {
+        onChannelNotifSettings: () => setNotifChannel(channel),
+        ...(canManageChannels ? {
+          onEditChannel: () => setChannelToEdit(channel),
+          onChannelPermissions: () => setChannelToEditPermissions(channel),
+          onDeleteChannel: () => setChannelToDelete(channel),
+        } : {}),
+      }
+    );
   };
 
   // DM mode rendering
@@ -483,38 +459,6 @@ export default function ChannelSidebar() {
           serverId={activeServer.id}
           onClose={() => setShowServerSettings(false)}
         />
-      )}
-      {contextMenuChannel && (
-        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenuPos.x, top: contextMenuPos.y }}>
-          <button
-            className="context-menu-item"
-            onClick={() => { setNotifChannel(contextMenuChannel); setContextMenuChannel(null); }}
-          >
-            Notification Settings
-          </button>
-          {canManageChannels && (
-            <>
-              <button
-                className="context-menu-item"
-                onClick={() => { setChannelToEdit(contextMenuChannel); setContextMenuChannel(null); }}
-              >
-                Edit Channel
-              </button>
-              <button
-                className="context-menu-item"
-                onClick={() => { setChannelToEditPermissions(contextMenuChannel); setContextMenuChannel(null); }}
-              >
-                Channel Permissions
-              </button>
-              <button
-                className="context-menu-item danger"
-                onClick={() => { setChannelToDelete(contextMenuChannel); setContextMenuChannel(null); }}
-              >
-                Delete Channel
-              </button>
-            </>
-          )}
-        </div>
       )}
       {channelToEdit && activeServer && (
         <EditChannelModal

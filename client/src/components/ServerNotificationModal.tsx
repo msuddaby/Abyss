@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNotificationSettingsStore, useServerStore, NotificationLevel, getNotificationLevelName } from '@abyss/shared';
 
 interface Props {
@@ -23,12 +23,6 @@ export default function ServerNotificationModal({ serverId, onClose }: Props) {
   const [level, setLevel] = useState<number | null>(setting?.notificationLevel ?? null);
   const [suppressEveryone, setSuppressEveryone] = useState(setting?.suppressEveryone ?? false);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    const s = serverSettings.get(serverId);
-    setLevel(s?.notificationLevel ?? null);
-    setSuppressEveryone(s?.suppressEveryone ?? false);
-  }, [serverSettings, serverId]);
 
   const isMuted = setting?.muteUntil ? new Date(setting.muteUntil) > new Date() : false;
 

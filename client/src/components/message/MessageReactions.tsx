@@ -53,12 +53,12 @@ const MessageReactions = forwardRef<
     if (!showPicker || !pickerRef.current || !pickerAnchor) return;
     const rect = pickerRef.current.getBoundingClientRect();
     const margin = 8;
-    let left = pickerAnchor.x;
+    let left = pickerAnchor.x - rect.width;
     let top = pickerAnchor.y;
+    if (left < margin) left = margin;
     if (left + rect.width > window.innerWidth - margin) {
       left = window.innerWidth - rect.width - margin;
     }
-    if (left < margin) left = margin;
     const aboveTop = pickerAnchor.y - rect.height - margin;
     const belowTop = pickerAnchor.y + margin;
     if (aboveTop >= margin) {
@@ -181,7 +181,7 @@ const MessageReactions = forwardRef<
         <div
           className="emoji-picker-container"
           ref={pickerRef}
-          style={pickerStyle ?? undefined}
+          style={pickerStyle ? pickerStyle : { visibility: "hidden" }}
         >
           <Picker
             data={data}

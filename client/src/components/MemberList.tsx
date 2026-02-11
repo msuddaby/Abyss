@@ -1,54 +1,22 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { useServerStore, useAuthStore, usePresenceStore, useDmStore, useMessageStore, getApiBase, hasPermission, Permission, getDisplayColor, canActOn } from '@abyss/shared';
+import { useState } from 'react';
+import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
+import { useContextMenuStore } from '../stores/contextMenuStore';
 
 export default function MemberList() {
   const members = useServerStore((s) => s.members);
   const activeServer = useServerStore((s) => s.activeServer);
-  const { kickMember, banMember } = useServerStore();
   const roles = useServerStore((s) => s.roles);
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
   const currentUser = useAuthStore((s) => s.user);
   const [profileCard, setProfileCard] = useState<{ userId: string; x: number; y: number } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ member: ServerMember; x: number; y: number } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
   const [showRoleAssign, setShowRoleAssign] = useState(false);
   const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
+  const openContextMenu = useContextMenuStore((s) => s.open);
 
   const currentMember = members.find((m) => m.userId === currentUser?.id);
-  const canKick = currentMember ? hasPermission(currentMember, Permission.KickMembers) : false;
-  const canBan = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
-  const canManageRoles = currentMember ? hasPermission(currentMember, Permission.ManageRoles) : false;
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handleClick = () => setContextMenu(null);
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, [contextMenu]);
-
-  useLayoutEffect(() => {
-    if (!contextMenu || !contextMenuRef.current) return;
-    const rect = contextMenuRef.current.getBoundingClientRect();
-    const margin = 8;
-    let left = contextMenu.x;
-    let top = contextMenu.y;
-    if (left + rect.width > window.innerWidth - margin) {
-      left = window.innerWidth - rect.width - margin;
-    }
-    if (top + rect.height > window.innerHeight - margin) {
-      top = window.innerHeight - rect.height - margin;
-    }
-    if (left < margin) left = margin;
-    if (top < margin) top = margin;
-    if (left !== contextMenu.x || top !== contextMenu.y) {
-      requestAnimationFrame(() => {
-        setContextMenu({ member: contextMenu.member, x: left, y: top });
-      });
-    }
-  }, [contextMenu?.member]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (members.length === 0) return null;
 
@@ -107,44 +75,17 @@ export default function MemberList() {
     if (!currentMember) return;
     const isSelf = member.userId === currentUser?.id;
     if (isSelf) return;
-    setContextMenu({ member, x: e.clientX, y: e.clientY });
-  };
-
-  const handleMessage = async () => {
-    if (!contextMenu) return;
-    const { createOrGetDm, enterDmMode, setActiveDmChannel } = useDmStore.getState();
-    const { leaveChannel, joinChannel, fetchMessages } = useMessageStore.getState();
-    const currentChannelId = useMessageStore.getState().currentChannelId;
-    if (currentChannelId) {
-      await leaveChannel(currentChannelId).catch(console.error);
-    }
-    const dm = await createOrGetDm(contextMenu.member.userId);
-    enterDmMode();
-    useServerStore.getState().clearActiveServer();
-    setActiveDmChannel(dm);
-    await joinChannel(dm.id).catch(console.error);
-    fetchMessages(dm.id);
-    setContextMenu(null);
-  };
-
-  const handleKick = async () => {
-    if (!contextMenu || !activeServer) return;
-    await kickMember(activeServer.id, contextMenu.member.userId);
-    setContextMenu(null);
-  };
-
-  const handleBan = async () => {
-    if (!contextMenu || !activeServer) return;
-    await banMember(activeServer.id, contextMenu.member.userId);
-    setContextMenu(null);
-  };
-
-  const handleManageRoles = () => {
-    if (!contextMenu) return;
-    setRoleAssignTarget(contextMenu.member);
-    setSelectedRoleIds(contextMenu.member.roles.filter((r) => !r.isDefault).map((r) => r.id));
-    setShowRoleAssign(true);
-    setContextMenu(null);
+    openContextMenu(e.clientX, e.clientY,
+      { user: member.user, member },
+      {
+        onViewProfile: () => setProfileCard({ userId: member.userId, x: e.clientX, y: e.clientY }),
+        onManageRoles: () => {
+          setRoleAssignTarget(member);
+          setSelectedRoleIds(member.roles.filter((r) => !r.isDefault).map((r) => r.id));
+          setShowRoleAssign(true);
+        },
+      }
+    );
   };
 
   const handleSaveRoles = async () => {
@@ -204,25 +145,6 @@ export default function MemberList() {
           position={{ x: profileCard.x, y: profileCard.y }}
           onClose={() => setProfileCard(null)}
         />
-      )}
-      {contextMenu && (
-        <div ref={contextMenuRef} className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button className="context-menu-item" onClick={() => {
-            const m = contextMenu.member;
-            setProfileCard({ userId: m.userId, x: contextMenu.x, y: contextMenu.y });
-            setContextMenu(null);
-          }}>View Profile</button>
-          <button className="context-menu-item" onClick={handleMessage}>Message</button>
-          {canManageRoles && currentMember && canActOn(currentMember, contextMenu.member) && (
-            <button className="context-menu-item" onClick={handleManageRoles}>Manage Roles</button>
-          )}
-          {canKick && currentMember && canActOn(currentMember, contextMenu.member) && (
-            <button className="context-menu-item danger" onClick={handleKick}>Kick</button>
-          )}
-          {canBan && currentMember && canActOn(currentMember, contextMenu.member) && (
-            <button className="context-menu-item danger" onClick={handleBan}>Ban</button>
-          )}
-        </div>
       )}
       {showRoleAssign && roleAssignTarget && (
         <div className="modal-overlay" onClick={() => setShowRoleAssign(false)}>

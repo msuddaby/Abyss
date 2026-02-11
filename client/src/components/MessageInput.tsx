@@ -180,12 +180,12 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
     if (!showEmojiPicker || !emojiPickerRef.current || !emojiPickerAnchor) return;
     const rect = emojiPickerRef.current.getBoundingClientRect();
     const margin = 8;
-    let left = emojiPickerAnchor.x;
+    let left = emojiPickerAnchor.x - rect.width;
     let top = emojiPickerAnchor.y;
+    if (left < margin) left = margin;
     if (left + rect.width > window.innerWidth - margin) {
       left = window.innerWidth - rect.width - margin;
     }
-    if (left < margin) left = margin;
     const aboveTop = emojiPickerAnchor.y - rect.height - margin;
     const belowTop = emojiPickerAnchor.y + margin;
     if (aboveTop >= margin) {
@@ -199,6 +199,40 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       setEmojiPickerStyle({ left, top });
     }
   }, [showEmojiPicker, emojiPickerAnchor, emojiPickerStyle]);
+
+  useEffect(() => {
+    if (!showEmojiPicker || !emojiPickerRef.current) return;
+    const updatePos = () => {
+      if (!emojiPickerRef.current || !emojiPickerAnchor) return;
+      const rect = emojiPickerRef.current.getBoundingClientRect();
+      const margin = 8;
+      let left = emojiPickerAnchor.x - rect.width;
+      if (left < margin) left = margin;
+      if (left + rect.width > window.innerWidth - margin) {
+        left = window.innerWidth - rect.width - margin;
+      }
+      const aboveTop = emojiPickerAnchor.y - rect.height - margin;
+      const belowTop = emojiPickerAnchor.y + margin;
+      let top = emojiPickerAnchor.y;
+      if (aboveTop >= margin) {
+        top = aboveTop;
+      } else if (belowTop + rect.height <= window.innerHeight - margin) {
+        top = belowTop;
+      } else {
+        top = Math.max(margin, window.innerHeight - rect.height - margin);
+      }
+      setEmojiPickerStyle((prev) =>
+        prev && prev.left === left && prev.top === top ? prev : { left, top }
+      );
+    };
+    const ro = new ResizeObserver(updatePos);
+    ro.observe(emojiPickerRef.current);
+    window.addEventListener("resize", updatePos);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [showEmojiPicker, emojiPickerAnchor]);
 
   useEffect(() => {
     if (contentLength > maxMessageLength) {
@@ -780,7 +814,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
             &#128578;
           </button>
           {showEmojiPicker && (
-            <div className="emoji-picker-input-container" ref={emojiPickerRef} style={emojiPickerStyle ?? undefined}>
+            <div className="emoji-picker-input-container" ref={emojiPickerRef} style={emojiPickerStyle ? emojiPickerStyle : { visibility: "hidden" }}>
               <Picker data={data} custom={customEmojiCategory} onEmojiSelect={handlePickerEmojiSelect} theme="dark" previewPosition="none" skinTonePosition="none" />
             </div>
           )}

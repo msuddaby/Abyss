@@ -1,8 +1,8 @@
 import { useRef, useEffect, useState } from 'react';
-import { useServerStore, useVoiceStore, useAuthStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
-import VoiceChatPanel from './VoiceChatPanel';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
+import { useContextMenuStore } from '../stores/contextMenuStore';
 
 function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: boolean; version: number }) {
   const ref = useRef<HTMLVideoElement>(null);
@@ -43,12 +43,25 @@ export default function VoiceChannelView() {
   const isCameraOn = useVoiceStore((s) => s.isCameraOn);
   const cameraStreamVersion = useVoiceStore((s) => s.cameraStreamVersion);
   const currentUser = useAuthStore((s) => s.user);
-  const isVoiceChatOpen = useVoiceStore((s) => s.isVoiceChatOpen);
   const { joinVoice } = useWebRTC();
   const setFocusedUserId = useVoiceStore((s) => s.setFocusedUserId);
 
   const connectionState = useVoiceStore((s) => s.connectionState);
   const isJoiningVoice = useVoiceStore((s) => s.isJoiningVoice);
+
+  const ttsUsers = useVoiceChatStore((s) => s.ttsUsers);
+  const openContextMenu = useContextMenuStore((s) => s.open);
+
+  const handleContextMenu = (userId: string, e: React.MouseEvent) => {
+    if (userId === currentUser?.id) return;
+    e.preventDefault();
+    const member = members.find((m) => m.userId === userId);
+    const channelUser = channelUsers?.get(userId);
+    openContextMenu(e.clientX, e.clientY, {
+      user: member?.user ?? { id: userId, username: '', displayName: channelUser?.displayName ?? userId, status: '', bio: '' },
+      member,
+    });
+  };
 
   // Moderator permissions for focused user controls
   const currentMember = members.find((m) => m.userId === currentUser?.id);
@@ -92,7 +105,6 @@ export default function VoiceChannelView() {
   const [showParticipants, setShowParticipants] = useState(true);
 
   return (
-    <div className="vcv-wrapper">
     <div className="vcv-container">
       {isConnected && connectionState === 'reconnecting' && (
         <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
@@ -111,7 +123,7 @@ export default function VoiceChannelView() {
                   const userHasCamera = hasCamera(userId);
                   const isSelf = userId === currentUser?.id;
                   return (
-                    <div key={userId} className="vcv-watching-tile">
+                    <div key={userId} className="vcv-watching-tile" onContextMenu={(e) => handleContextMenu(userId, e)}>
                       {userHasCamera ? (
                         <VideoTile userId={userId} isLocal={isSelf} version={cameraStreamVersion} />
                       ) : (
@@ -120,6 +132,9 @@ export default function VoiceChannelView() {
                             {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
                           </div>
                         </div>
+                      )}
+                      {ttsUsers.has(userId) && (
+                        <div className="vcv-tts-badge">TTS</div>
                       )}
                       <span className="vcv-watching-tile-name">{state.displayName}</span>
                     </div>
@@ -203,6 +218,7 @@ export default function VoiceChannelView() {
                   key={userId}
                   className={`vcv-strip-card${userId === focusedUserId ? ' focused' : ''}`}
                   onClick={() => setFocusedUserId(userId)}
+                  onContextMenu={(e) => handleContextMenu(userId, e)}
                 >
                   {userHasCamera ? (
                     <VideoTile userId={userId} isLocal={userId === currentUser?.id} version={cameraStreamVersion} />
@@ -212,6 +228,9 @@ export default function VoiceChannelView() {
                         {avatarUrl ? <img src={avatarUrl} alt={state.displayName} /> : state.displayName.charAt(0).toUpperCase()}
                       </div>
                     </div>
+                  )}
+                  {ttsUsers.has(userId) && (
+                    <div className="vcv-tts-badge">TTS</div>
                   )}
                   <span className="vcv-name">{state.displayName}</span>
                 </div>
@@ -248,6 +267,7 @@ export default function VoiceChannelView() {
                   key={userId}
                   className={`vcv-card${userHasCamera ? ' has-video' : ''}`}
                   onClick={() => isConnected && setFocusedUserId(userId)}
+                  onContextMenu={(e) => handleContextMenu(userId, e)}
                   style={{ cursor: isConnected ? 'pointer' : undefined }}
                 >
                   {userHasCamera ? (
@@ -270,6 +290,9 @@ export default function VoiceChannelView() {
                   )}
                   {isSharer && (
                     <div className="vcv-live-badge">LIVE</div>
+                  )}
+                  {ttsUsers.has(userId) && (
+                    <div className="vcv-tts-badge">TTS</div>
                   )}
                   <span className="vcv-name">{state.displayName}</span>
                 </div>
@@ -294,8 +317,6 @@ export default function VoiceChannelView() {
           </button>
         </div>
       )}
-    </div>
-    {isConnected && isVoiceChatOpen && <VoiceChatPanel />}
     </div>
   );
 }

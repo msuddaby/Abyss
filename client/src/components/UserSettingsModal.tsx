@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase } from "@abyss/shared";
+import { useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, isElectron } from "@abyss/shared";
 import { formatKeybind } from "./VoiceControls";
 
 type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "account";
@@ -55,6 +55,8 @@ export default function UserSettingsModal({
   const setInputSensitivity = useVoiceStore((s) => s.setInputSensitivity);
   const cameraDeviceId = useVoiceStore((s) => s.cameraDeviceId);
   const setCameraDeviceId = useVoiceStore((s) => s.setCameraDeviceId);
+  const voiceChatDesktopNotify = useVoiceStore((s) => s.voiceChatDesktopNotify);
+  const setVoiceChatDesktopNotify = useVoiceStore((s) => s.setVoiceChatDesktopNotify);
   const keybindToggleMute = useVoiceStore((s) => s.keybindToggleMute);
   const keybindToggleDeafen = useVoiceStore((s) => s.keybindToggleDeafen);
   const keybindDisconnect = useVoiceStore((s) => s.keybindDisconnect);
@@ -934,6 +936,23 @@ export default function UserSettingsModal({
                     );
                   })}
                 </div>
+
+                {isElectron() && (
+                  <div className="us-card">
+                    <div className="us-card-title">Notifications</div>
+                    <label className="settings-toggle">
+                      <input
+                        type="checkbox"
+                        checked={voiceChatDesktopNotify}
+                        onChange={(e) => setVoiceChatDesktopNotify(e.target.checked)}
+                      />
+                      Desktop notifications for voice chat messages
+                    </label>
+                    <div className="settings-help">
+                      Show a desktop notification when someone sends a message in voice chat and the app is not focused.
+                    </div>
+                  </div>
+                )}
               </>
             )}
 
