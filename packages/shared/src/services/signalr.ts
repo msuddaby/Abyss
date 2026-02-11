@@ -1,6 +1,5 @@
 import * as signalR from "@microsoft/signalr";
 import { getApiBase, refreshAccessToken, ensureFreshToken } from "./api.js";
-import { getStorage } from "../storage.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
