@@ -1221,9 +1221,22 @@ function setupSignalRListeners() {
     if (data.type === "offer") {
       await enqueueSignaling(fromUserId, async () => {
         console.log(`Received offer from ${fromUserId}`);
+        const currentUser = useAuthStore.getState().user;
 
         let pc = peers.get(fromUserId);
         if (pc && pc.signalingState !== "closed") {
+          // Glare detection: both sides sent offers simultaneously
+          if (pc.signalingState === "have-local-offer") {
+            // Deterministic tiebreaker — "polite" peer yields its offer
+            const isPolite = currentUser!.id > fromUserId;
+            if (!isPolite) {
+              console.log(`Glare with ${fromUserId}: we are impolite, ignoring remote offer`);
+              return;
+            }
+            console.log(`Glare with ${fromUserId}: we are polite, rolling back`);
+            await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
+          }
+
           // Renegotiation: reuse existing connection — flush stale candidates
           pendingCandidates.delete(fromUserId);
           await pc.setRemoteDescription(
