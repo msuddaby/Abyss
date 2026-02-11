@@ -1054,13 +1054,13 @@ public class ChatHub : Hub
         // Refresh voice activity timestamp
         _voiceState.TouchUser(UserId);
 
-        // Find connection(s) for target user
-        var targetConnections = _connections.Where(c => c.Value == targetUserId).Select(c => c.Key).ToList();
+        // Route only to the target user's voice connection — not all their connections.
+        // If signals are sent to non-voice connections (e.g. a browser tab), those
+        // connections create broken peer connections that interfere with the real session.
+        var voiceConnId = _voiceState.GetVoiceConnectionId(targetUserId);
+        if (voiceConnId == null) return;
 
-        foreach (var connId in targetConnections)
-        {
-            await Clients.Client(connId).SendAsync("ReceiveSignal", UserId, signal);
-        }
+        await Clients.Client(voiceConnId).SendAsync("ReceiveSignal", UserId, signal);
     }
 
     public Dictionary<string, string> GetVoiceChannelUsers(string channelId)

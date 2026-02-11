@@ -17,6 +17,13 @@ let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
 let turnInitPromise: Promise<void> | null = null;
 const iceRestartInFlight: Set<string> = new Set();
 
+// Per-peer cooldown to prevent rapid ICE restart loops
+const lastIceRestartTime: Map<string, number> = new Map();
+const ICE_RESTART_COOLDOWN = 30_000; // 30s minimum between restarts per peer
+
+// Flag to prevent the input device effect from re-obtaining a stream right after joinVoice
+let skipNextDeviceEffect = false;
+
 // All state is module-level so it's shared across hook instances
 const peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
@@ -603,12 +610,21 @@ async function recreatePeer(peerId: string) {
 
 async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
+
+  // Enforce cooldown to prevent rapid restart loops
+  const lastRestart = lastIceRestartTime.get(peerId);
+  if (lastRestart && Date.now() - lastRestart < ICE_RESTART_COOLDOWN) {
+    console.log(`Skipping ICE restart for ${peerId} (cooldown, ${Math.round((ICE_RESTART_COOLDOWN - (Date.now() - lastRestart)) / 1000)}s remaining)`);
+    return;
+  }
+
   iceRestartInFlight.add(peerId);
   try {
     await enqueueSignaling(peerId, async () => {
       // Always use the current PC from the map — the passed-in reference may be stale
       const pc = peers.get(peerId);
       if (!pc || pc.signalingState !== "stable") return;
+      lastIceRestartTime.set(peerId, Date.now());
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       const conn = getConnection();
@@ -657,14 +673,14 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
     if (pc.iceConnectionState === "checking") {
       // Browsers (especially Firefox) can stall at "checking" without ever
       // reaching "failed". Set a hard timeout so we don't wait forever.
-      if (!iceReconnectTimers.has(peerId)) {
+      if (!iceReconnectTimers.has(peerId) && !iceRestartInFlight.has(peerId)) {
         const timer = setTimeout(() => {
           iceReconnectTimers.delete(peerId);
           if (pc.iceConnectionState === "checking") {
             console.warn(`ICE stuck at checking for ${peerId}, restarting...`);
             restartIceForPeer(peerId, pc);
           }
-        }, 15_000);
+        }, 30_000);
         iceReconnectTimers.set(peerId, timer);
       }
     } else if (pc.iceConnectionState === "disconnected") {
@@ -833,6 +849,7 @@ function closePeer(peerId: string) {
   cameraTrackSenders.delete(peerId);
   iceRestartInFlight.delete(peerId);
   signalingQueues.delete(peerId);
+  lastIceRestartTime.delete(peerId);
   const timer = iceReconnectTimers.get(peerId);
   if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
 }
@@ -858,6 +875,7 @@ function cleanupAll() {
   screenTrackSenders.clear();
   cameraTrackSenders.clear();
   signalingQueues.clear();
+  lastIceRestartTime.clear();
   // Clear ICE reconnect timers
   iceReconnectTimers.forEach((t) => clearTimeout(t));
   iceReconnectTimers.clear();
@@ -1314,6 +1332,11 @@ function setupSignalRListeners() {
   });
 
   conn.on("ReceiveSignal", async (fromUserId: string, signal: string) => {
+    // Ignore signals if we're not in a voice channel — prevents a non-voice
+    // browser tab from creating broken peer connections that interfere with
+    // the real voice session on another client (e.g. Electron).
+    if (!useVoiceStore.getState().currentChannelId) return;
+
     const data = JSON.parse(signal);
 
     if (data.type === "track-info") {
@@ -1328,6 +1351,15 @@ function setupSignalRListeners() {
     if (data.type === "offer") {
       await enqueueSignaling(fromUserId, async () => {
         console.log(`Received offer from ${fromUserId}`);
+
+        // Remote peer's offer handles reconnection — cancel our own pending restart
+        const existingTimer = iceReconnectTimers.get(fromUserId);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          iceReconnectTimers.delete(fromUserId);
+        }
+        lastIceRestartTime.set(fromUserId, Date.now());
+
         const currentUser = useAuthStore.getState().user;
 
         let pc = peers.get(fromUserId);
@@ -1429,6 +1461,14 @@ function setupSignalRListeners() {
     } else if (data.type === "answer") {
       await enqueueSignaling(fromUserId, async () => {
         console.log(`Received answer from ${fromUserId}`);
+
+        // Got a response — cancel pending restart timer
+        const existingTimer = iceReconnectTimers.get(fromUserId);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          iceReconnectTimers.delete(fromUserId);
+        }
+
         const pc = peers.get(fromUserId);
         if (!pc) return;
         if (pc.signalingState !== "have-local-offer") {
@@ -1702,6 +1742,10 @@ export function useWebRTC() {
   // Switch input device / processing while connected
   useEffect(() => {
     if (!currentChannelId) return;
+    if (skipNextDeviceEffect) {
+      skipNextDeviceEffect = false;
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -1840,6 +1884,9 @@ export function useWebRTC() {
         startAudioKeepAlive();
 
         voiceState.setConnectionState("connected");
+        // Prevent the input device effect from re-obtaining a stream
+        // — joinVoice already has the right stream
+        skipNextDeviceEffect = true;
         setCurrentChannel(channelId);
         const conn = getConnection();
         await conn.invoke(

@@ -83,6 +83,14 @@ public class VoiceStateService
         return _voiceConnections.TryGetValue(userId, out var voiceConnId) && voiceConnId == connectionId;
     }
 
+    /// <summary>
+    /// Get the SignalR connectionId that owns this user's voice session.
+    /// </summary>
+    public string? GetVoiceConnectionId(string userId)
+    {
+        return _voiceConnections.TryGetValue(userId, out var connId) ? connId : null;
+    }
+
     public bool IsChannelEmpty(Guid channelId)
     {
         if (_voiceChannels.TryGetValue(channelId, out var users))
