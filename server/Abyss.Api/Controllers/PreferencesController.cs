@@ -7,6 +7,7 @@ using Abyss.Api.Data;
 using Abyss.Api.DTOs;
 using Abyss.Api.Hubs;
 using Abyss.Api.Models;
+using Abyss.Api.Services;
 
 namespace Abyss.Api.Controllers;
 
@@ -17,11 +18,13 @@ public class PreferencesController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IHubContext<ChatHub> _hub;
+    private readonly MediaUploadService _media;
 
-    public PreferencesController(AppDbContext db, IHubContext<ChatHub> hub)
+    public PreferencesController(AppDbContext db, IHubContext<ChatHub> hub, MediaUploadService media)
     {
         _db = db;
         _hub = hub;
+        _media = media;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -33,13 +36,10 @@ public class PreferencesController : ControllerBase
         if (prefs == null)
         {
             return Ok(new UserPreferencesDto(
-                (int)VoiceInputMode.VoiceActivity, false, false, 1.0, true, true, true, null));
+                (int)VoiceInputMode.VoiceActivity, false, false, 1.0, true, true, true, null, null, null));
         }
 
-        return Ok(new UserPreferencesDto(
-            (int)prefs.InputMode, prefs.JoinMuted, prefs.JoinDeafened,
-            prefs.InputSensitivity, prefs.NoiseSuppression, prefs.EchoCancellation,
-            prefs.AutoGainControl, prefs.UiPreferences));
+        return Ok(MapToDto(prefs));
     }
 
     [HttpPatch]
@@ -64,14 +64,84 @@ public class PreferencesController : ControllerBase
 
         await _db.SaveChangesAsync();
 
-        var dto = new UserPreferencesDto(
-            (int)prefs.InputMode, prefs.JoinMuted, prefs.JoinDeafened,
-            prefs.InputSensitivity, prefs.NoiseSuppression, prefs.EchoCancellation,
-            prefs.AutoGainControl, prefs.UiPreferences);
+        var dto = MapToDto(prefs);
 
         await _hub.Clients.Group($"user:{UserId}")
             .SendAsync("UserPreferencesChanged", dto);
 
         return Ok(dto);
     }
+
+    [HttpPost("sounds/{type}")]
+    public async Task<ActionResult<UserPreferencesDto>> UploadSound(string type, IFormFile file)
+    {
+        if (type is not "join" and not "leave")
+            return BadRequest("Type must be 'join' or 'leave'");
+
+        var (isValid, error, url) = await _media.StoreSoundAsync(file);
+        if (!isValid)
+            return BadRequest(error);
+
+        var prefs = await _db.UserPreferences.FirstOrDefaultAsync(p => p.UserId == UserId);
+        if (prefs == null)
+        {
+            prefs = new UserPreferences { UserId = UserId };
+            _db.UserPreferences.Add(prefs);
+        }
+
+        // Delete old file if exists
+        var oldUrl = type == "join" ? prefs.JoinSoundUrl : prefs.LeaveSoundUrl;
+        if (oldUrl != null)
+            DeleteSoundFile(oldUrl);
+
+        if (type == "join")
+            prefs.JoinSoundUrl = url;
+        else
+            prefs.LeaveSoundUrl = url;
+
+        await _db.SaveChangesAsync();
+
+        var dto = MapToDto(prefs);
+        await _hub.Clients.Group($"user:{UserId}").SendAsync("UserPreferencesChanged", dto);
+        return Ok(dto);
+    }
+
+    [HttpDelete("sounds/{type}")]
+    public async Task<ActionResult<UserPreferencesDto>> RemoveSound(string type)
+    {
+        if (type is not "join" and not "leave")
+            return BadRequest("Type must be 'join' or 'leave'");
+
+        var prefs = await _db.UserPreferences.FirstOrDefaultAsync(p => p.UserId == UserId);
+        if (prefs == null)
+            return Ok(new UserPreferencesDto(
+                (int)VoiceInputMode.VoiceActivity, false, false, 1.0, true, true, true, null, null, null));
+
+        var oldUrl = type == "join" ? prefs.JoinSoundUrl : prefs.LeaveSoundUrl;
+        if (oldUrl != null)
+            DeleteSoundFile(oldUrl);
+
+        if (type == "join")
+            prefs.JoinSoundUrl = null;
+        else
+            prefs.LeaveSoundUrl = null;
+
+        await _db.SaveChangesAsync();
+
+        var dto = MapToDto(prefs);
+        await _hub.Clients.Group($"user:{UserId}").SendAsync("UserPreferencesChanged", dto);
+        return Ok(dto);
+    }
+
+    private static void DeleteSoundFile(string relativeUrl)
+    {
+        var filePath = Path.Combine(Directory.GetCurrentDirectory(), relativeUrl.TrimStart('/'));
+        if (System.IO.File.Exists(filePath))
+            System.IO.File.Delete(filePath);
+    }
+
+    private static UserPreferencesDto MapToDto(UserPreferences prefs) => new(
+        (int)prefs.InputMode, prefs.JoinMuted, prefs.JoinDeafened,
+        prefs.InputSensitivity, prefs.NoiseSuppression, prefs.EchoCancellation,
+        prefs.AutoGainControl, prefs.UiPreferences, prefs.JoinSoundUrl, prefs.LeaveSoundUrl);
 }

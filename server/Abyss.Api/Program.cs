@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Abyss.Api.Data;
 using Abyss.Api.Hubs;
@@ -159,7 +160,10 @@ builder.Services.AddHostedService<AuditLogCleanupService>();
 builder.Services.AddHttpClient();
 
 // SignalR
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = true;
+});
 
 // Controllers
 builder.Services.AddControllers();
@@ -228,6 +232,18 @@ app.Use(async (context, next) =>
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseStaticFiles();
+
+var soundsDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "sounds");
+Directory.CreateDirectory(soundsDir);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(soundsDir),
+    RequestPath = "/uploads/sounds",
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+    }
+});
 
 app.MapControllers().RequireRateLimiting("api");
 app.MapHub<ChatHub>("/hubs/chat");

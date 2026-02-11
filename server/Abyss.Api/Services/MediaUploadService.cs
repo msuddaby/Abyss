@@ -97,6 +97,72 @@ public class MediaUploadService
         return (true, null, url);
     }
 
+    public async Task<(bool IsValid, string? ErrorMessage, string? Url)> StoreSoundAsync(IFormFile file)
+    {
+        var options = new MediaValidator.MediaValidationOptions(
+            MaxSize: _mediaConfig.SoundMaxSize,
+            AllowedExtensions: _mediaConfig.SoundAllowedExtensions,
+            AllowedMimeTypes: _mediaConfig.SoundAllowedMimeTypes,
+            RequireExtension: true
+        );
+
+        var validation = await _mediaValidator.ValidateUploadAsync(file, options);
+        if (!validation.IsValid)
+            return (false, validation.ErrorMessage, null);
+
+        // Validate duration with TagLibSharp
+        using var memoryStream = new MemoryStream();
+        await file.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+
+        try
+        {
+            var ext = Path.GetExtension(file.FileName);
+            var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
+            using var tagFile = TagLib.File.Create(abstraction);
+            if (tagFile.Properties.Duration.TotalSeconds > _mediaConfig.SoundMaxDurationSeconds)
+                return (false, $"Sound must be {_mediaConfig.SoundMaxDurationSeconds} seconds or shorter", null);
+        }
+        catch
+        {
+            return (false, "Could not read audio file. Ensure it is a valid audio file.", null);
+        }
+
+        // Save to uploads/sounds/{guid}.{ext}
+        var soundDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "sounds");
+        Directory.CreateDirectory(soundDir);
+
+        var fileExt = Path.GetExtension(file.FileName);
+        var fileName = $"{Guid.NewGuid()}{fileExt}";
+        var filePath = Path.Combine(soundDir, fileName);
+
+        memoryStream.Position = 0;
+        using (var fs = new FileStream(filePath, FileMode.Create))
+        {
+            await memoryStream.CopyToAsync(fs);
+        }
+
+        return (true, null, $"/uploads/sounds/{fileName}");
+    }
+
+    /// <summary>
+    /// TagLib file abstraction that reads from a Stream.
+    /// </summary>
+    private class StreamFileAbstraction : TagLib.File.IFileAbstraction
+    {
+        public string Name { get; }
+        public Stream ReadStream { get; }
+        public Stream WriteStream => ReadStream;
+
+        public StreamFileAbstraction(string name, Stream stream)
+        {
+            Name = name;
+            ReadStream = stream;
+        }
+
+        public void CloseStream(Stream stream) { }
+    }
+
     private static string? BuildAttachmentSubdir(Guid? serverId, Guid? channelId)
     {
         if (channelId is null)

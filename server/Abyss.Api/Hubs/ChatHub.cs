@@ -52,6 +52,15 @@ public class ChatHub : Hub
         return _perms.GetUserIdsWithChannelPermissionAsync(channelId, perm);
     }
 
+    private async Task<string?> GetSoundUrl(string userId, string type)
+    {
+        var prefs = await _db.UserPreferences.AsNoTracking()
+            .Where(p => p.UserId == userId)
+            .Select(p => type == "join" ? p.JoinSoundUrl : p.LeaveSoundUrl)
+            .FirstOrDefaultAsync();
+        return prefs;
+    }
+
     private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, int maxMessageLength, out string normalized, out string? error)
     {
         error = null;
@@ -268,10 +277,11 @@ public class ChatHub : Hub
                             await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", voiceChannel.Value.ToString(), UserId);
                         }
                     }
+                    var leaveSoundUrl = await GetSoundUrl(UserId, "leave");
                     var leftRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
                     foreach (var userId in leftRecipients)
                     {
-                        await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId);
+                        await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId, leaveSoundUrl);
                     }
                 }
             }
@@ -821,10 +831,11 @@ public class ChatHub : Hub
                         await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", currentChannel.Value.ToString(), UserId);
                     }
                 }
+                var moveLeaveSoundUrl = await GetSoundUrl(UserId, "leave");
                 var leftRecipients = await GetUserIdsWithChannelPermission(currentChannel.Value, Permission.ViewChannel);
                 foreach (var userId in leftRecipients)
                 {
-                    await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", currentChannel.Value.ToString(), UserId);
+                    await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", currentChannel.Value.ToString(), UserId, moveLeaveSoundUrl);
                 }
             }
         }
@@ -864,10 +875,11 @@ public class ChatHub : Hub
         if (channel?.ServerId != null)
         {
             var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
+            var joinSoundUrl = await GetSoundUrl(UserId, "join");
             var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
             foreach (var userId in recipients)
             {
-                await Clients.Group($"user:{userId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state);
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state, joinSoundUrl);
             }
         }
     }
@@ -960,10 +972,11 @@ public class ChatHub : Hub
                     await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
                 }
             }
+            var explicitLeaveSoundUrl = await GetSoundUrl(UserId, "leave");
             var leftRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
             foreach (var userId in leftRecipients)
             {
-                await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", channelId, UserId);
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", channelId, UserId, explicitLeaveSoundUrl);
             }
         }
     }
@@ -1151,7 +1164,7 @@ public class ChatHub : Hub
             .Include(c => c.DmUser1)
             .Include(c => c.DmUser2)
             .Where(c => c.Type == ChannelType.DM && (c.DmUser1Id == UserId || c.DmUser2Id == UserId))
-            .OrderByDescending(c => c.LastMessageAt ?? DateTime.MinValue)
+            .OrderByDescending(c => c.LastMessageAt)
             .Skip(offset)
             .Take(limit)
             .ToListAsync();

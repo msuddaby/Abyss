@@ -71,7 +71,9 @@ public record UserPreferencesDto(
     bool NoiseSuppression,
     bool EchoCancellation,
     bool AutoGainControl,
-    string? UiPreferences);
+    string? UiPreferences,
+    string? JoinSoundUrl,
+    string? LeaveSoundUrl);
 public class UpdateUserPreferencesRequest
 {
     public int? InputMode { get; set; }

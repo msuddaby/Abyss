@@ -12,4 +12,6 @@ public class UserPreferences
     public bool EchoCancellation { get; set; } = true;
     public bool AutoGainControl { get; set; } = true;
     public string? UiPreferences { get; set; }
+    public string? JoinSoundUrl { get; set; }
+    public string? LeaveSoundUrl { get; set; }
 }

@@ -106,6 +106,29 @@ public class MediaConfig
     };
 
     /// <summary>
+    /// Voice sound upload limits.
+    /// </summary>
+    public long SoundMaxSize { get; } = 2 * 1024 * 1024; // 2MB
+    public double SoundMaxDurationSeconds { get; } = 5.0;
+    public HashSet<string> SoundAllowedMimeTypes { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "audio/mpeg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/ogg",
+        "audio/flac",
+        "audio/mp4"
+    };
+    public HashSet<string> SoundAllowedExtensions { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3",
+        ".wav",
+        ".ogg",
+        ".flac",
+        ".m4a"
+    };
+
+    /// <summary>
     /// Maximum decompressed size for archives (zip bomb protection).
     /// </summary>
     public long MaxDecompressedSize { get; } = 100 * 1024 * 1024; // 100MB

@@ -16,7 +16,7 @@ import ServerNotificationModal from './ServerNotificationModal';
 import ChannelNotificationModal from './ChannelNotificationModal';
 
 export default function ChannelSidebar() {
-  const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels } = useServerStore();
+  const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels, leaveServer } = useServerStore();
   const { joinChannel, leaveChannel, fetchMessages, currentChannelId } = useMessageStore();
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const { joinVoice, leaveVoice } = useWebRTC();
@@ -31,6 +31,7 @@ export default function ChannelSidebar() {
   const [showSettings, setShowSettings] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [serverToLeave, setServerToLeave] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [dmSearchQuery, setDmSearchQuery] = useState('');
   const [dmSearchResults, setDmSearchResults] = useState<User[]>([]);
@@ -358,27 +359,39 @@ export default function ChannelSidebar() {
             <path d="M7 10l5 5 5-5z" />
           </svg>
         </button>
-        {showServerSettingsBtn && (
-          <button className="server-settings-btn" onClick={() => setShowServerSettings(true)} title="Server Settings">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z" />
-            </svg>
-          </button>
-        )}
         {showServerDropdown && (
-          <div className="server-dropdown-menu">
+          <div className="server-dropdown-menu context-menu">
             <button
-              className="server-dropdown-item"
+              className="context-menu-item"
               onClick={() => { setShowNotifSettings(true); setShowServerDropdown(false); }}
             >
               Notification Settings
             </button>
             <button
-              className="server-dropdown-item"
+              className="context-menu-item"
               onClick={() => { setShowInvite(true); setShowServerDropdown(false); }}
             >
               Invite People
             </button>
+            {showServerSettingsBtn && (
+              <button
+                className="context-menu-item"
+                onClick={() => { setShowServerSettings(true); setShowServerDropdown(false); }}
+              >
+                Server Settings
+              </button>
+            )}
+            {activeServer.ownerId !== user?.id && (
+              <>
+                <div className="context-menu-separator" />
+                <button
+                  className="context-menu-item danger"
+                  onClick={() => { setServerToLeave(true); setShowServerDropdown(false); }}
+                >
+                  Leave Server
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -528,6 +541,19 @@ export default function ChannelSidebar() {
           danger
           onConfirm={() => deleteChannel(activeServer.id, channelToDelete.id)}
           onClose={() => setChannelToDelete(null)}
+        />
+      )}
+      {serverToLeave && activeServer && (
+        <ConfirmModal
+          title={`Leave ${activeServer.name}?`}
+          message={`You will lose access to ${activeServer.name}.`}
+          confirmLabel="Leave"
+          danger
+          onConfirm={async () => {
+            await leaveServer(activeServer.id);
+            setServerToLeave(false);
+          }}
+          onClose={() => setServerToLeave(false)}
         />
       )}
       {showNotifSettings && activeServer && (

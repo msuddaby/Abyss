@@ -4,6 +4,7 @@ import CreateServerModal from './CreateServerModal';
 import JoinServerModal from './JoinServerModal';
 import ServerSettingsModal from './ServerSettingsModal';
 import ServerNotificationModal from './ServerNotificationModal';
+import InviteModal from './InviteModal';
 import ConfirmModal from './ConfirmModal';
 
 export default function ServerSidebar() {
@@ -19,6 +20,7 @@ export default function ServerSidebar() {
   const [contextMenuServer, setContextMenuServer] = useState<typeof servers[number] | null>(null);
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 });
   const [notifSettingsServer, setNotifSettingsServer] = useState<typeof servers[number] | null>(null);
+  const [inviteServer, setInviteServer] = useState<typeof servers[number] | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -168,6 +170,12 @@ export default function ServerSidebar() {
           >
             Notification Settings
           </button>
+          <button
+            className="context-menu-item"
+            onClick={() => { setInviteServer(contextMenuServer); setContextMenuServer(null); }}
+          >
+            Invite People
+          </button>
           {(((contextMenuServer.id === activeServer?.id) && (canManageServer || isOwner)) || contextMenuServer.ownerId === currentUser?.id) && (
             <button
               className="context-menu-item"
@@ -177,12 +185,15 @@ export default function ServerSidebar() {
             </button>
           )}
           {contextMenuServer.ownerId !== currentUser?.id && (
-            <button
-              className="context-menu-item danger"
-              onClick={() => { setServerToLeave(contextMenuServer); setContextMenuServer(null); }}
-            >
-              Leave Server
-            </button>
+            <>
+              <div className="context-menu-separator" />
+              <button
+                className="context-menu-item danger"
+                onClick={() => { setServerToLeave(contextMenuServer); setContextMenuServer(null); }}
+              >
+                Leave Server
+              </button>
+            </>
           )}
         </div>
       )}
@@ -198,6 +209,9 @@ export default function ServerSidebar() {
           }}
           onClose={() => setServerToLeave(null)}
         />
+      )}
+      {inviteServer && (
+        <InviteModal serverId={inviteServer.id} onClose={() => setInviteServer(null)} />
       )}
       {notifSettingsServer && (
         <ServerNotificationModal

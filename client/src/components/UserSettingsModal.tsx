@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAuthStore, useVoiceStore, getApiBase } from "@abyss/shared";
+import { useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase } from "@abyss/shared";
 import { formatKeybind } from "./VoiceControls";
 
 type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "account";
@@ -61,6 +61,14 @@ export default function UserSettingsModal({
   const setKeybindToggleMute = useVoiceStore((s) => s.setKeybindToggleMute);
   const setKeybindToggleDeafen = useVoiceStore((s) => s.setKeybindToggleDeafen);
   const setKeybindDisconnect = useVoiceStore((s) => s.setKeybindDisconnect);
+
+  const preferences = useUserPreferencesStore((s) => s.preferences);
+  const uploadSound = useUserPreferencesStore((s) => s.uploadSound);
+  const removeSound = useUserPreferencesStore((s) => s.removeSound);
+  const [soundUploading, setSoundUploading] = useState<'join' | 'leave' | null>(null);
+  const [soundError, setSoundError] = useState<string | null>(null);
+  const joinSoundInputRef = useRef<HTMLInputElement>(null);
+  const leaveSoundInputRef = useRef<HTMLInputElement>(null);
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -464,6 +472,57 @@ export default function UserSettingsModal({
     }
   };
 
+  const handleSoundUpload = async (type: 'join' | 'leave', e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setSoundError(null);
+
+    // Client-side duration check
+    try {
+      const duration = await new Promise<number>((resolve, reject) => {
+        const audio = new Audio(URL.createObjectURL(file));
+        audio.addEventListener('loadedmetadata', () => {
+          URL.revokeObjectURL(audio.src);
+          resolve(audio.duration);
+        });
+        audio.addEventListener('error', () => {
+          URL.revokeObjectURL(audio.src);
+          reject(new Error('Invalid audio file'));
+        });
+      });
+      if (!Number.isFinite(duration) || duration > 5) {
+        setSoundError('Sound must be 5 seconds or shorter');
+        return;
+      }
+    } catch {
+      setSoundError('Could not read audio file');
+      return;
+    }
+
+    setSoundUploading(type);
+    try {
+      await uploadSound(type, file);
+    } catch (err: any) {
+      const msg = err?.response?.data || (err instanceof Error ? err.message : 'Upload failed');
+      setSoundError(typeof msg === 'string' ? msg : 'Upload failed');
+    } finally {
+      setSoundUploading(null);
+    }
+  };
+
+  const handleSoundRemove = async (type: 'join' | 'leave') => {
+    setSoundError(null);
+    setSoundUploading(type);
+    try {
+      await removeSound(type);
+    } catch {
+      setSoundError('Failed to remove sound');
+    } finally {
+      setSoundUploading(null);
+    }
+  };
+
   const currentAvatar =
     avatarPreview ||
     (user.avatarUrl
@@ -774,6 +833,61 @@ export default function UserSettingsModal({
                       <div className="settings-help">{deviceError}</div>
                     )}
                   </label>
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Voice Sounds</div>
+                  <div className="settings-help" style={{ marginBottom: 12 }}>
+                    Custom sounds that play for others when you join or leave a voice channel. Max 5 seconds.
+                  </div>
+                  {soundError && <div className="settings-help" style={{ color: 'var(--danger)', marginBottom: 8 }}>{soundError}</div>}
+
+                  {(['join', 'leave'] as const).map((type) => {
+                    const url = type === 'join' ? preferences?.joinSoundUrl : preferences?.leaveSoundUrl;
+                    const inputRef = type === 'join' ? joinSoundInputRef : leaveSoundInputRef;
+                    const label = type === 'join' ? 'Join Sound' : 'Leave Sound';
+                    return (
+                      <div key={type} className="sound-upload-row">
+                        <span className="sound-label">{label}</span>
+                        <div className="sound-controls">
+                          {url ? (
+                            <>
+                              <audio
+                                className="sound-preview"
+                                controls
+                                src={url.startsWith('http') ? url : `${getApiBase()}${url}`}
+                              />
+                              <button
+                                type="button"
+                                className="btn-small btn-danger"
+                                disabled={soundUploading !== null}
+                                onClick={() => handleSoundRemove(type)}
+                              >
+                                {soundUploading === type ? '...' : 'Remove'}
+                              </button>
+                            </>
+                          ) : (
+                            <span className="sound-none">Default</span>
+                          )}
+                          <button
+                            type="button"
+                            className="btn-small"
+                            disabled={soundUploading !== null}
+                            onClick={() => inputRef.current?.click()}
+                          >
+                            {soundUploading === type ? 'Uploading...' : 'Upload'}
+                          </button>
+                          <input
+                            ref={inputRef}
+                            type="file"
+                            accept=".mp3,.wav,.ogg,.flac,.m4a"
+                            style={{ display: 'none' }}
+                            onChange={(e) => handleSoundUpload(type, e)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             )}

@@ -8,6 +8,8 @@ interface UserPreferencesState {
   preferences: UserPreferences | null;
   fetchPreferences: () => Promise<void>;
   updatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
+  uploadSound: (type: 'join' | 'leave', file: File) => Promise<void>;
+  removeSound: (type: 'join' | 'leave') => Promise<void>;
   applyToVoiceStore: (prefs: UserPreferences) => void;
 }
 
@@ -33,6 +35,18 @@ export const useUserPreferencesStore = create<UserPreferencesState>((set, get) =
     } catch {
       // ignore
     }
+  },
+
+  uploadSound: async (type: 'join' | 'leave', file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await api.post(`/users/preferences/sounds/${type}`, formData);
+    set({ preferences: res.data });
+  },
+
+  removeSound: async (type: 'join' | 'leave') => {
+    const res = await api.delete(`/users/preferences/sounds/${type}`);
+    set({ preferences: res.data });
   },
 
   applyToVoiceStore: (prefs: UserPreferences) => {

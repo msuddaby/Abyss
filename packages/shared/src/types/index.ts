@@ -64,6 +64,8 @@ export interface UserPreferences {
   echoCancellation: boolean;
   autoGainControl: boolean;
   uiPreferences: string | null;
+  joinSoundUrl: string | null;
+  leaveSoundUrl: string | null;
 }
 
 export interface Channel {

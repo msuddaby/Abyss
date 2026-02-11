@@ -14,8 +14,27 @@ import { useAppConfigStore } from '../stores/appConfigStore.js';
 import { useNotificationSettingsStore } from '../stores/notificationSettingsStore.js';
 import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
+import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
 import type { Server, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction } from '../types/index.js';
+
+// Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
+const soundCache = new Map<string, any>();
+function playVoiceSound(url: string | null | undefined, fallbackPath: string) {
+  if (typeof (globalThis as any).Audio === 'undefined') return;
+  const soundUrl = url
+    ? (url.startsWith('http') ? url : `${getApiBase()}${url}`)
+    : fallbackPath;
+  let audio = soundCache.get(soundUrl);
+  if (!audio) {
+    audio = new (globalThis as any).Audio(soundUrl);
+    audio.preload = 'auto';
+    soundCache.set(soundUrl, audio);
+  }
+  audio.currentTime = 0;
+  audio.volume = 0.5;
+  audio.play().catch(() => {});
+}
 
 export function fetchServerState(conn: HubConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
@@ -46,7 +65,7 @@ export function refreshSignalRState(conn: HubConnection) {
     useUnreadStore.getState().setServerUnreads(unreads);
   }).catch(console.error);
 
-  conn.invoke('GetDmChannels').then((dms: DmChannel[]) => {
+  conn.invoke('GetDmChannels', 0, 50).then((dms: DmChannel[]) => {
     useDmStore.setState({ dmChannels: dms });
   }).catch(console.error);
 
@@ -119,12 +138,26 @@ export function useSignalRListeners() {
         }
       });
 
-      conn.on('VoiceUserJoinedChannel', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }) => {
+      conn.on('VoiceUserJoinedChannel', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }, joinSoundUrl?: string) => {
         useServerStore.getState().voiceUserJoined(channelId, userId, state);
+        const currentUser = useAuthStore.getState().user;
+        const voiceState = useVoiceStore.getState();
+        const isSelf = currentUser?.id === userId;
+        // Self: always hear own join sound (just joined this channel)
+        // Others: only if in the same voice channel and not deafened
+        if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
+          playVoiceSound(joinSoundUrl, '/sounds/voice-join.mp3');
+        }
       });
 
-      conn.on('VoiceUserLeftChannel', (channelId: string, userId: string) => {
+      conn.on('VoiceUserLeftChannel', (channelId: string, userId: string, leaveSoundUrl?: string) => {
         useServerStore.getState().voiceUserLeft(channelId, userId);
+        const currentUser = useAuthStore.getState().user;
+        const voiceState = useVoiceStore.getState();
+        const isSelf = currentUser?.id === userId;
+        if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
+          playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.mp3');
+        }
       });
 
       conn.on('VoiceUserStateUpdated', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }) => {
