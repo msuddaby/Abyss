@@ -369,11 +369,11 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                         <input
                           id="server-icon-input"
                           type="file"
-                          accept="image/png,image/jpeg,image/webp"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
                           onChange={(e) => handleServerIconChange(e.target.files?.[0] ?? null)}
                         />
                       </label>
-                      <span className="server-icon-hint">PNG, JPG, or WEBP (max 5MB)</span>
+                      <span className="server-icon-hint">PNG, JPG, WEBP, or GIF (max 5MB)</span>
                     </div>
                   </div>
                 </div>

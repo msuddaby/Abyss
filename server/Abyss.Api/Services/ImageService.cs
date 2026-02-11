@@ -28,14 +28,32 @@ public class ImageService
         var (dirPath, urlPrefix) = ResolveUploadsSubdir(_uploadsDir, "/uploads", subdir);
         var filePath = Path.Combine(dirPath, fileName);
 
-        using var image = new MagickImage();
         using var input = file.OpenReadStream();
-        await image.ReadAsync(input);
 
-        image.Strip();
-        image.Quality = 85;
+        if (file.ContentType.Equals("image/gif", StringComparison.OrdinalIgnoreCase))
+        {
+            using var frames = new MagickImageCollection();
+            await frames.ReadAsync(input);
 
-        await image.WriteAsync(filePath, MagickFormat.WebP);
+            foreach (var frame in frames)
+            {
+                frame.Strip();
+            }
+
+            frames.OptimizePlus();
+            await frames.WriteAsync(filePath, MagickFormat.WebP);
+        }
+        else
+        {
+            using var image = new MagickImage();
+            await image.ReadAsync(input);
+
+            image.Strip();
+            image.Quality = 85;
+
+            await image.WriteAsync(filePath, MagickFormat.WebP);
+        }
+
         var size = new FileInfo(filePath).Length;
 
         return ($"{urlPrefix}/{fileName}", size);
@@ -93,17 +111,37 @@ public class ImageService
         var fileName = $"{Guid.NewGuid()}.webp";
         var filePath = Path.Combine(_uploadsDir, fileName);
 
-        using var image = new MagickImage();
         using var input = file.OpenReadStream();
-        await image.ReadAsync(input);
 
-        image.Resize(new MagickGeometry(256, 256) { IgnoreAspectRatio = false, FillArea = true });
-        image.Crop(256, 256, Gravity.Center);
-        image.ResetPage();
-        image.Strip();
-        image.Quality = 85;
+        if (file.ContentType.Equals("image/gif", StringComparison.OrdinalIgnoreCase))
+        {
+            using var frames = new MagickImageCollection();
+            await frames.ReadAsync(input);
 
-        await image.WriteAsync(filePath, MagickFormat.WebP);
+            foreach (var frame in frames)
+            {
+                frame.Resize(new MagickGeometry(256, 256) { IgnoreAspectRatio = false, FillArea = true });
+                frame.Crop(256, 256, Gravity.Center);
+                frame.ResetPage();
+                frame.Strip();
+            }
+
+            frames.OptimizePlus();
+            await frames.WriteAsync(filePath, MagickFormat.WebP);
+        }
+        else
+        {
+            using var image = new MagickImage();
+            await image.ReadAsync(input);
+
+            image.Resize(new MagickGeometry(256, 256) { IgnoreAspectRatio = false, FillArea = true });
+            image.Crop(256, 256, Gravity.Center);
+            image.ResetPage();
+            image.Strip();
+            image.Quality = 85;
+
+            await image.WriteAsync(filePath, MagickFormat.WebP);
+        }
 
         return $"/uploads/{fileName}";
     }

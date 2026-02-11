@@ -4,6 +4,8 @@ import {
   useEffect,
   useLayoutEffect,
   useCallback,
+  forwardRef,
+  useImperativeHandle,
 } from "react";
 import { getApiBase, useAuthStore, useServerStore } from "@abyss/shared";
 import type { Message } from "@abyss/shared";
@@ -11,17 +13,19 @@ import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import { groupReactions } from "../../utils/messageUtils";
 
-export default function MessageReactions({
-  message,
-  canAddReactions,
-  onToggleReaction,
-  messageRef,
-}: {
-  message: Message;
-  canAddReactions: boolean;
-  onToggleReaction: (emoji: string) => void;
-  messageRef: React.RefObject<HTMLDivElement | null>;
-}) {
+export interface MessageReactionsHandle {
+  openPicker: () => void;
+}
+
+const MessageReactions = forwardRef<
+  MessageReactionsHandle,
+  {
+    message: Message;
+    canAddReactions: boolean;
+    onToggleReaction: (emoji: string) => void;
+    messageRef: React.RefObject<HTMLDivElement | null>;
+  }
+>(function MessageReactions({ message, canAddReactions, onToggleReaction, messageRef }, ref) {
   const [showPicker, setShowPicker] = useState(false);
   const [pickerAnchor, setPickerAnchor] = useState<{
     x: number;
@@ -83,6 +87,8 @@ export default function MessageReactions({
       window.removeEventListener("resize", updatePickerPosition);
     };
   }, [showPicker, updatePickerPosition]);
+
+  useImperativeHandle(ref, () => ({ openPicker }));
 
   const openPicker = (e?: React.MouseEvent<HTMLElement>) => {
     if (!canAddReactions) return;
@@ -189,6 +195,7 @@ export default function MessageReactions({
       )}
     </>
   );
-}
+});
 
+export default MessageReactions;
 export { groupReactions };

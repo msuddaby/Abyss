@@ -20,6 +20,7 @@ import { formatTime, formatDate } from "../utils/messageUtils";
 import AttachmentMedia from "./message/AttachmentMedia";
 import MessageReplyIndicator from "./message/MessageReplyIndicator";
 import MessageReactions from "./message/MessageReactions";
+import type { MessageReactionsHandle } from "./message/MessageReactions";
 import MessageContextMenu from "./message/MessageContextMenu";
 import ImagePreviewModal from "./message/ImagePreviewModal";
 
@@ -52,6 +53,7 @@ export default function MessageItem({
   );
   const editInputRef = useRef<HTMLInputElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
+  const reactionsRef = useRef<MessageReactionsHandle>(null);
   const currentUser = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
   const emojis = useServerStore((s) => s.emojis);
@@ -379,6 +381,7 @@ export default function MessageItem({
           </div>
         )}
         <MessageReactions
+          ref={reactionsRef}
           message={message}
           canAddReactions={canAddReactions}
           onToggleReaction={handleToggleReaction}
@@ -390,7 +393,7 @@ export default function MessageItem({
           &#8617;
         </button>
         {canAddReactions && (
-          <button onClick={() => {}} title="Add Reaction">
+          <button onClick={() => reactionsRef.current?.openPicker()} title="Add Reaction">
             &#128578;
           </button>
         )}
@@ -430,7 +433,7 @@ export default function MessageItem({
           canKickAuthor={canKickAuthor}
           canBanAuthor={canBanAuthor}
           onReply={() => setReplyingTo(message)}
-          onOpenPicker={() => {}}
+          onOpenPicker={() => reactionsRef.current?.openPicker()}
           onPinToggle={handlePinToggle}
           onEdit={() => {
             setEditContent(message.content);
