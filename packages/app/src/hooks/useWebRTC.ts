@@ -317,11 +317,13 @@ function setupSignalRListeners() {
       } else if (data.type === 'answer') {
         console.log(`[WebRTC] Received answer from ${fromUserId}`);
         const pc = peers.get(fromUserId);
-        if (pc) {
+        if (!pc) {
+          console.warn(`[WebRTC] No peer for answer from ${fromUserId}`);
+        } else if (pc.signalingState !== 'have-local-offer') {
+          console.warn(`[WebRTC] Ignoring stale answer from ${fromUserId} (state: ${pc.signalingState})`);
+        } else {
           await pc.setRemoteDescription(data);
           await applyPendingCandidates(fromUserId);
-        } else {
-          console.warn(`[WebRTC] No peer for answer from ${fromUserId}`);
         }
       } else if (data.candidate) {
         const pc = peers.get(fromUserId);

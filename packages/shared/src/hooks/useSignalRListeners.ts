@@ -16,7 +16,7 @@ import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -168,7 +168,7 @@ export function useSignalRListeners() {
         'VoiceUserJoinedChannel', 'VoiceUserLeftChannel', 'VoiceUserStateUpdated',
         'ScreenShareStartedInChannel', 'ScreenShareStoppedInChannel',
         'CameraStartedInChannel', 'CameraStoppedInChannel',
-        'UserProfileUpdated', 'MemberRolesUpdated', 'MemberKicked', 'MemberBanned', 'MemberUnbanned',
+        'UserProfileUpdated', 'MemberJoined', 'MemberRolesUpdated', 'MemberKicked', 'MemberBanned', 'MemberUnbanned',
         'RoleCreated', 'RoleUpdated', 'RoleDeleted',
         'EmojiCreated', 'EmojiUpdated', 'EmojiDeleted',
         'ChannelCreated', 'ChannelUpdated', 'ChannelDeleted', 'ChannelsReordered', 'ChannelPermissionsUpdated',
@@ -245,6 +245,13 @@ export function useSignalRListeners() {
         const server = useServerStore.getState().activeServer;
         if (server) {
           useServerStore.getState().fetchMembers(server.id);
+        }
+      });
+
+      conn.on('MemberJoined', (serverId: string, member: ServerMember) => {
+        const activeServer = useServerStore.getState().activeServer;
+        if (activeServer?.id === serverId) {
+          useServerStore.getState().addMemberLocal(member);
         }
       });
 

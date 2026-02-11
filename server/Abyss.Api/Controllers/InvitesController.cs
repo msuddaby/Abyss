@@ -1,9 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
+using Abyss.Api.Hubs;
 using Abyss.Api.Models;
 using Abyss.Api.Services;
 
@@ -17,12 +19,14 @@ public class InvitesController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly SystemMessageService _systemMessages;
+    private readonly IHubContext<ChatHub> _hub;
 
-    public InvitesController(AppDbContext db, PermissionService perms, SystemMessageService systemMessages)
+    public InvitesController(AppDbContext db, PermissionService perms, SystemMessageService systemMessages, IHubContext<ChatHub> hub)
     {
         _db = db;
         _perms = perms;
         _systemMessages = systemMessages;
+        _hub = hub;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -55,6 +59,26 @@ public class InvitesController : ControllerBase
 
         invite.Uses++;
         await _db.SaveChangesAsync();
+
+        // Broadcast the new member to all connected clients in the server
+        var user = await _db.Users.FindAsync(UserId);
+        if (user != null)
+        {
+            var defaultRoles = await _db.ServerRoles
+                .Where(r => r.ServerId == invite.ServerId && r.IsDefault)
+                .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault, r.DisplaySeparately))
+                .ToListAsync();
+
+            var memberDto = new ServerMemberDto(
+                invite.ServerId,
+                UserId,
+                new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio),
+                false,
+                defaultRoles,
+                DateTime.UtcNow);
+
+            await _hub.Clients.Group($"server:{invite.ServerId}").SendAsync("MemberJoined", invite.ServerId.ToString(), memberDto);
+        }
 
         await _systemMessages.SendMemberJoinLeaveAsync(invite.ServerId, UserId, joined: true);
 

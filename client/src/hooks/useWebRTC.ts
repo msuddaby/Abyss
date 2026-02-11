@@ -1256,12 +1256,15 @@ function setupSignalRListeners() {
       await enqueueSignaling(fromUserId, async () => {
         console.log(`Received answer from ${fromUserId}`);
         const pc = peers.get(fromUserId);
-        if (pc) {
-          await pc.setRemoteDescription(
-            new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
-          );
-          await applyPendingCandidates(fromUserId);
+        if (!pc) return;
+        if (pc.signalingState !== "have-local-offer") {
+          console.warn(`Ignoring stale answer from ${fromUserId} (state: ${pc.signalingState})`);
+          return;
         }
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+        );
+        await applyPendingCandidates(fromUserId);
       });
     } else if (data.candidate) {
       const pc = peers.get(fromUserId);

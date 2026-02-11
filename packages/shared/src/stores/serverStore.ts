@@ -62,6 +62,7 @@ interface ServerState {
   removeChannel: (channelId: string) => void;
   removeServer: (serverId: string) => void;
   removeMember: (userId: string) => void;
+  addMemberLocal: (member: ServerMember) => void;
   addChannelLocal: (channel: Channel) => void;
   updateChannelLocal: (channel: Channel) => void;
   setChannelsLocal: (channels: Channel[]) => void;
@@ -487,6 +488,9 @@ export const useServerStore = create<ServerState>((set, get) => ({
         voiceChannelCameras: nextCameras,
       };
     }),
+
+  addMemberLocal: (member) =>
+    set((s) => s.members.some((m) => m.userId === member.userId) ? s : { members: [...s.members, member] }),
 
   addChannelLocal: (channel) =>
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] }),
