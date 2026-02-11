@@ -473,11 +473,18 @@ export default function UserSettingsModal({
   };
 
   const handleSoundUpload = async (type: 'join' | 'leave', e: React.ChangeEvent<HTMLInputElement>) => {
+    const MAX_DURATION = 5;
+    const MAX_FILE_SIZE = 2 * 1024 * 1024;
+    
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
     setSoundError(null);
 
+    if (file.size >= MAX_FILE_SIZE) {
+      setSoundError('Sound must be less than 2mb');
+    }
+    
     // Client-side duration check
     try {
       const duration = await new Promise<number>((resolve, reject) => {
@@ -486,16 +493,20 @@ export default function UserSettingsModal({
           URL.revokeObjectURL(audio.src);
           resolve(audio.duration);
         });
+        
         audio.addEventListener('error', () => {
           URL.revokeObjectURL(audio.src);
           reject(new Error('Invalid audio file'));
         });
       });
-      if (!Number.isFinite(duration) || duration > 5) {
+
+      if (!Number.isFinite(duration) || duration > MAX_DURATION) {
         setSoundError('Sound must be 5 seconds or shorter');
         return;
       }
-    } catch {
+      
+    } 
+    catch {
       setSoundError('Could not read audio file');
       return;
     }
