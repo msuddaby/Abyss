@@ -117,10 +117,20 @@ public class MediaUploadService
 
         try
         {
-            var ext = Path.GetExtension(file.FileName);
             var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
             using var tagFile = TagLib.File.Create(abstraction);
-            if (tagFile.Properties.Duration.TotalSeconds > _mediaConfig.SoundMaxDurationSeconds)
+
+            // TagLib's Properties.Duration can be wildly wrong for MP3s with large
+            // embedded artwork because it estimates duration from total file size.
+            // Compute duration from just the audio data portion instead.
+            var duration = tagFile.Properties.Duration.TotalSeconds;
+            if (tagFile.Properties.AudioBitrate > 0)
+            {
+                var audioBytes = tagFile.InvariantEndPosition - tagFile.InvariantStartPosition;
+                duration = audioBytes * 8.0 / (tagFile.Properties.AudioBitrate * 1000.0);
+            }
+
+            if (duration > _mediaConfig.SoundMaxDurationSeconds)
                 return (false, $"Sound must be {_mediaConfig.SoundMaxDurationSeconds} seconds or shorter", null);
         }
         catch

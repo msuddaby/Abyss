@@ -16,7 +16,7 @@ public class MagicNumberValidator
         { new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }, "image/png" }, // PNG
         { new byte[] { 0x47, 0x49, 0x46, 0x38, 0x37, 0x61 }, "image/gif" },   // GIF87a
         { new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, "image/gif" },   // GIF89a
-        { new byte[] { 0x52, 0x49, 0x46, 0x46 }, "image/webp" },              // WEBP (RIFF)
+        // WEBP/WAV/AVI all start with RIFF — handled in special-case RIFF logic below
         { new byte[] { 0x42, 0x4D }, "image/bmp" },                           // BMP
 
         // Documents
@@ -34,7 +34,7 @@ public class MagicNumberValidator
         { new byte[] { 0xFF, 0xF3 }, "audio/mpeg" },                          // MP3
         { new byte[] { 0xFF, 0xF2 }, "audio/mpeg" },                          // MP3
         { new byte[] { 0x49, 0x44, 0x33 }, "audio/mpeg" },                    // MP3 (ID3)
-        { new byte[] { 0x52, 0x49, 0x46, 0x46 }, "audio/wav" },               // WAV (RIFF)
+        // WAV is RIFF-based — handled in special-case RIFF logic below
         { new byte[] { 0x4F, 0x67, 0x67, 0x53 }, "audio/ogg" },               // OGG
         { new byte[] { 0x66, 0x4C, 0x61, 0x43 }, "audio/flac" },              // FLAC
 
@@ -42,7 +42,7 @@ public class MagicNumberValidator
         { new byte[] { 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D }, "video/mp4" }, // MP4
         { new byte[] { 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32 }, "video/mp4" }, // MP4
         { new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }, "video/webm" },              // WEBM
-        { new byte[] { 0x52, 0x49, 0x46, 0x46 }, "video/avi" },               // AVI (RIFF)
+        // AVI is RIFF-based — handled in special-case RIFF logic below
 
         // Executables (for blocking)
         { new byte[] { 0x4D, 0x5A }, "application/x-msdownload" },            // EXE
@@ -80,6 +80,18 @@ public class MagicNumberValidator
             }
 
             // Special cases that need offset checking
+
+            // RIFF container: WAV, WebP, and AVI all start with "RIFF" but differ at offset 8
+            if (bytesRead >= 12 && buffer[0] == 0x52 && buffer[1] == 0x49 && buffer[2] == 0x46 && buffer[3] == 0x46)
+            {
+                // Bytes 8-11 identify the sub-format
+                if (buffer[8] == 0x57 && buffer[9] == 0x41 && buffer[10] == 0x56 && buffer[11] == 0x45) // "WAVE"
+                    return "audio/wav";
+                if (buffer[8] == 0x57 && buffer[9] == 0x45 && buffer[10] == 0x42 && buffer[11] == 0x50) // "WEBP"
+                    return "image/webp";
+                if (buffer[8] == 0x41 && buffer[9] == 0x56 && buffer[10] == 0x49 && buffer[11] == 0x20) // "AVI "
+                    return "video/avi";
+            }
 
             // Check for MP4 variants (ftyp at offset 4)
             if (bytesRead >= 12)

@@ -57,6 +57,8 @@ public class ImageService
             using var frames = new MagickImageCollection();
             await frames.ReadAsync(input);
 
+            frames.Coalesce();
+
             foreach (var frame in frames)
             {
                 frame.Strip();
@@ -96,6 +98,8 @@ public class ImageService
         {
             using var frames = new MagickImageCollection();
             await frames.ReadAsync(input);
+
+            frames.Coalesce();
 
             foreach (var frame in frames)
             {
@@ -139,6 +143,8 @@ public class ImageService
         {
             using var frames = new MagickImageCollection();
             await frames.ReadAsync(input);
+
+            frames.Coalesce();
 
             foreach (var frame in frames)
             {

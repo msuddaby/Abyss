@@ -22,7 +22,7 @@ import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNo
 const soundCache = new Map<string, any>();
 const normalizedVolumeCache = new Map<string, number>();
 const pendingAnalysis = new Map<string, Promise<number>>();
-const TARGET_PEAK = 0.3;
+const TARGET_RMS = 0.05; // target perceived loudness level (~-26 dB)
 let analysisCtx: any = null;
 
 function getNormalizedVolume(url: string): Promise<number> {
@@ -35,7 +35,7 @@ function getNormalizedVolume(url: string): Promise<number> {
   const promise = (async () => {
     try {
       const AudioCtx = (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext;
-      if (!AudioCtx) return TARGET_PEAK;
+      if (!AudioCtx) return TARGET_RMS;
       if (!analysisCtx) analysisCtx = new AudioCtx();
       if (analysisCtx.state === 'suspended') await analysisCtx.resume();
 
@@ -44,20 +44,27 @@ function getNormalizedVolume(url: string): Promise<number> {
       const buffer = await analysisCtx.decodeAudioData(arrayBuffer);
 
       let peak = 0;
+      let sumSquares = 0;
+      let totalSamples = 0;
       for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
         const data = buffer.getChannelData(ch);
         for (let i = 0; i < data.length; i++) {
           const abs = Math.abs(data[i]);
           if (abs > peak) peak = abs;
+          sumSquares += data[i] * data[i];
+          totalSamples++;
         }
       }
+      const rms = totalSamples > 0 ? Math.sqrt(sumSquares / totalSamples) : 0;
 
-      // Scale volume so the peak hits TARGET_PEAK, but never boost above 1.0
-      const volume = peak > 0 ? Math.min(TARGET_PEAK / peak, 1) : TARGET_PEAK;
+      // Normalize based on RMS (perceived loudness), with peak clamp to prevent clipping
+      const volume = rms > 0
+        ? Math.min(TARGET_RMS / rms, 1.0 / peak, 1.0)
+        : TARGET_RMS;
       normalizedVolumeCache.set(url, volume);
       return volume;
     } catch {
-      return TARGET_PEAK;
+      return TARGET_RMS;
     } finally {
       pendingAnalysis.delete(url);
     }
@@ -81,7 +88,7 @@ function playVoiceSound(url: string | null | undefined, fallbackPath: string) {
   audio.currentTime = 0;
 
   if (url) {
-    // Custom sound: normalize volume based on peak amplitude analysis
+    // Custom sound: normalize volume based on RMS loudness analysis
     getNormalizedVolume(soundUrl).then((vol) => {
       audio.volume = vol;
       audio.play().catch(() => {});

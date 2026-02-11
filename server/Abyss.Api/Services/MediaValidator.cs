@@ -114,7 +114,7 @@ public class MediaValidator
         {
             var mime = detectedMimeType ?? file.ContentType;
             if (string.IsNullOrWhiteSpace(mime) || !options.AllowedMimeTypes.Contains(mime))
-                return new ValidationResult(false, "Only PNG, GIF, WebP, and JPEG files are allowed.");
+                return new ValidationResult(false, $"File type '{mime ?? "unknown"}' is not allowed");
         }
         else if (detectedMimeType != null && hasExt && !_config.MimeTypeMatchesExtension(ext, detectedMimeType))
         {

@@ -71,6 +71,7 @@ export default function VoiceControls() {
     if (!currentChannelId) return;
 
     const handler = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       const tag = (e.target as HTMLElement).tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return;
 

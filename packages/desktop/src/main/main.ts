@@ -61,14 +61,42 @@ function setupScreenShareHandler(win: BrowserWindow) {
 }
 
 function createWindow() {
+  // Set Content Security Policy
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const csp = [
+      "default-src 'self'",
+      process.env.NODE_ENV === 'development'
+        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+        : "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "connect-src 'self' http: https: ws: wss:",
+      "img-src 'self' data: blob: http: https:",
+      "media-src 'self' blob: mediastream: http: https:",
+      "font-src 'self' data:",
+      "worker-src 'self' blob:",
+    ].join('; ');
+
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
+
   // Restore window state
   const windowBounds = store.get('windowBounds', {
     width: 1200,
     height: 800,
   }) as { width: number; height: number; x?: number; y?: number };
 
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'resources/icon.png')
+    : path.join(__dirname, '../../resources/icon.png');
+
   mainWindow = new BrowserWindow({
     ...windowBounds,
+    icon: iconPath,
     minWidth: 800,
     minHeight: 600,
     webPreferences: {

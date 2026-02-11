@@ -475,7 +475,7 @@ export default function UserSettingsModal({
   const handleSoundUpload = async (type: 'join' | 'leave', e: React.ChangeEvent<HTMLInputElement>) => {
     const MAX_DURATION = 5;
     const MAX_FILE_SIZE = 2 * 1024 * 1024;
-    
+
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
@@ -483,29 +483,63 @@ export default function UserSettingsModal({
 
     if (file.size >= MAX_FILE_SIZE) {
       setSoundError('Sound must be less than 2mb');
+      return;
     }
-    
-    // Client-side duration check
-    try {
-      const duration = await new Promise<number>((resolve, reject) => {
-        const audio = new Audio(URL.createObjectURL(file));
-        audio.addEventListener('loadedmetadata', () => {
-          URL.revokeObjectURL(audio.src);
-          resolve(audio.duration);
-        });
-        
-        audio.addEventListener('error', () => {
-          URL.revokeObjectURL(audio.src);
-          reject(new Error('Invalid audio file'));
-        });
-      });
 
-      if (!Number.isFinite(duration) || duration > MAX_DURATION) {
+    // Decode audio, check duration, and re-encode as clean WAV to strip
+    // metadata (album art, ID3 tags) that can confuse server-side duration checks
+    let wavFile: File;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const audioCtx = new AudioContext();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      await audioCtx.close();
+
+      if (audioBuffer.duration > MAX_DURATION) {
         setSoundError('Sound must be 5 seconds or shorter');
         return;
       }
-      
-    } 
+
+      // Encode as WAV
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const numSamples = audioBuffer.length;
+      const bytesPerSample = 2; // 16-bit PCM
+      const dataSize = numSamples * numChannels * bytesPerSample;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      const writeString = (offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      };
+
+      writeString(0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(8, 'WAVE');
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
+      view.setUint16(32, numChannels * bytesPerSample, true);
+      view.setUint16(34, 16, true);
+      writeString(36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      // Interleave channels and convert float32 -> int16
+      const channels = Array.from({ length: numChannels }, (_, i) => audioBuffer.getChannelData(i));
+      let offset = 44;
+      for (let i = 0; i < numSamples; i++) {
+        for (let ch = 0; ch < numChannels; ch++) {
+          const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+          view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+          offset += 2;
+        }
+      }
+
+      wavFile = new File([buffer], file.name.replace(/\.[^.]+$/, '.wav'), { type: 'audio/wav' });
+    }
     catch {
       setSoundError('Could not read audio file');
       return;
@@ -513,7 +547,7 @@ export default function UserSettingsModal({
 
     setSoundUploading(type);
     try {
-      await uploadSound(type, file);
+      await uploadSound(type, wavFile);
     } catch (err: any) {
       const msg = err?.response?.data || (err instanceof Error ? err.message : 'Upload failed');
       setSoundError(typeof msg === 'string' ? msg : 'Upload failed');
