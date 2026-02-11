@@ -64,6 +64,7 @@ export async function stopWatching() {
 
 function createPeerConnection(peerId: string): RTCPeerConnection {
   closePeer(peerId);
+  pendingCandidates.delete(peerId);
   const pc = new RTCPeerConnection({ iceServers: currentIceServers });
   peers.set(peerId, pc);
 
@@ -295,7 +296,8 @@ function setupSignalRListeners() {
 
         let pc = peers.get(fromUserId);
         if (pc && pc.signalingState !== 'closed') {
-          // Renegotiation: reuse existing connection
+          // Renegotiation: reuse existing connection — flush stale candidates
+          pendingCandidates.delete(fromUserId);
           await pc.setRemoteDescription(data);
           await applyPendingCandidates(fromUserId);
           const answer = await pc.createAnswer();
@@ -328,7 +330,7 @@ function setupSignalRListeners() {
       } else if (data.candidate) {
         const pc = peers.get(fromUserId);
         if (pc && pc.remoteDescription) {
-          await pc.addIceCandidate(new RTCIceCandidate(data));
+          await pc.addIceCandidate(new RTCIceCandidate(data)).catch(() => {});
         } else {
           if (!pendingCandidates.has(fromUserId)) {
             pendingCandidates.set(fromUserId, []);

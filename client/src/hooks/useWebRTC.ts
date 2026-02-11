@@ -583,6 +583,7 @@ async function restartIceForAllPeers() {
 
 function createPeerConnection(peerId: string): RTCPeerConnection {
   closePeer(peerId);
+  pendingCandidates.delete(peerId);
   const pc = new RTCPeerConnection({ iceServers: currentIceServers });
   peers.set(peerId, pc);
 
@@ -1204,7 +1205,8 @@ function setupSignalRListeners() {
 
         let pc = peers.get(fromUserId);
         if (pc && pc.signalingState !== "closed") {
-          // Renegotiation: reuse existing connection
+          // Renegotiation: reuse existing connection — flush stale candidates
+          pendingCandidates.delete(fromUserId);
           await pc.setRemoteDescription(
             new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
           );
@@ -1267,18 +1269,20 @@ function setupSignalRListeners() {
         await applyPendingCandidates(fromUserId);
       });
     } else if (data.candidate) {
-      const pc = peers.get(fromUserId);
-      if (pc && pc.remoteDescription) {
-        await pc
-          .addIceCandidate(new RTCIceCandidate(data))
-          .catch(console.error);
-      } else {
-        // Buffer candidates until remote description is set
-        if (!pendingCandidates.has(fromUserId)) {
-          pendingCandidates.set(fromUserId, []);
+      await enqueueSignaling(fromUserId, async () => {
+        const pc = peers.get(fromUserId);
+        if (pc && pc.remoteDescription) {
+          await pc
+            .addIceCandidate(new RTCIceCandidate(data))
+            .catch(() => {}); // Silently ignore stale candidates (e.g. unknown ufrag after renegotiation)
+        } else {
+          // Buffer candidates until remote description is set
+          if (!pendingCandidates.has(fromUserId)) {
+            pendingCandidates.set(fromUserId, []);
+          }
+          pendingCandidates.get(fromUserId)!.push(data);
         }
-        pendingCandidates.get(fromUserId)!.push(data);
-      }
+      });
     }
   });
 
