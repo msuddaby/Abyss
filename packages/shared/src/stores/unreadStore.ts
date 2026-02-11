@@ -3,6 +3,7 @@ import { create } from 'zustand';
 interface ChannelUnread {
   hasUnread: boolean;
   mentionCount: number;
+  serverId?: string;
 }
 
 interface ServerUnread {
@@ -33,11 +34,11 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
   serverUnreads: new Map(),
   dmUnreads: new Map(),
 
-  setChannelUnreads: (_serverId, unreads) =>
+  setChannelUnreads: (serverId, unreads) =>
     set((s) => {
       const next = new Map(s.channelUnreads);
       for (const u of unreads) {
-        next.set(u.channelId, { hasUnread: u.hasUnread, mentionCount: u.mentionCount });
+        next.set(u.channelId, { hasUnread: u.hasUnread, mentionCount: u.mentionCount, serverId });
       }
       return { channelUnreads: next };
     }),
@@ -54,12 +55,13 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
   markChannelRead: (channelId, serverId) =>
     set((s) => {
       const nextChannels = new Map(s.channelUnreads);
-      nextChannels.set(channelId, { hasUnread: false, mentionCount: 0 });
+      nextChannels.set(channelId, { hasUnread: false, mentionCount: 0, serverId });
 
       const nextServers = new Map(s.serverUnreads);
       let serverHasUnread = false;
       let serverMentions = 0;
       for (const [, val] of nextChannels) {
+        if (val.serverId !== serverId) continue;
         if (val.hasUnread) serverHasUnread = true;
         serverMentions += val.mentionCount;
       }
@@ -75,7 +77,7 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
     set((s) => {
       const nextChannels = new Map(s.channelUnreads);
       const existing = nextChannels.get(channelId) || { hasUnread: false, mentionCount: 0 };
-      nextChannels.set(channelId, { ...existing, hasUnread: true });
+      nextChannels.set(channelId, { ...existing, hasUnread: true, serverId });
 
       const nextServers = new Map(s.serverUnreads);
       const serverExisting = nextServers.get(serverId) || { hasUnread: false, mentionCount: 0 };
@@ -88,7 +90,7 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
     set((s) => {
       const nextChannels = new Map(s.channelUnreads);
       const existing = nextChannels.get(channelId) || { hasUnread: false, mentionCount: 0 };
-      nextChannels.set(channelId, { hasUnread: true, mentionCount: existing.mentionCount + 1 });
+      nextChannels.set(channelId, { hasUnread: true, mentionCount: existing.mentionCount + 1, serverId });
 
       const nextServers = new Map(s.serverUnreads);
       const serverExisting = nextServers.get(serverId) || { hasUnread: false, mentionCount: 0 };

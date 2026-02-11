@@ -135,7 +135,11 @@ function createWindow() {
   }
 
   // Setup screen share handler (intercepts getDisplayMedia)
-  setupScreenShareHandler(mainWindow);
+  // On Linux, the system's xdg-desktop-portal already provides a native screen picker
+  // via PipeWire — using the custom handler causes a double-dialog issue
+  if (process.platform !== 'linux') {
+    setupScreenShareHandler(mainWindow);
+  }
 
   // Setup IPC handlers
   setupIpcHandlers(mainWindow, shortcutManager, updateManager ?? undefined);
