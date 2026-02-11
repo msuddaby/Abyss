@@ -1,5 +1,5 @@
 import * as signalR from "@microsoft/signalr";
-import { getApiBase, refreshAccessToken } from "./api.js";
+import { getApiBase, refreshAccessToken, ensureFreshToken } from "./api.js";
 import { getStorage } from "../storage.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
@@ -36,7 +36,7 @@ export function getConnection(): signalR.HubConnection {
 
   connection = new signalR.HubConnectionBuilder()
     .withUrl(`${getApiBase()}/hubs/chat`, {
-      accessTokenFactory: () => getStorage().getItem("token") || "",
+      accessTokenFactory: async () => (await ensureFreshToken()) || "",
     })
     .withAutomaticReconnect([0, 2000, 5000, 10000, 20000, 30000])
     .build();

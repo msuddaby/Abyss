@@ -71,8 +71,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = res.data;
       storage.setItem('user', JSON.stringify(user));
       set({ user });
-    } catch {
-      get().logout();
+    } catch (err: any) {
+      // Only logout on 401 (auth truly invalid) or 404 (user deleted).
+      // Network errors, 500s, etc. should not log out — keep cached user data.
+      const status = err?.response?.status;
+      if (status === 401 || status === 404) {
+        get().logout();
+      }
     }
     set({ initialized: true });
   },

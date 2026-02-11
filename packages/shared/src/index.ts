@@ -6,7 +6,7 @@ export type { StorageAdapter } from './storage.js';
 export * from './types/index.js';
 
 // Services
-export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken } from './services/api.js';
+export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken, ensureFreshToken } from './services/api.js';
 export { getConnection, startConnection, ensureConnected, stopConnection, resetConnection, onReconnected } from './services/signalr.js';
 export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
 export type { TurnCredentials } from './services/turn.js';

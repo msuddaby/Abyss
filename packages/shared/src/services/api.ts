@@ -21,8 +21,8 @@ const rawApi = axios.create({
   baseURL: `${apiBase}/api`,
 });
 
-api.interceptors.request.use((config) => {
-  const token = getStorage().getItem('token');
+api.interceptors.request.use(async (config) => {
+  const token = await ensureFreshToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -57,6 +57,29 @@ export async function refreshAccessToken(): Promise<string | null> {
     }
   })();
   return refreshPromise;
+}
+
+function getTokenExpiry(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=');
+    const json = JSON.parse(atob(base64));
+    return typeof json.exp === 'number' ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns a valid token, proactively refreshing if it expires within 2 minutes. */
+export async function ensureFreshToken(): Promise<string | null> {
+  const token = getStorage().getItem('token');
+  if (!token) return null;
+  const exp = getTokenExpiry(token);
+  if (exp && Date.now() >= exp - 120_000) {
+    return await refreshAccessToken() ?? token;
+  }
+  return token;
 }
 
 api.interceptors.response.use(
