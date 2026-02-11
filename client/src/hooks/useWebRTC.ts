@@ -434,7 +434,10 @@ function startAnalyserLoop() {
       const isLocal = !!currentUserId && userId === currentUserId;
       let speaking = rms > SPEAKING_THRESHOLD;
       if (isLocal && store.voiceMode === "push-to-talk") {
-        speaking = speaking && store.isPttActive && !store.isMuted;
+        // In PTT mode, the speaking indicator follows the PTT key state
+        // rather than relying on the analyser's cloned stream RMS,
+        // which can break in some browsers when track.enabled is toggled.
+        speaking = store.isPttActive && !store.isMuted;
       }
       store.setSpeaking(userId, speaking);
 
@@ -1942,6 +1945,18 @@ export function useWebRTC() {
   const stopCamera = useCallback(async () => {
     await stopCameraInternal();
   }, []);
+
+  // Send periodic heartbeat to keep backend LastSeen fresh while in voice
+  useEffect(() => {
+    if (!currentChannelId) return;
+    const interval = setInterval(() => {
+      const conn = getConnection();
+      if (conn.state === "Connected") {
+        conn.invoke("VoiceHeartbeat").catch(() => {});
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [currentChannelId]);
 
   return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera };
 }

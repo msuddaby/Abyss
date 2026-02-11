@@ -1063,6 +1063,11 @@ public class ChatHub : Hub
         await Clients.Client(voiceConnId).SendAsync("ReceiveSignal", UserId, signal);
     }
 
+    public void VoiceHeartbeat()
+    {
+        _voiceState.TouchUser(UserId);
+    }
+
     public Dictionary<string, string> GetVoiceChannelUsers(string channelId)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return new Dictionary<string, string>();

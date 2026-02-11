@@ -481,7 +481,7 @@ export function useSignalRListeners() {
       const c = getConnection();
       if (c.state === 'Connected') {
         c.invoke('GetServerVoiceUsers', activeServer.id).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
-          useServerStore.getState().setVoiceChannelUsers(data);
+          useServerStore.getState().mergeVoiceChannelUsers(data);
         }).catch(console.error);
         c.invoke('GetServerVoiceSharers', activeServer.id).then((data: Record<string, string[]>) => {
           useServerStore.getState().setVoiceChannelSharers(data);

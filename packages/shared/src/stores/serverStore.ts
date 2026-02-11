@@ -50,6 +50,7 @@ interface ServerState {
   deleteServer: (serverId: string) => Promise<void>;
   fetchAuditLogs: (serverId: string) => Promise<AuditLog[]>;
   setVoiceChannelUsers: (data: Record<string, Record<string, VoiceUserState>>) => void;
+  mergeVoiceChannelUsers: (data: Record<string, Record<string, VoiceUserState>>) => void;
   voiceUserJoined: (channelId: string, userId: string, state: VoiceUserState) => void;
   voiceUserLeft: (channelId: string, userId: string) => void;
   voiceUserStateUpdated: (channelId: string, userId: string, state: VoiceUserState) => void;
@@ -334,6 +335,38 @@ export const useServerStore = create<ServerState>((set, get) => ({
     }
     set({ voiceChannelUsers: map });
   },
+
+  // Merge server data with local state — server data wins for known users,
+  // but locally-known users (from recent incremental signals) are preserved.
+  // This prevents races where a full-replace overwrites fresh signal data.
+  mergeVoiceChannelUsers: (data) =>
+    set((s) => {
+      const incoming: VoiceChannelUsersMap = new Map();
+      for (const [channelId, users] of Object.entries(data)) {
+        incoming.set(channelId, new Map(Object.entries(users)));
+      }
+      const next: VoiceChannelUsersMap = new Map();
+      // Start with all channels from the server response
+      for (const [channelId, serverUsers] of incoming) {
+        next.set(channelId, new Map(serverUsers));
+      }
+      // Merge in locally-known users that the server response may not have yet
+      for (const [channelId, localUsers] of s.voiceChannelUsers) {
+        const merged = next.get(channelId);
+        if (merged) {
+          // Channel exists in both — add any local-only users
+          for (const [userId, state] of localUsers) {
+            if (!merged.has(userId)) {
+              merged.set(userId, state);
+            }
+          }
+        } else {
+          // Channel only exists locally — keep it (may be a recent join)
+          next.set(channelId, new Map(localUsers));
+        }
+      }
+      return { voiceChannelUsers: next };
+    }),
 
   voiceUserJoined: (channelId, userId, state) =>
     set((s) => {
