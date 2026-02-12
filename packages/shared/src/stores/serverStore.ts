@@ -30,8 +30,8 @@ interface ServerState {
   setActiveChannel: (channel: Channel | null) => void;
   createServer: (name: string) => Promise<Server>;
   updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
-  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice') => Promise<Channel>;
-  renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean) => Promise<Channel>;
+  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice', userLimit?: number | null) => Promise<Channel>;
+  renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean, userLimit?: number | null) => Promise<Channel>;
   reorderChannels: (serverId: string, type: 'Text' | 'Voice', channelIds: string[]) => Promise<void>;
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
@@ -193,15 +193,15 @@ export const useServerStore = create<ServerState>((set, get) => ({
     return server;
   },
 
-  createChannel: async (serverId, name, type) => {
-    const res = await api.post(`/servers/${serverId}/channels`, { name, type });
+  createChannel: async (serverId, name, type, userLimit) => {
+    const res = await api.post(`/servers/${serverId}/channels`, { name, type, userLimit: userLimit || null });
     const channel = res.data;
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] });
     return channel;
   },
 
-  renameChannel: async (serverId, channelId, name, persistentChat) => {
-    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name, persistentChat });
+  renameChannel: async (serverId, channelId, name, persistentChat, userLimit) => {
+    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name, persistentChat, userLimit: userLimit === undefined ? undefined : (userLimit || 0) });
     const channel = res.data;
     set((s) => ({
       channels: s.channels.map((c) => (c.id === channelId ? channel : c)),

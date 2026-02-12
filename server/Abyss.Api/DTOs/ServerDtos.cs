@@ -12,10 +12,10 @@ public class UpdateServerRequest
     public Guid? JoinLeaveChannelId { get; set; }
 }
 public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, bool JoinLeaveMessagesEnabled, Guid? JoinLeaveChannelId, int DefaultNotificationLevel = 0);
-public record CreateChannelRequest(string Name, string Type);
-public record UpdateChannelRequest(string Name, bool? PersistentChat = null);
+public record CreateChannelRequest(string Name, string Type, int? UserLimit = null);
+public record UpdateChannelRequest(string Name, bool? PersistentChat = null, int? UserLimit = null);
 public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
-public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false);
+public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null);
 public record ChannelPermissionOverrideDto(Guid RoleId, long Allow, long Deny);
 public record ChannelPermissionsDto(List<ChannelPermissionOverrideDto> Overrides);
 public record ServerMemberDto(Guid ServerId, string UserId, UserDto User, bool IsOwner, List<ServerRoleDto> Roles, DateTime JoinedAt);

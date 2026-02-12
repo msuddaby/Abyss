@@ -76,6 +76,7 @@ export interface Channel {
   position: number;
   permissions?: number;
   persistentChat?: boolean;
+  userLimit?: number | null;
 }
 
 export interface ServerRole {

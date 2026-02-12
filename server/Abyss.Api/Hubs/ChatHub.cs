@@ -884,6 +884,21 @@ public class ChatHub : Hub
         var voiceChannel = await _db.Channels.FindAsync(channelGuid);
         if (voiceChannel == null || !voiceChannel.ServerId.HasValue) return;
         if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Connect)) return;
+
+        // Enforce user limit (skip if user is already in this channel — reconnect)
+        if (voiceChannel.UserLimit is > 0)
+        {
+            var currentInChannel = _voiceState.GetUserChannel(UserId);
+            if (!currentInChannel.HasValue || currentInChannel.Value != channelGuid)
+            {
+                var currentCount = _voiceState.GetChannelUserIds(channelGuid).Count;
+                if (currentCount >= voiceChannel.UserLimit.Value)
+                {
+                    throw new HubException("Channel is full.");
+                }
+            }
+        }
+
         var canSpeak = await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Speak);
         CancelPendingVoiceDisconnect(UserId);
 

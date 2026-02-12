@@ -37,26 +37,51 @@ export function setOnUnauthorized(cb: () => void): void {
 
 let refreshPromise: Promise<string | null> | null = null;
 
+async function doRefresh(): Promise<string | null> {
+  const storage = getStorage();
+  const refreshToken = storage.getItem('refreshToken');
+  if (!refreshToken) return null;
+  try {
+    const res = await rawApi.post('/auth/refresh', { refreshToken });
+    const { token, refreshToken: newRefreshToken, user } = res.data;
+    storage.setItem('token', token);
+    storage.setItem('refreshToken', newRefreshToken);
+    if (user) storage.setItem('user', JSON.stringify(user));
+    return token;
+  } catch {
+    return null;
+  }
+}
+
 export async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
-    const refreshToken = getStorage().getItem('refreshToken');
-    if (!refreshToken) return null;
-    try {
-      const res = await rawApi.post('/auth/refresh', { refreshToken });
-      const { token, refreshToken: newRefreshToken, user } = res.data;
-      const storage = getStorage();
-      storage.setItem('token', token);
-      storage.setItem('refreshToken', newRefreshToken);
-      if (user) storage.setItem('user', JSON.stringify(user));
-      return token;
-    } catch {
-      return null;
-    } finally {
-      refreshPromise = null;
+    const storage = getStorage();
+    const originalRefreshToken = storage.getItem('refreshToken');
+    if (!originalRefreshToken) return null;
+
+    const token = await doRefresh();
+    if (token) return token;
+
+    // First attempt failed. Wait briefly — another tab or SignalR reconnect
+    // may have rotated the token in the meantime.
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Re-read from storage: if the refresh token changed, another code path
+    // succeeded and we can just use the new access token it stored.
+    const currentRefreshToken = storage.getItem('refreshToken');
+    if (currentRefreshToken !== originalRefreshToken) {
+      return storage.getItem('token') || null;
     }
+
+    // Same token, retry once more (covers transient network blips).
+    return await doRefresh();
   })();
-  return refreshPromise;
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
 }
 
 function getTokenExpiry(token: string): number | null {
@@ -94,6 +119,18 @@ api.interceptors.response.use(
         original.headers = original.headers ?? {};
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
+      }
+      // Last resort: another tab may have refreshed while we were retrying.
+      // Check if storage has a different (possibly fresh) access token.
+      const storedToken = getStorage().getItem('token');
+      const sentToken = original.headers?.Authorization?.replace('Bearer ', '');
+      if (storedToken && storedToken !== sentToken) {
+        const exp = getTokenExpiry(storedToken);
+        if (exp && Date.now() < exp) {
+          original.headers = original.headers ?? {};
+          original.headers.Authorization = `Bearer ${storedToken}`;
+          return api(original);
+        }
       }
       if (onUnauthorized) onUnauthorized();
     }

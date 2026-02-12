@@ -482,7 +482,8 @@ export default function ChannelSidebar() {
           initialName={channelToEdit.name}
           channelType={channelToEdit.type}
           initialPersistentChat={channelToEdit.persistentChat}
-          onSave={async (name, persistentChat) => { await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat); }}
+          initialUserLimit={channelToEdit.userLimit}
+          onSave={async (name, persistentChat, userLimit) => { await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat, userLimit); }}
           onClose={() => setChannelToEdit(null)}
         />
       )}

@@ -201,7 +201,8 @@ public class ServersController : ControllerBase
                 channel.ServerId,
                 channel.Position,
                 perms & PermissionService.ChannelPermissionMask,
-                channel.PersistentChat));
+                channel.PersistentChat,
+                channel.UserLimit));
         }
 
         return Ok(result);
@@ -226,6 +227,7 @@ public class ServersController : ControllerBase
             Type = channelType,
             ServerId = serverId,
             Position = maxPos + 1,
+            UserLimit = channelType == ChannelType.Voice && req.UserLimit is > 0 ? req.UserLimit : null,
         };
         _db.Channels.Add(channel);
         await _db.SaveChangesAsync();
@@ -233,7 +235,7 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
             targetName: $"#{channel.Name}", details: channelType.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelCreated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -250,12 +252,14 @@ public class ServersController : ControllerBase
         channel.Name = req.Name.Trim();
         if (req.PersistentChat.HasValue && channel.Type == ChannelType.Voice)
             channel.PersistentChat = req.PersistentChat.Value;
+        if (req.UserLimit.HasValue && channel.Type == ChannelType.Voice)
+            channel.UserLimit = req.UserLimit.Value > 0 ? req.UserLimit.Value : null;
         await _db.SaveChangesAsync();
 
         await _perms.LogAsync(serverId, AuditAction.ChannelUpdated, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelUpdated", serverId.ToString(), dto);
         return Ok(dto);
     }
@@ -346,7 +350,7 @@ public class ServersController : ControllerBase
             .Where(c => c.ServerId == serverId)
             .OrderBy(c => c.Type)
             .ThenBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat))
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat, c.UserLimit))
             .ToListAsync();
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);

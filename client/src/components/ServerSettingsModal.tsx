@@ -946,18 +946,20 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                             <span className="mps-provider-name">{conn.displayName}</span>
                             <span className="mps-provider-type">{conn.providerType}</span>
                           </div>
-                          <button
-                            className="btn-danger-sm"
-                            onClick={async () => {
-                              try {
-                                await useMediaProviderStore.getState().unlinkProvider(serverId, conn.id);
-                              } catch (e) {
-                                console.error('Failed to unlink:', e);
-                              }
-                            }}
-                          >
-                            Unlink
-                          </button>
+                          {conn.providerType !== 'YouTube' && (
+                            <button
+                              className="btn-danger-sm"
+                              onClick={async () => {
+                                try {
+                                  await useMediaProviderStore.getState().unlinkProvider(serverId, conn.id);
+                                } catch (e) {
+                                  console.error('Failed to unlink:', e);
+                                }
+                              }}
+                            >
+                              Unlink
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>

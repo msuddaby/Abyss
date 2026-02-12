@@ -31,6 +31,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canModerateVoice = currentMember ? hasPermission(currentMember, Permission.MuteMembers) : false;
+  const isFull = !!(channel.userLimit && channelUsers && channelUsers.size >= channel.userLimit && !isConnected);
 
   const handleParticipantContextMenu = (userId: string, e: React.MouseEvent) => {
     if (userId === currentUser?.id) return;
@@ -57,18 +58,23 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
       <button className="channel-item-btn" onClick={onSelect}>
         <span className="channel-voice-icon">🔊</span>
         {channel.name}
+        {channel.userLimit ? (
+          <span className="voice-user-limit">{participants.length}/{channel.userLimit}</span>
+        ) : null}
         {watchPartyTitle && <span className="vcv-watch-badge">WATCH</span>}
       </button>
       {isConnected ? (
         <button className="voice-action-btn leave" onClick={onLeave} title="Disconnect">
           ✕
         </button>
-      ) : canConnect ? (
+      ) : !canConnect ? (
+        <span className="voice-action-lock" title="No permission to connect">🔒</span>
+      ) : isFull ? (
+        <span className="voice-action-lock" title="Channel is full">🔒</span>
+      ) : (
         <button className="voice-action-btn join" onClick={onJoin} title="Join Voice">
           →
         </button>
-      ) : (
-        <span className="voice-action-lock" title="No permission to connect">🔒</span>
       )}
       {participants.length > 0 && (
         <div className="voice-participants">

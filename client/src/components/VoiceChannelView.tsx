@@ -117,6 +117,7 @@ function VoiceChannelViewInner() {
   const channelUsers = activeChannel ? voiceChannelUsers.get(activeChannel.id) : undefined;
   const channelSharers = activeChannel ? voiceChannelSharers.get(activeChannel.id) : undefined;
   const canConnect = activeChannel ? hasChannelPermission(activeChannel.permissions, Permission.Connect) : false;
+  const isFull = !!(activeChannel?.userLimit && channelUsers && channelUsers.size >= activeChannel.userLimit && !isConnected);
 
   const participantEntries = isConnected
     ? Array.from(participants.entries()).map(([userId, displayName]) => {
@@ -141,6 +142,11 @@ function VoiceChannelViewInner() {
 
   return (
     <div className="vcv-container">
+      {activeChannel?.userLimit ? (
+        <div className="vcv-user-limit-bar">
+          {participantEntries.length}/{activeChannel.userLimit} users
+        </div>
+      ) : null}
       {isConnected && connectionState === 'reconnecting' && (
         <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
       )}
@@ -351,9 +357,9 @@ function VoiceChannelViewInner() {
           <button
             className="vcv-connect-btn"
             onClick={() => joinVoice(activeChannel.id)}
-            disabled={isJoiningVoice}
+            disabled={isJoiningVoice || isFull}
           >
-            {isJoiningVoice ? 'Connecting...' : 'Connect'}
+            {isJoiningVoice ? 'Connecting...' : isFull ? 'Channel Full' : 'Connect'}
           </button>
         </div>
       )}
