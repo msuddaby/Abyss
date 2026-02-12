@@ -645,10 +645,28 @@ function buildIceServersFromTurn(creds: {
   username: string;
   credential: string;
 }): RTCIceServer[] {
+  const expandedTurnUrls = Array.from(
+    new Set(
+      creds.urls.flatMap((rawUrl) => {
+        const url = rawUrl.trim();
+        if (!url) return [];
+
+        const lower = url.toLowerCase();
+        // If backend gives a bare `turn:` URL, add explicit UDP/TCP variants
+        // so browsers can fall back when one transport is blocked.
+        if (lower.startsWith("turn:") && !lower.includes("transport=")) {
+          const sep = url.includes("?") ? "&" : "?";
+          return [url, `${url}${sep}transport=udp`, `${url}${sep}transport=tcp`];
+        }
+        return [url];
+      }),
+    ),
+  );
+
   return [
     { urls: STUN_URL },
     {
-      urls: creds.urls,
+      urls: expandedTurnUrls,
       username: creds.username,
       credential: creds.credential,
     },
@@ -729,7 +747,16 @@ async function recreatePeer(peerId: string) {
   });
 }
 
-async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
+interface RestartIceOptions {
+  force?: boolean;
+  reason?: string;
+}
+
+async function restartIceForPeer(
+  peerId: string,
+  options: RestartIceOptions = {},
+) {
+  const { force = false, reason = "unspecified" } = options;
   if (iceRestartInFlight.has(peerId)) return;
 
   // Max restart limit — give up after MAX_ICE_RESTARTS consecutive failures
@@ -743,7 +770,7 @@ async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
   // Exponential backoff cooldown: min(30s * 2^attempts, 120s)
   const cooldown = Math.min(ICE_RESTART_BASE_COOLDOWN * Math.pow(2, attempts), ICE_RESTART_MAX_COOLDOWN);
   const lastRestart = lastIceRestartTime.get(peerId);
-  if (lastRestart && Date.now() - lastRestart < cooldown) {
+  if (!force && lastRestart && Date.now() - lastRestart < cooldown) {
     console.log(`Skipping ICE restart for ${peerId} (cooldown, ${Math.round((cooldown - (Date.now() - lastRestart)) / 1000)}s remaining, attempt ${attempts})`);
     return;
   }
@@ -753,9 +780,17 @@ async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
     await enqueueSignaling(peerId, async () => {
       // Always use the current PC from the map — the passed-in reference may be stale
       const pc = peers.get(peerId);
-      if (!pc || pc.signalingState !== "stable") return;
+      if (!pc || pc.signalingState !== "stable") {
+        console.log(
+          `[ice] Skipping ICE restart for ${peerId} (reason=${reason}, signalingState=${pc?.signalingState ?? "none"})`,
+        );
+        return;
+      }
       lastIceRestartTime.set(peerId, Date.now());
       iceRestartAttempts.set(peerId, attempts + 1);
+      console.log(
+        `[ice] Sending ICE restart offer to ${peerId} (reason=${reason}, attempt=${attempts + 1})`,
+      );
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       const conn = getConnection();
@@ -778,7 +813,7 @@ async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
 async function restartIceForAllPeers() {
   const entries = Array.from(peers.entries());
   for (const [peerId] of entries) {
-    await restartIceForPeer(peerId);
+    await restartIceForPeer(peerId, { reason: "all-peers" });
   }
 }
 
@@ -1082,6 +1117,11 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
         .catch((err) => console.error("Failed to send ICE candidate:", err));
     }
   };
+  pc.onicecandidateerror = (event) => {
+    console.warn(
+      `[ice] Candidate error for ${peerId}: code=${event.errorCode ?? "unknown"} text=${event.errorText ?? "unknown"} url=${event.url ?? "unknown"}`,
+    );
+  };
 
   pc.oniceconnectionstatechange = () => {
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
@@ -1095,7 +1135,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
           iceReconnectTimers.delete(peerId);
           if (pc.iceConnectionState === "checking") {
             console.warn(`ICE stuck at checking for ${peerId}, restarting...`);
-            restartIceForPeer(peerId, pc);
+            restartIceForPeer(peerId, { reason: "checking-timeout" });
           }
         }, 30_000);
         iceReconnectTimers.set(peerId, timer);
@@ -1108,7 +1148,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       const timer = setTimeout(() => {
         if (pc.iceConnectionState === "disconnected") {
           console.warn(`ICE still disconnected for ${peerId}, restarting...`);
-          restartIceForPeer(peerId, pc);
+          restartIceForPeer(peerId, { reason: "disconnected-timeout" });
         }
         iceReconnectTimers.delete(peerId);
       }, 5000);
@@ -1117,7 +1157,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       console.warn(`ICE failed for ${peerId}, attempting restart...`);
       voiceState.setConnectionState("reconnecting");
       useToastStore.getState().addToast("Connection issue detected. Reconnecting...", "error");
-      restartIceForPeer(peerId, pc);
+      restartIceForPeer(peerId, { force: true, reason: "ice-failed" });
     } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
       // Log peer summary on successful connection
       const senders = pc.getSenders();
@@ -1917,8 +1957,11 @@ function setupSignalRListeners() {
         if (existingTimer) {
           clearTimeout(existingTimer);
           iceReconnectTimers.delete(fromUserId);
+          // Only update cooldown when a remote offer arrived while we were
+          // already in a reconnect path. Normal offers should not throttle
+          // future ICE restart attempts.
+          lastIceRestartTime.set(fromUserId, Date.now());
         }
-        lastIceRestartTime.set(fromUserId, Date.now());
 
         const currentUser = useAuthStore.getState().user;
 
