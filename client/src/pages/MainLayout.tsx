@@ -12,7 +12,8 @@ import UpdateBanner from '../components/UpdateBanner';
 import VoiceChatOverlay from '../components/VoiceChatOverlay';
 import MediaLibraryBrowser from '../components/MediaLibraryBrowser';
 import ContextMenu from '../components/contextMenu/ContextMenu';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore } from '@abyss/shared';
+import WatchPartyPlayer from '../components/WatchPartyPlayer';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 
 export default function MainLayout() {
@@ -25,8 +26,10 @@ export default function MainLayout() {
   const closeSearch = useSearchStore((s) => s.closeSearch);
   const signalRStatus = useSignalRStore((s) => s.status);
   const fetchConfig = useAppConfigStore((s) => s.fetchConfig);
+  const activeParty = useWatchPartyStore((s) => s.activeParty);
   const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
   const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
+  const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -157,6 +160,9 @@ export default function MainLayout() {
             <h2>Welcome to Abyss</h2>
             <p>Select a channel to start chatting</p>
           </div>
+        )}
+        {activeParty && voiceChannelId && (
+          <WatchPartyPlayer mini={activeChannel?.id !== voiceChannelId || activeChannel?.type !== 'Voice'} />
         )}
       </div>
       {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : memberListVisible ? <MemberList /> : null)}

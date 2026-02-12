@@ -2,7 +2,6 @@ import { Component, useRef, useEffect, useState } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
 import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
-import WatchPartyPlayer from './WatchPartyPlayer';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 
@@ -145,9 +144,7 @@ function VoiceChannelViewInner() {
       {isConnected && connectionState === 'reconnecting' && (
         <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
       )}
-      {hasWatchParty ? (
-        <WatchPartyPlayer />
-      ) : isWatching ? (
+      {isWatching ? (
         <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>
           <div className="vcv-watching-main">
             <ScreenShareView />
@@ -172,7 +169,9 @@ function VoiceChannelViewInner() {
                         </div>
                       )}
                       {ttsUsers.has(userId) && (
-                        <div className="vcv-tts-badge">TTS</div>
+                        <div className="vcv-badges">
+                          <span className="vcv-badge tts">TTS</span>
+                        </div>
                       )}
                       <span className="vcv-watching-tile-name">{state.displayName}</span>
                     </div>
@@ -268,7 +267,9 @@ function VoiceChannelViewInner() {
                     </div>
                   )}
                   {ttsUsers.has(userId) && (
-                    <div className="vcv-tts-badge">TTS</div>
+                    <div className="vcv-badges">
+                      <span className="vcv-badge tts">TTS</span>
+                    </div>
                   )}
                   <span className="vcv-name">{state.displayName}</span>
                 </div>
@@ -326,11 +327,12 @@ function VoiceChannelViewInner() {
                       {memberIsDeafened && <span>🎧</span>}
                     </div>
                   )}
-                  {isSharer && (
-                    <div className="vcv-live-badge">LIVE</div>
-                  )}
-                  {ttsUsers.has(userId) && (
-                    <div className="vcv-tts-badge">TTS</div>
+                  {(isSharer || userHasCamera || ttsUsers.has(userId)) && (
+                    <div className="vcv-badges">
+                      {isSharer && <span className="vcv-badge live">LIVE</span>}
+                      {userHasCamera && <span className="vcv-badge cam">CAM</span>}
+                      {ttsUsers.has(userId) && <span className="vcv-badge tts">TTS</span>}
+                    </div>
                   )}
                   <span className="vcv-name">{state.displayName}</span>
                 </div>

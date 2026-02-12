@@ -79,6 +79,8 @@ export class PlexPlayerAdapter implements PlayerAdapter {
   onPause(cb: () => void): void { this.pauseCb = cb; }
   onSeeked(cb: () => void): void { this.seekedCb = cb; }
 
+  getVideoElement(): HTMLVideoElement | null { return this.video; }
+
   destroy(): void {
     if (this.hls) {
       this.hls.destroy();

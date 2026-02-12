@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVoiceStore, useServerStore, useMediaProviderStore, useWatchPartyStore, hasChannelPermission, Permission } from '@abyss/shared';
+import { useVoiceStore, useServerStore, useWatchPartyStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 
 function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
@@ -36,14 +36,12 @@ export default function VoiceControls() {
   const toggleDeafen = useVoiceStore((s) => s.toggleDeafen);
   const connectionState = useVoiceStore((s) => s.connectionState);
 
-  const connections = useMediaProviderStore((s) => s.connections);
   const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
   const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
 
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
   const canStream = channel ? hasChannelPermission(channel.permissions, Permission.Stream) : false;
-  const hasProviders = connections.length > 0;
 
   // Connection quality stats — read cached stats from useWebRTC's collection interval
   const [stats, setStats] = useState<ConnectionStats>({ roundTripTime: null, packetLoss: null, jitter: null });
@@ -164,7 +162,7 @@ export default function VoiceControls() {
             {isScreenShareLoading ? '⏳' : '🖥️'}
           </button>
         )}
-        {canStream && hasProviders && (
+        {canStream && (
           <button
             className={`voice-ctrl-btn ${isBrowsingLibrary ? 'active' : ''}`}
             onClick={() => setIsBrowsingLibrary(!isBrowsingLibrary)}

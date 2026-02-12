@@ -1,6 +1,19 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
-import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo } from '../types/index.js';
+import api, { getApiBase } from '../services/api.js';
+import { getStorage } from '../storage.js';
+import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo, YouTubeResolveResult } from '../types/index.js';
+
+function resolveProxyUrls<T extends { thumbnailUrl?: string }>(items: T[]): T[] {
+  const base = getApiBase();
+  const token = getStorage().getItem('token');
+  for (const item of items) {
+    if (item.thumbnailUrl?.startsWith('/')) {
+      const sep = item.thumbnailUrl.includes('?') ? '&' : '?';
+      item.thumbnailUrl = `${base}${item.thumbnailUrl}${token ? `${sep}token=${token}` : ''}`;
+    }
+  }
+  return items;
+}
 
 interface MediaProviderState {
   connections: MediaProviderConnection[];
@@ -17,6 +30,7 @@ interface MediaProviderState {
   fetchItemChildren: (serverId: string, connectionId: string, itemId: string) => Promise<MediaItem[]>;
   searchItems: (serverId: string, connectionId: string, query: string, libraryId?: string) => Promise<void>;
   getPlaybackInfo: (serverId: string, connectionId: string, itemId: string) => Promise<PlaybackInfo | null>;
+  resolveYouTubeUrl: (serverId: string, url: string) => Promise<YouTubeResolveResult | null>;
   setConnections: (connections: MediaProviderConnection[]) => void;
   addConnection: (connection: MediaProviderConnection) => void;
   removeConnection: (connectionId: string) => void;
@@ -42,8 +56,8 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
   linkProvider: async (serverId, data) => {
     set({ isLoading: true });
     try {
-      const res = await api.post(`/servers/${serverId}/media-providers/link`, data);
-      set((s) => ({ connections: [...s.connections, res.data], isLoading: false }));
+      await api.post(`/servers/${serverId}/media-providers/link`, data);
+      set({ isLoading: false });
     } catch (e) {
       set({ isLoading: false });
       throw e;
@@ -64,7 +78,7 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
     set({ isLoading: true });
     try {
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/libraries`);
-      set({ libraries: res.data, isLoading: false });
+      set({ libraries: resolveProxyUrls(res.data), isLoading: false });
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to fetch libraries:', e);
@@ -75,7 +89,7 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
     set({ isLoading: true });
     try {
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/libraries/${libraryId}/items`);
-      set({ libraryItems: res.data, isLoading: false });
+      set({ libraryItems: resolveProxyUrls(res.data), isLoading: false });
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to fetch library items:', e);
@@ -87,7 +101,7 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
     try {
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/items/${encodeURIComponent(itemId)}/children`);
       set({ isLoading: false });
-      return res.data as MediaItem[];
+      return resolveProxyUrls(res.data as MediaItem[]);
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to fetch item children:', e);
@@ -101,7 +115,7 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
       const params: Record<string, string> = { query };
       if (libraryId) params.library = libraryId;
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/search`, { params });
-      set({ searchResults: res.data, isLoading: false });
+      set({ searchResults: resolveProxyUrls(res.data), isLoading: false });
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to search items:', e);
@@ -115,10 +129,7 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
 
       // If URL is relative (proxy), prepend API base and append auth token
       if (playbackInfo.url.startsWith('/')) {
-        const { getApiBase } = await import('../services/api.js');
-        const { getStorage } = await import('../storage.js');
-        const storage = getStorage();
-        const token = storage.getItem('token');
+        const token = getStorage().getItem('token');
         const separator = playbackInfo.url.includes('?') ? '&' : '?';
         playbackInfo.url = `${getApiBase()}${playbackInfo.url}${token ? `${separator}token=${token}` : ''}`;
       }
@@ -126,6 +137,16 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
       return playbackInfo;
     } catch (e) {
       console.error('Failed to get playback info:', e);
+      return null;
+    }
+  },
+
+  resolveYouTubeUrl: async (serverId, url) => {
+    try {
+      const res = await api.get(`/servers/${serverId}/media-providers/youtube/resolve`, { params: { url } });
+      return res.data as YouTubeResolveResult;
+    } catch (e) {
+      console.error('Failed to resolve YouTube URL:', e);
       return null;
     }
   },

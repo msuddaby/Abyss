@@ -94,7 +94,7 @@ public class PlexMediaProvider : IMediaProvider
                 Name = dir.GetProperty("title").GetString()!,
                 Type = dir.GetProperty("type").GetString()!,
                 ThumbnailUrl = dir.TryGetProperty("thumb", out var thumb)
-                    ? $"{serverUrl}{thumb.GetString()}?X-Plex-Token={authToken}"
+                    ? thumb.GetString()
                     : null
             });
         }
@@ -111,7 +111,7 @@ public class PlexMediaProvider : IMediaProvider
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync();
-        return ParseMetadataList(json, serverUrl, authToken);
+        return ParseMetadataList(json);
     }
 
     public async Task<List<MediaItem>> SearchItemsAsync(string configJson, string query, string? libraryId = null)
@@ -125,7 +125,7 @@ public class PlexMediaProvider : IMediaProvider
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadAsStringAsync();
-        return ParseMetadataList(json, serverUrl, authToken);
+        return ParseMetadataList(json);
     }
 
     public async Task<MediaItem?> GetItemDetailsAsync(string configJson, string itemId)
@@ -136,7 +136,7 @@ public class PlexMediaProvider : IMediaProvider
         if (!response.IsSuccessStatusCode) return null;
 
         var json = await response.Content.ReadAsStringAsync();
-        var items = ParseMetadataList(json, serverUrl, authToken);
+        var items = ParseMetadataList(json);
         return items.FirstOrDefault();
     }
 
@@ -148,7 +148,7 @@ public class PlexMediaProvider : IMediaProvider
         if (!response.IsSuccessStatusCode) return new List<MediaItem>();
 
         var json = await response.Content.ReadAsStringAsync();
-        return ParseMetadataList(json, serverUrl, authToken);
+        return ParseMetadataList(json);
     }
 
     public async Task<PlaybackInfo?> GetPlaybackInfoAsync(string configJson, string itemId)
@@ -184,7 +184,7 @@ public class PlexMediaProvider : IMediaProvider
         };
     }
 
-    private List<MediaItem> ParseMetadataList(string json, string serverUrl, string authToken)
+    private List<MediaItem> ParseMetadataList(string json)
     {
         var doc = JsonDocument.Parse(json);
         var container = doc.RootElement.GetProperty("MediaContainer");
@@ -213,7 +213,7 @@ public class PlexMediaProvider : IMediaProvider
             };
 
             if (m.TryGetProperty("thumb", out var thumb))
-                item.ThumbnailUrl = $"{serverUrl}{thumb.GetString()}?X-Plex-Token={authToken}";
+                item.ThumbnailUrl = thumb.GetString();
 
             items.Add(item);
         }

@@ -522,16 +522,20 @@ function startAnalyserLoop() {
       const rms = Math.sqrt(sum / buffer.length);
       const isLocal = !!currentUserId && userId === currentUserId;
       let speaking = rms > SPEAKING_THRESHOLD;
-      if (isLocal && store.voiceMode === "push-to-talk") {
-        // In PTT mode, the speaking indicator follows the PTT key state
-        // rather than relying on the analyser's cloned stream RMS,
-        // which can break in some browsers when track.enabled is toggled.
-        speaking = store.isPttActive && !store.isMuted;
+      if (isLocal) {
+        if (store.isMuted) {
+          speaking = false;
+        } else if (store.voiceMode === "push-to-talk") {
+          // In PTT mode, the speaking indicator follows the PTT key state
+          // rather than relying on the analyser's cloned stream RMS,
+          // which can break in some browsers when track.enabled is toggled.
+          speaking = store.isPttActive;
+        }
       }
       store.setSpeaking(userId, speaking);
 
       if (currentUserId && userId === currentUserId) {
-        store.setLocalInputLevel(rms);
+        store.setLocalInputLevel(store.isMuted ? 0 : rms);
         if (localStream && store.voiceMode === "voice-activity") {
           const sensitivity = Math.min(1, Math.max(0, store.inputSensitivity));
           const threshold =

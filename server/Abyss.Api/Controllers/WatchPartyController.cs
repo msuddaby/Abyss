@@ -88,7 +88,8 @@ public class WatchPartyController : ControllerBase
             ItemDurationMs = req.ItemDurationMs,
             CurrentTimeMs = 0,
             IsPlaying = true,
-            StartedAt = DateTime.UtcNow
+            StartedAt = DateTime.UtcNow,
+            ProviderType = connection.ProviderType.ToString()
         };
 
         _watchPartyService.StartParty(channelId, state);
@@ -236,5 +237,6 @@ public class WatchPartyController : ControllerBase
         state.Id, state.ChannelId, state.MediaProviderConnectionId,
         state.HostUserId, state.ProviderItemId, state.ItemTitle,
         state.ItemThumbnail, state.ItemDurationMs, state.CurrentTimeMs,
-        state.IsPlaying, state.LastSyncAt, state.Queue, state.StartedAt);
+        state.IsPlaying, state.LastSyncAt, state.Queue, state.StartedAt,
+        state.ProviderType);
 }

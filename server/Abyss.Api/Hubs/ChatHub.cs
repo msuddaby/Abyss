@@ -126,7 +126,8 @@ public class ChatHub : Hub
                 watchParty.Id, watchParty.ChannelId, watchParty.MediaProviderConnectionId,
                 watchParty.HostUserId, watchParty.ProviderItemId, watchParty.ItemTitle,
                 watchParty.ItemThumbnail, watchParty.ItemDurationMs, watchParty.CurrentTimeMs,
-                watchParty.IsPlaying, watchParty.LastSyncAt, watchParty.Queue, watchParty.StartedAt);
+                watchParty.IsPlaying, watchParty.LastSyncAt, watchParty.Queue, watchParty.StartedAt,
+                watchParty.ProviderType);
             await Clients.Caller.SendAsync("WatchPartyActive", wpDto);
         }
     }

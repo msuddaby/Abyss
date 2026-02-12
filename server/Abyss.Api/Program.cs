@@ -120,6 +120,7 @@ builder.Services.AddSingleton<ProviderConfigProtector>();
 builder.Services.AddScoped<MediaProviderFactory>();
 builder.Services.AddSingleton<WatchPartyService>();
 builder.Services.AddHttpClient<PlexMediaProvider>();
+builder.Services.AddHttpClient<YouTubeMediaProvider>();
 
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>

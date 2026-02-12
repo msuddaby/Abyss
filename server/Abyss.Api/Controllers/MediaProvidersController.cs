@@ -193,7 +193,8 @@ public class MediaProvidersController : ControllerBase
         var libraries = await provider.GetLibrariesAsync(configJson);
 
         return Ok(libraries.Select(l => new MediaLibraryDto(
-            l.Id, l.Name, l.Type, l.ItemCount, l.ThumbnailUrl)).ToList());
+            l.Id, l.Name, l.Type, l.ItemCount,
+            RewriteThumbnailUrl(l.ThumbnailUrl, serverId, connectionId))).ToList());
     }
 
     [HttpGet("{connectionId}/libraries/{libraryId}/items")]
@@ -213,7 +214,7 @@ public class MediaProvidersController : ControllerBase
         var configJson = _protector.Decrypt(connection.ProviderConfigJson);
         var items = await provider.GetLibraryItemsAsync(configJson, libraryId, offset, limit);
 
-        return Ok(items.Select(MapToDto).ToList());
+        return Ok(items.Select(i => MapToDto(i, serverId, connectionId)).ToList());
     }
 
     [HttpGet("{connectionId}/search")]
@@ -233,7 +234,7 @@ public class MediaProvidersController : ControllerBase
         var configJson = _protector.Decrypt(connection.ProviderConfigJson);
         var items = await provider.SearchItemsAsync(configJson, query, library);
 
-        return Ok(items.Select(MapToDto).ToList());
+        return Ok(items.Select(i => MapToDto(i, serverId, connectionId)).ToList());
     }
 
     [HttpGet("{connectionId}/items/{itemId}/children")]
@@ -251,7 +252,7 @@ public class MediaProvidersController : ControllerBase
         var configJson = _protector.Decrypt(connection.ProviderConfigJson);
         var children = await provider.GetItemChildrenAsync(configJson, itemId);
 
-        return Ok(children.Select(MapToDto).ToList());
+        return Ok(children.Select(i => MapToDto(i, serverId, connectionId)).ToList());
     }
 
     [HttpGet("{connectionId}/items/{itemId}")]
@@ -270,7 +271,7 @@ public class MediaProvidersController : ControllerBase
         var item = await provider.GetItemDetailsAsync(configJson, itemId);
         if (item == null) return NotFound();
 
-        return Ok(MapToDto(item));
+        return Ok(MapToDto(item, serverId, connectionId));
     }
 
     [HttpGet("{connectionId}/items/{itemId}/playback")]
@@ -539,8 +540,119 @@ public class MediaProvidersController : ControllerBase
         return proxyUrl;
     }
 
-    private static MediaItemDto MapToDto(MediaItem item) => new(
-        item.Id, item.Title, item.Type, item.Summary, item.ThumbnailUrl,
+    [HttpGet("youtube/resolve")]
+    public async Task<ActionResult<YouTubeResolveDto>> ResolveYouTubeUrl(Guid serverId, [FromQuery] string url)
+    {
+        if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
+
+        var provider = _providerFactory.GetProvider(MediaProviderType.YouTube) as YouTubeMediaProvider;
+        if (provider == null) return BadRequest("YouTube provider not available");
+
+        var result = await provider.ResolveUrlAsync(url);
+        if (result == null) return BadRequest("Invalid YouTube URL");
+
+        // Auto-create or reuse YouTube connection for this server
+        var connection = await _db.MediaProviderConnections
+            .FirstOrDefaultAsync(c => c.ServerId == serverId && c.ProviderType == MediaProviderType.YouTube);
+
+        if (connection == null)
+        {
+            connection = new MediaProviderConnection
+            {
+                Id = Guid.NewGuid(),
+                ServerId = serverId,
+                OwnerId = UserId,
+                ProviderType = MediaProviderType.YouTube,
+                DisplayName = "YouTube",
+                ProviderConfigJson = "{}",
+                LinkedAt = DateTime.UtcNow,
+                LastValidatedAt = DateTime.UtcNow
+            };
+            _db.MediaProviderConnections.Add(connection);
+            await _db.SaveChangesAsync();
+
+            var connDto = new MediaProviderConnectionDto(
+                connection.Id, connection.ServerId, connection.OwnerId,
+                connection.ProviderType.ToString(), connection.DisplayName,
+                connection.LinkedAt, connection.LastValidatedAt);
+            await _hub.Clients.Group($"server:{serverId}").SendAsync("MediaProviderLinked", connDto);
+        }
+
+        var (videoId, title, thumbnailUrl) = result.Value;
+        return Ok(new YouTubeResolveDto(connection.Id, videoId, title, thumbnailUrl));
+    }
+
+    [AllowAnonymous]
+    [HttpGet("{connectionId}/thumb")]
+    public async Task<IActionResult> ThumbnailProxy(Guid serverId, Guid connectionId,
+        [FromQuery] string path, [FromQuery] string? token = null)
+    {
+        // Auth check (same pattern as HlsProxy)
+        string? userId = null;
+        if (!string.IsNullOrEmpty(token))
+        {
+            try
+            {
+                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                var jwtToken = tokenHandler.ReadJwtToken(token);
+                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            }
+            catch { return Unauthorized(); }
+        }
+        else
+        {
+            userId = UserId;
+        }
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+        if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
+
+        var connection = await _db.MediaProviderConnections
+            .FirstOrDefaultAsync(c => c.Id == connectionId && c.ServerId == serverId);
+        if (connection == null) return NotFound();
+
+        var configJson = _protector.Decrypt(connection.ProviderConfigJson);
+        var configDoc = JsonDocument.Parse(configJson);
+        var serverUrl = configDoc.RootElement.GetProperty("serverUrl").GetString()!.TrimEnd('/');
+        var plexToken = configDoc.RootElement.GetProperty("authToken").GetString()!;
+
+        var plexUrl = $"{serverUrl}{path}";
+        if (!plexUrl.Contains("X-Plex-Token"))
+            plexUrl += (plexUrl.Contains('?') ? "&" : "?") + $"X-Plex-Token={plexToken}";
+
+        using var httpClient = new HttpClient();
+        try
+        {
+            var response = await httpClient.GetAsync(plexUrl, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode);
+
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
+            Response.ContentType = contentType;
+            if (response.Content.Headers.ContentLength.HasValue)
+                Response.ContentLength = response.Content.Headers.ContentLength.Value;
+
+            // Cache thumbnails for 1 hour
+            Response.Headers["Cache-Control"] = "private, max-age=3600";
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            await stream.CopyToAsync(Response.Body);
+            return new EmptyResult();
+        }
+        catch
+        {
+            return StatusCode(500, "Failed to proxy thumbnail");
+        }
+    }
+
+    private static string? RewriteThumbnailUrl(string? thumbPath, Guid serverId, Guid connectionId)
+    {
+        if (string.IsNullOrEmpty(thumbPath)) return null;
+        return $"/api/servers/{serverId}/media-providers/{connectionId}/thumb?path={Uri.EscapeDataString(thumbPath)}";
+    }
+
+    private static MediaItemDto MapToDto(MediaItem item, Guid serverId, Guid connectionId) => new(
+        item.Id, item.Title, item.Type, item.Summary,
+        RewriteThumbnailUrl(item.ThumbnailUrl, serverId, connectionId),
         item.DurationMs, item.Year, item.ParentTitle, item.GrandparentTitle,
         item.Index, item.ParentIndex);
 }

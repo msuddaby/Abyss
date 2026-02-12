@@ -16,6 +16,7 @@ public class MediaProviderFactory
         return type switch
         {
             MediaProviderType.Plex => _serviceProvider.GetService<PlexMediaProvider>(),
+            MediaProviderType.YouTube => _serviceProvider.GetService<YouTubeMediaProvider>(),
             _ => null
         };
     }

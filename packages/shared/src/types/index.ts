@@ -316,6 +316,14 @@ export interface WatchParty {
   lastSyncAt: string;
   queue: QueueItem[];
   startedAt: string;
+  providerType?: string;
+}
+
+export interface YouTubeResolveResult {
+  connectionId: string;
+  videoId: string;
+  title: string;
+  thumbnailUrl: string;
 }
 
 export const Permission = {

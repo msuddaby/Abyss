@@ -15,12 +15,14 @@ interface Props {
   formatTime: (ms: number) => string;
   volume: number;
   onVolumeChange: (volume: number) => void;
+  onPiP?: () => void;
+  isPiP?: boolean;
 }
 
 export default function WatchPartyControls({
   isHost, isPlaying, currentTime, duration, title,
   onPlay, onPause, onSeek, onStop, onToggleQueue, hasQueue, formatTime,
-  volume, onVolumeChange,
+  volume, onVolumeChange, onPiP, isPiP,
 }: Props) {
   const seekBarRef = useRef<HTMLDivElement>(null);
   const [showVolume, setShowVolume] = useState(false);
@@ -96,6 +98,13 @@ export default function WatchPartyControls({
           <span className="wp-title" title={title}>{title}</span>
         </div>
         <div className="wp-controls-right">
+          {onPiP && (
+            <button className={`wp-ctrl-btn wp-pip-btn${isPiP ? ' active' : ''}`} onClick={onPiP} title={isPiP ? 'Exit Picture-in-Picture' : 'Picture-in-Picture'}>
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"/>
+              </svg>
+            </button>
+          )}
           <button className="wp-ctrl-btn" onClick={onToggleQueue} title="Queue">
             📋{hasQueue ? ' •' : ''}
           </button>

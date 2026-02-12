@@ -96,9 +96,13 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
                 </span>
                 <span className="participant-name">{state.displayName}</span>
                 <div className="voice-participant-right">
-                  {ttsUsers.has(userId) && <span className="tts-badge">TTS</span>}
-                  {channelCameras?.has(userId) && <span className="camera-badge">CAM</span>}
-                  {channelSharers?.has(userId) && <span className="live-badge">LIVE</span>}
+                  {(ttsUsers.has(userId) || channelCameras?.has(userId) || channelSharers?.has(userId)) && (
+                    <div className="voice-badges">
+                      {channelSharers?.has(userId) && <span className="voice-badge live">LIVE</span>}
+                      {channelCameras?.has(userId) && <span className="voice-badge cam">CAM</span>}
+                      {ttsUsers.has(userId) && <span className="voice-badge tts">TTS</span>}
+                    </div>
+                  )}
                   {showModeration && (
                     <div className="voice-participant-actions">
                       <button

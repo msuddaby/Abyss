@@ -19,6 +19,7 @@ public class WatchPartyState
     public DateTime LastSyncAt { get; set; } = DateTime.UtcNow;
     public List<QueueItemDto> Queue { get; set; } = new();
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+    public string? ProviderType { get; set; }
 }
 
 public class WatchPartyService
