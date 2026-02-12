@@ -192,6 +192,23 @@ export interface CustomEmoji {
   createdAt: string;
 }
 
+export type FriendshipStatus = 'Pending' | 'Accepted' | 'Declined';
+
+export interface Friendship {
+  id: string;
+  user: User;
+  status: string;
+  createdAt: string;
+  acceptedAt?: string;
+}
+
+export interface FriendRequest {
+  id: string;
+  user: User;
+  isOutgoing: boolean;
+  createdAt: string;
+}
+
 export interface DmChannel {
   id: string;
   otherUser: User;

@@ -33,6 +33,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
     public DbSet<MediaProviderConnection> MediaProviderConnections => Set<MediaProviderConnection>();
     public DbSet<WatchParty> WatchParties => Set<WatchParty>();
+    public DbSet<Friendship> Friendships => Set<Friendship>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -397,5 +398,25 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<WatchParty>()
             .HasIndex(wp => wp.ChannelId)
             .IsUnique();
+
+        // Friendship
+        builder.Entity<Friendship>()
+            .HasOne(f => f.Requester)
+            .WithMany()
+            .HasForeignKey(f => f.RequesterId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<Friendship>()
+            .HasOne(f => f.Addressee)
+            .WithMany()
+            .HasForeignKey(f => f.AddresseeId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        builder.Entity<Friendship>()
+            .HasIndex(f => new { f.RequesterId, f.AddresseeId })
+            .IsUnique();
+
+        builder.Entity<Friendship>()
+            .HasIndex(f => f.AddresseeId);
     }
 }

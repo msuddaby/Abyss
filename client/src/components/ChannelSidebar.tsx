@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
@@ -15,6 +15,7 @@ import EditChannelModal from './EditChannelModal';
 import ChannelPermissionsModal from './ChannelPermissionsModal';
 import ServerNotificationModal from './ServerNotificationModal';
 import ChannelNotificationModal from './ChannelNotificationModal';
+import FriendsList from './FriendsList';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels, leaveServer } = useServerStore();
@@ -50,6 +51,8 @@ export default function ChannelSidebar() {
   const dmSearchTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dmSearchInputRef = useRef<HTMLInputElement>(null);
   const openContextMenu = useContextMenuStore((s) => s.open);
+  const [dmTab, setDmTab] = useState<'messages' | 'friends'>('messages');
+  const pendingRequestCount = useFriendStore((s) => s.requests.filter((r) => !r.isOutgoing).length);
 
   const currentMember = members.find((m) => m.userId === user?.id);
   const canManageChannels = currentMember ? hasPermission(currentMember, Permission.ManageChannels) : false;
@@ -151,83 +154,97 @@ export default function ChannelSidebar() {
     return (
       <div className="channel-sidebar">
         <div className="channel-sidebar-header">
-          <span className="server-name">Direct Messages</span>
-          <button
-            className="new-dm-btn"
-            onClick={() => { setShowNewDm(!showNewDm); setTimeout(() => dmSearchInputRef.current?.focus(), 0); }}
-            title="New Message"
-          >+</button>
+          <div className="dm-tabs">
+            <button className={`dm-tab${dmTab === 'messages' ? ' active' : ''}`} onClick={() => setDmTab('messages')}>Messages</button>
+            <button className={`dm-tab${dmTab === 'friends' ? ' active' : ''}`} onClick={() => setDmTab('friends')}>
+              Friends
+              {pendingRequestCount > 0 && <span className="friend-request-badge">{pendingRequestCount}</span>}
+            </button>
+          </div>
+          {dmTab === 'messages' && (
+            <button
+              className="new-dm-btn"
+              onClick={() => { setShowNewDm(!showNewDm); setTimeout(() => dmSearchInputRef.current?.focus(), 0); }}
+              title="New Message"
+            >+</button>
+          )}
         </div>
-        {showNewDm && (
-          <div className="dm-search-container">
-            <input
-              ref={dmSearchInputRef}
-              className="dm-search-input"
-              type="text"
-              placeholder="Find or start a conversation"
-              value={dmSearchQuery}
-              onChange={(e) => handleDmSearch(e.target.value)}
-              autoFocus
-            />
-            {dmSearchQuery.trim() && (
-              <div className="dm-search-results">
-                {dmSearching && <div className="dm-search-empty">Searching...</div>}
-                {!dmSearching && dmSearchResults.length === 0 && <div className="dm-search-empty">No users found</div>}
-                {dmSearchResults.map((u) => (
-                  <button key={u.id} className="dm-search-result-item" onClick={() => handleSelectUser(u)}>
-                    <div className="dm-avatar">
-                      {u.avatarUrl ? (
-                        <img src={u.avatarUrl.startsWith('http') ? u.avatarUrl : `${getApiBase()}${u.avatarUrl}`} alt={u.displayName} />
-                      ) : (
-                        <span>{u.displayName.charAt(0).toUpperCase()}</span>
-                      )}
-                    </div>
-                    <div className="dm-search-result-info">
-                      <span className="dm-search-result-name">{u.displayName}</span>
-                      <span className="dm-search-result-username">{u.username}</span>
-                    </div>
-                  </button>
-                ))}
+        {dmTab === 'messages' ? (
+          <>
+            {showNewDm && (
+              <div className="dm-search-container">
+                <input
+                  ref={dmSearchInputRef}
+                  className="dm-search-input"
+                  type="text"
+                  placeholder="Find or start a conversation"
+                  value={dmSearchQuery}
+                  onChange={(e) => handleDmSearch(e.target.value)}
+                  autoFocus
+                />
+                {dmSearchQuery.trim() && (
+                  <div className="dm-search-results">
+                    {dmSearching && <div className="dm-search-empty">Searching...</div>}
+                    {!dmSearching && dmSearchResults.length === 0 && <div className="dm-search-empty">No users found</div>}
+                    {dmSearchResults.map((u) => (
+                      <button key={u.id} className="dm-search-result-item" onClick={() => handleSelectUser(u)}>
+                        <div className="dm-avatar">
+                          {u.avatarUrl ? (
+                            <img src={u.avatarUrl.startsWith('http') ? u.avatarUrl : `${getApiBase()}${u.avatarUrl}`} alt={u.displayName} />
+                          ) : (
+                            <span>{u.displayName.charAt(0).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="dm-search-result-info">
+                          <span className="dm-search-result-name">{u.displayName}</span>
+                          <span className="dm-search-result-username">{u.username}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
-        <div className="channel-list">
-          {dmChannels.length === 0 && !showNewDm && (
-            <div className="dm-empty">
-              <p style={{ color: 'var(--text-muted)', padding: '16px', fontSize: '13px' }}>No conversations yet. Click + to start one.</p>
-            </div>
-          )}
-          {dmChannels.map((dm) => {
-            const unread = dmUnreads.get(dm.id);
-            const hasUnread = unread?.hasUnread && activeDmChannel?.id !== dm.id;
-            const mentionCount = unread?.mentionCount || 0;
-            const isOnline = onlineUsers.has(dm.otherUser.id);
+            <div className="channel-list">
+              {dmChannels.length === 0 && !showNewDm && (
+                <div className="dm-empty">
+                  <p style={{ color: 'var(--text-muted)', padding: '16px', fontSize: '13px' }}>No conversations yet. Click + to start one.</p>
+                </div>
+              )}
+              {dmChannels.map((dm) => {
+                const unread = dmUnreads.get(dm.id);
+                const hasUnread = unread?.hasUnread && activeDmChannel?.id !== dm.id;
+                const mentionCount = unread?.mentionCount || 0;
+                const isOnline = onlineUsers.has(dm.otherUser.id);
 
-            return (
-              <div key={dm.id} className="channel-item-wrapper">
-                {hasUnread && <div className="channel-unread-dot" />}
-                <button
-                  className={`channel-item dm-channel-item ${activeDmChannel?.id === dm.id ? 'active' : ''}${hasUnread ? ' unread' : ''}`}
-                  onClick={() => handleDmClick(dm)}
-                >
-                  <div className="dm-avatar">
-                    {dm.otherUser.avatarUrl ? (
-                      <img src={dm.otherUser.avatarUrl.startsWith('http') ? dm.otherUser.avatarUrl : `${getApiBase()}${dm.otherUser.avatarUrl}`} alt={dm.otherUser.displayName} />
-                    ) : (
-                      <span>{dm.otherUser.displayName.charAt(0).toUpperCase()}</span>
-                    )}
-                    <span className={`presence-dot ${isOnline ? 'online' : 'offline'}`} />
+                return (
+                  <div key={dm.id} className="channel-item-wrapper">
+                    {hasUnread && <div className="channel-unread-dot" />}
+                    <button
+                      className={`channel-item dm-channel-item ${activeDmChannel?.id === dm.id ? 'active' : ''}${hasUnread ? ' unread' : ''}`}
+                      onClick={() => handleDmClick(dm)}
+                    >
+                      <div className="dm-avatar">
+                        {dm.otherUser.avatarUrl ? (
+                          <img src={dm.otherUser.avatarUrl.startsWith('http') ? dm.otherUser.avatarUrl : `${getApiBase()}${dm.otherUser.avatarUrl}`} alt={dm.otherUser.displayName} />
+                        ) : (
+                          <span>{dm.otherUser.displayName.charAt(0).toUpperCase()}</span>
+                        )}
+                        <span className={`presence-dot ${isOnline ? 'online' : 'offline'}`} />
+                      </div>
+                      <span className="dm-channel-name">{dm.otherUser.displayName}</span>
+                      {mentionCount > 0 && activeDmChannel?.id !== dm.id && (
+                        <span className="mention-badge">{mentionCount}</span>
+                      )}
+                    </button>
                   </div>
-                  <span className="dm-channel-name">{dm.otherUser.displayName}</span>
-                  {mentionCount > 0 && activeDmChannel?.id !== dm.id && (
-                    <span className="mention-badge">{mentionCount}</span>
-                  )}
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <FriendsList />
+        )}
         <VoiceControls />
         {user && (
           <UserBar

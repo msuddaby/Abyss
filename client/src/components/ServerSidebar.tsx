@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useServerStore, useDmStore, useUnreadStore, useAuthStore, getApiBase, hasPermission, Permission } from '@abyss/shared';
+import { useServerStore, useDmStore, useFriendStore, useUnreadStore, useAuthStore, getApiBase, hasPermission, Permission } from '@abyss/shared';
 import CreateServerModal from './CreateServerModal';
 import JoinServerModal from './JoinServerModal';
 import ServerSettingsModal from './ServerSettingsModal';
@@ -13,6 +13,7 @@ export default function ServerSidebar() {
   const { isDmMode, enterDmMode, exitDmMode, fetchDmChannels } = useDmStore();
   const serverUnreads = useUnreadStore((s) => s.serverUnreads);
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
+  const pendingFriendRequests = useFriendStore((s) => s.requests.filter((r) => !r.isOutgoing).length);
   const currentUser = useAuthStore((s) => s.user);
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
@@ -33,6 +34,9 @@ export default function ServerSidebar() {
       if (val.hasUnread) hasUnread = true;
       mentionCount += val.mentionCount;
     }
+    // Pending friend requests also show on the DM icon
+    if (pendingFriendRequests > 0) hasUnread = true;
+    mentionCount += pendingFriendRequests;
     return { hasUnread, mentionCount };
   })();
 

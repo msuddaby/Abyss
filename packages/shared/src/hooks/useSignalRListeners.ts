@@ -5,6 +5,7 @@ import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
 import { useUnreadStore } from '../stores/unreadStore.js';
 import { useDmStore } from '../stores/dmStore.js';
+import { useFriendStore } from '../stores/friendStore.js';
 import { useMessageStore } from '../stores/messageStore.js';
 import { useSearchStore } from '../stores/searchStore.js';
 import { useVoiceStore } from '../stores/voiceStore.js';
@@ -18,7 +19,7 @@ import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -148,6 +149,9 @@ export function refreshSignalRState(conn: HubConnection) {
   // Fetch user preferences from server (source of truth)
   useUserPreferencesStore.getState().fetchPreferences();
 
+  useFriendStore.getState().fetchFriends().catch(console.error);
+  useFriendStore.getState().fetchRequests().catch(console.error);
+
   const server = useServerStore.getState().activeServer;
   if (server) {
     fetchServerState(conn, server.id);
@@ -190,6 +194,7 @@ export function useSignalRListeners() {
         'ServerDeleted', 'ServerUpdated',
         'NewUnreadMessage', 'MentionReceived',
         'DmChannelCreated',
+        'FriendRequestReceived', 'FriendRequestAccepted', 'FriendRemoved',
         'Error', 'ConfigUpdated',
         'ServerDefaultNotificationLevelChanged', 'NotificationSettingsChanged', 'UserPreferencesChanged',
         'WatchPartyStarted', 'WatchPartyStopped', 'WatchPartyActive',
@@ -360,6 +365,18 @@ export function useSignalRListeners() {
 
       conn.on('DmChannelCreated', (dm: DmChannel) => {
         useDmStore.getState().addDmChannelLocal(dm);
+      });
+
+      conn.on('FriendRequestReceived', (request: FriendRequest) => {
+        useFriendStore.getState().addRequestLocal(request);
+      });
+
+      conn.on('FriendRequestAccepted', (friendship: Friendship) => {
+        useFriendStore.getState().acceptRequestLocal(friendship);
+      });
+
+      conn.on('FriendRemoved', (friendshipId: string) => {
+        useFriendStore.getState().removeFriendLocal(friendshipId);
       });
 
       conn.on('NewUnreadMessage', (channelId: string, serverId: string | null) => {

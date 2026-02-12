@@ -46,17 +46,35 @@ public class DmController : ControllerBase
         return Ok(result);
     }
 
-    // TODO: this is wildly inefficient.
-    // TODO: also allows for searching by user id which is dumb
-    // TODO: ALSO allows searching for literally anyone, which is a privacy issue
-    // TODO: Probably should add a friend system or at least only search for users who share a server with you.
     [HttpGet("search")]
     public async Task<ActionResult<List<UserDto>>> SearchUsers([FromQuery] string q)
     {
         if (string.IsNullOrWhiteSpace(q) || q.Length < 1) return Ok(new List<UserDto>());
 
+        // Get friend IDs (accepted friendships)
+        var friendIds = await _db.Friendships
+            .Where(f => f.Status == FriendshipStatus.Accepted && (f.RequesterId == UserId || f.AddresseeId == UserId))
+            .Select(f => f.RequesterId == UserId ? f.AddresseeId : f.RequesterId)
+            .ToListAsync();
+
+        // Get IDs of users who share at least one server
+        var myServerIds = await _db.ServerMembers
+            .Where(sm => sm.UserId == UserId)
+            .Select(sm => sm.ServerId)
+            .ToListAsync();
+
+        var sharedServerUserIds = await _db.ServerMembers
+            .Where(sm => myServerIds.Contains(sm.ServerId) && sm.UserId != UserId)
+            .Select(sm => sm.UserId)
+            .Distinct()
+            .ToListAsync();
+
+        // Union of friend IDs and shared-server member IDs
+        var allowedIds = friendIds.Union(sharedServerUserIds).ToHashSet();
+
+        var lowerQ = q.ToLower();
         var users = await _db.Users
-            .Where(u => u.Id != UserId && (u.DisplayName.ToLower().Contains(q.ToLower()) || u.UserName!.ToLower().Contains(q.ToLower())))
+            .Where(u => allowedIds.Contains(u.Id) && (u.DisplayName.ToLower().Contains(lowerQ) || u.UserName!.ToLower().Contains(lowerQ)))
             .Take(10)
             .Select(u => new UserDto(u.Id, u.UserName!, u.DisplayName, u.AvatarUrl, u.Status, u.Bio))
             .ToListAsync();
@@ -88,6 +106,10 @@ public class DmController : ControllerBase
             var existingOtherDto = new UserDto(existingOther.Id, existingOther.UserName!, existingOther.DisplayName, existingOther.AvatarUrl, existingOther.Status, existingOther.Bio);
             return Ok(new DmChannelDto(existing.Id, existingOtherDto, existing.LastMessageAt, existing.LastMessageAt ?? DateTime.UtcNow));
         }
+
+        // Only check restrictions when creating a NEW DM
+        if (!await CanDmUser(userId))
+            return BadRequest("You can only message friends or users in shared servers");
 
         // Create new DM channel
         var channel = new Channel
@@ -121,5 +143,26 @@ public class DmController : ControllerBase
         await _hub.Clients.Group($"user:{userId}").SendAsync("DmChannelCreated", recipientDmDto);
 
         return Ok(dmDto);
+    }
+
+    private async Task<bool> CanDmUser(string targetUserId)
+    {
+        // Check 1: accepted friendship in either direction
+        var isFriend = await _db.Friendships.AnyAsync(f =>
+            f.Status == FriendshipStatus.Accepted &&
+            ((f.RequesterId == UserId && f.AddresseeId == targetUserId) ||
+             (f.RequesterId == targetUserId && f.AddresseeId == UserId)));
+        if (isFriend) return true;
+
+        // Check 2: share at least one server
+        var myServerIds = await _db.ServerMembers
+            .Where(sm => sm.UserId == UserId)
+            .Select(sm => sm.ServerId)
+            .ToListAsync();
+
+        var sharesServer = await _db.ServerMembers
+            .AnyAsync(sm => myServerIds.Contains(sm.ServerId) && sm.UserId == targetUserId);
+
+        return sharesServer;
     }
 }

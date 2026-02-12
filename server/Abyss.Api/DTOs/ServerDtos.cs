@@ -38,6 +38,8 @@ public record ServerUnreadDto(Guid ServerId, bool HasUnread, int MentionCount);
 public record NotificationDto(Guid Id, Guid MessageId, Guid ChannelId, Guid? ServerId, string Type, DateTime CreatedAt);
 public record CustomEmojiDto(Guid Id, Guid ServerId, string Name, string ImageUrl, string CreatedById, DateTime CreatedAt);
 public record RenameEmojiRequest(string Name);
+public record FriendshipDto(Guid Id, UserDto User, string Status, DateTime CreatedAt, DateTime? AcceptedAt);
+public record FriendRequestDto(Guid Id, UserDto User, bool IsOutgoing, DateTime CreatedAt);
 public record DmChannelDto(Guid Id, UserDto OtherUser, DateTime? LastMessageAt, DateTime CreatedAt);
 public record DmUnreadDto(Guid ChannelId, bool HasUnread, int MentionCount);
 public record SearchResultDto(MessageDto Message, string ChannelName);

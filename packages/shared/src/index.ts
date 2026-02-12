@@ -20,6 +20,7 @@ export { useVoiceStore, hydrateVoiceStore } from './stores/voiceStore.js';
 export { usePresenceStore } from './stores/presenceStore.js';
 export { useUnreadStore } from './stores/unreadStore.js';
 export { useDmStore } from './stores/dmStore.js';
+export { useFriendStore } from './stores/friendStore.js';
 export { useSearchStore } from './stores/searchStore.js';
 export { useSignalRStore } from './stores/signalrStore.js';
 export { useAppConfigStore } from './stores/appConfigStore.js';
