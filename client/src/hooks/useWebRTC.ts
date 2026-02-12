@@ -139,6 +139,28 @@ function stopStatsCollection() {
 // ICE reconnection timers per peer
 const iceReconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
+/**
+ * Fix DTLS role in answer SDP for renegotiation on existing connections.
+ * Chrome throws "Failed to set SSL role for the transport" when the answer's
+ * a=setup: line conflicts with the established DTLS transport role — this
+ * happens when offer direction flips (the original answerer becomes the offerer).
+ */
+function fixDtlsRoleInAnswerSdp(pc: RTCPeerConnection, answerSdp: string): string {
+  const prevLocal = pc.currentLocalDescription;
+  if (!prevLocal) return answerSdp;
+
+  const localSetupMatch = prevLocal.sdp.match(/a=setup:(\w+)/);
+  if (!localSetupMatch) return answerSdp;
+
+  const ourPrevRole = localSetupMatch[1];
+  // actpass or passive in our prev local → we were the DTLS server
+  // active → we were the DTLS client
+  const weAreServer = ourPrevRole === "actpass" || ourPrevRole === "passive";
+  const requiredRemoteRole = weAreServer ? "active" : "passive";
+
+  return answerSdp.replace(/a=setup:\w+/g, `a=setup:${requiredRemoteRole}`);
+}
+
 // Signaling queue — serializes WebRTC signaling operations per peer to prevent races
 const signalingQueues: Map<string, Promise<void>> = new Map();
 
@@ -1699,8 +1721,9 @@ function setupSignalRListeners() {
           console.warn(`Ignoring stale answer from ${fromUserId} (state: ${pc.signalingState})`);
           return;
         }
+        const fixedSdp = fixDtlsRoleInAnswerSdp(pc, data.sdp);
         await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+          new RTCSessionDescription({ type: "answer", sdp: fixedSdp }),
         );
         await applyPendingCandidates(fromUserId);
       });

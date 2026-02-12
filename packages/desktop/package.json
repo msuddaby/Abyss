@@ -1,7 +1,7 @@
 {
   "name": "abyss-desktop",
   "productName": "Abyss",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Abyss Desktop - Electron wrapper for Abyss web client",
   "main": "dist/main/main.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "build": "tsc",
     "rebuild": "electron-rebuild",
     "postinstall": "electron-rebuild",
-    "make": "tsc && electron-forge make",
+    "make": "cd ../../client && ELECTRON=true npx vite build && cd ../packages/desktop && tsc && electron-forge make",
     "package": "electron-forge package"
   },
   "keywords": [],

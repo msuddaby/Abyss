@@ -43,7 +43,7 @@ export default function MessageList() {
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
-    incomingSoundRef.current = new Audio("/sounds/message-sent.mp3");
+    incomingSoundRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/message-sent.mp3`);
     incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
     const handler = async (message: Message) => {
