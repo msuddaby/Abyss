@@ -13,10 +13,12 @@ import { useToastStore } from '../stores/toastStore.js';
 import { useAppConfigStore } from '../stores/appConfigStore.js';
 import { useNotificationSettingsStore } from '../stores/notificationSettingsStore.js';
 import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
+import { useWatchPartyStore } from '../stores/watchPartyStore.js';
+import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -113,9 +115,15 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
     useServerStore.getState().setVoiceChannelCameras(data);
   }).catch(console.error);
 
+  conn.invoke('GetServerWatchParties', serverId).then((data: Record<string, string>) => {
+    useServerStore.getState().setVoiceChannelWatchParties(data);
+  }).catch(console.error);
+
   conn.invoke('GetOnlineUsers', serverId).then((userIds: string[]) => {
     usePresenceStore.getState().setOnlineUsers(userIds);
   }).catch(console.error);
+
+  useMediaProviderStore.getState().fetchConnections(serverId);
 
   conn.invoke('GetUnreadState', serverId).then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
     useUnreadStore.getState().setChannelUnreads(serverId, unreads);
@@ -184,6 +192,10 @@ export function useSignalRListeners() {
         'DmChannelCreated',
         'Error', 'ConfigUpdated',
         'ServerDefaultNotificationLevelChanged', 'NotificationSettingsChanged', 'UserPreferencesChanged',
+        'WatchPartyStarted', 'WatchPartyStopped', 'WatchPartyActive',
+        'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged',
+        'WatchPartyStartedInChannel', 'WatchPartyStoppedInChannel',
+        'MediaProviderLinked', 'MediaProviderUnlinked',
       ];
       for (const e of events) conn.off(e);
 
@@ -458,6 +470,51 @@ export function useSignalRListeners() {
       });
       conn.on('ReactionRemoved', (messageId: string, userId: string, emoji: string) => {
         vcStore().removeReaction(messageId, userId, emoji);
+      });
+
+      // Watch party event handlers
+      conn.on('WatchPartyStarted', (party: WatchParty) => {
+        useWatchPartyStore.getState().setActiveParty(party);
+      });
+
+      conn.on('WatchPartyStopped', (_channelId: string) => {
+        useWatchPartyStore.getState().setActiveParty(null);
+      });
+
+      conn.on('WatchPartyActive', (party: WatchParty) => {
+        useWatchPartyStore.getState().setActiveParty(party);
+      });
+
+      conn.on('PlaybackCommand', (command: string, timeMs: number) => {
+        useWatchPartyStore.getState().updatePlaybackState(timeMs, command !== 'pause');
+      });
+
+      conn.on('SyncPosition', (timeMs: number, isPlaying: boolean) => {
+        useWatchPartyStore.getState().updatePlaybackState(timeMs, isPlaying);
+      });
+
+      conn.on('QueueUpdated', (queue: QueueItem[]) => {
+        useWatchPartyStore.getState().setQueue(queue);
+      });
+
+      conn.on('WatchPartyHostChanged', (newHostUserId: string) => {
+        useWatchPartyStore.getState().updateHost(newHostUserId);
+      });
+
+      conn.on('WatchPartyStartedInChannel', (channelId: string, itemTitle: string) => {
+        useServerStore.getState().watchPartyStartedInChannel(channelId, itemTitle);
+      });
+
+      conn.on('WatchPartyStoppedInChannel', (channelId: string) => {
+        useServerStore.getState().watchPartyStoppedInChannel(channelId);
+      });
+
+      conn.on('MediaProviderLinked', (connection: MediaProviderConnection) => {
+        useMediaProviderStore.getState().addConnection(connection);
+      });
+
+      conn.on('MediaProviderUnlinked', (connectionId: string) => {
+        useMediaProviderStore.getState().removeConnection(connectionId);
       });
 
       refreshSignalRState(conn);

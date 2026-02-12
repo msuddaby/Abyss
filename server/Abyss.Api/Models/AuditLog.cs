@@ -21,7 +21,11 @@ public enum AuditAction
     ServerUpdated,
     MemberLeft,
     MessagePinned,
-    MessageUnpinned
+    MessageUnpinned,
+    MediaProviderLinked,
+    MediaProviderUnlinked,
+    WatchPartyStarted,
+    WatchPartyStopped
 }
 
 public class AuditLog

@@ -13,6 +13,7 @@ using Abyss.Api.Data;
 using Abyss.Api.Hubs;
 using Abyss.Api.Models;
 using Abyss.Api.Services;
+using Abyss.Api.Services.MediaProviders;
 
 // Load env file from project root (.env.dev takes priority for local dev, then .env)
 // In Docker containers, env vars come from docker-compose env_file directive instead.
@@ -112,6 +113,13 @@ builder.Services.AddSingleton<VideoPosterService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
+
+// Watch party / media providers
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton<ProviderConfigProtector>();
+builder.Services.AddScoped<MediaProviderFactory>();
+builder.Services.AddSingleton<WatchPartyService>();
+builder.Services.AddHttpClient<PlexMediaProvider>();
 
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>

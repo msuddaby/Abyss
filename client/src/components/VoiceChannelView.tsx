@@ -1,17 +1,50 @@
-import { useRef, useEffect, useState } from 'react';
-import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { Component, useRef, useEffect, useState } from 'react';
+import type { ReactNode, ErrorInfo } from 'react';
+import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
+import WatchPartyPlayer from './WatchPartyPlayer';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
+
+class VoiceErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Voice UI error:', error, info.componentStack);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="vcv-error-fallback">
+          <p>Something went wrong in the voice UI.</p>
+          <button onClick={() => this.setState({ hasError: false })}>Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: boolean; version: number }) {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (!ref.current) return;
+    const video = ref.current;
+    if (!video) return;
     const stream = isLocal ? getLocalCameraStream() : getCameraVideoStream(userId);
-    if (stream && ref.current.srcObject !== stream) {
-      ref.current.srcObject = stream;
+    if (stream) {
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      // Clear srcObject when the last video track ends (e.g. camera stopped remotely)
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const onEnded = () => { video.srcObject = null; };
+        videoTrack.addEventListener('ended', onEnded);
+        return () => videoTrack.removeEventListener('ended', onEnded);
+      }
+    } else {
+      video.srcObject = null;
     }
   }, [userId, isLocal, version]);
 
@@ -26,7 +59,7 @@ function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: bool
   );
 }
 
-export default function VoiceChannelView() {
+function VoiceChannelViewInner() {
   const activeChannel = useServerStore((s) => s.activeChannel);
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
@@ -76,9 +109,12 @@ export default function VoiceChannelView() {
     }
   };
 
+  const activeParty = useWatchPartyStore((s) => s.activeParty);
+
   const isConnected = !!activeChannel && currentChannelId === activeChannel.id;
-  const isWatching = isConnected && watchingUserId !== null;
-  const isFocused = isConnected && focusedUserId !== null && !isWatching;
+  const hasWatchParty = isConnected && activeParty !== null;
+  const isWatching = isConnected && watchingUserId !== null && !hasWatchParty;
+  const isFocused = isConnected && focusedUserId !== null && !isWatching && !hasWatchParty;
   const channelUsers = activeChannel ? voiceChannelUsers.get(activeChannel.id) : undefined;
   const channelSharers = activeChannel ? voiceChannelSharers.get(activeChannel.id) : undefined;
   const canConnect = activeChannel ? hasChannelPermission(activeChannel.permissions, Permission.Connect) : false;
@@ -109,7 +145,9 @@ export default function VoiceChannelView() {
       {isConnected && connectionState === 'reconnecting' && (
         <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
       )}
-      {isWatching ? (
+      {hasWatchParty ? (
+        <WatchPartyPlayer />
+      ) : isWatching ? (
         <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>
           <div className="vcv-watching-main">
             <ScreenShareView />
@@ -318,5 +356,13 @@ export default function VoiceChannelView() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function VoiceChannelView() {
+  return (
+    <VoiceErrorBoundary>
+      <VoiceChannelViewInner />
+    </VoiceErrorBoundary>
   );
 }

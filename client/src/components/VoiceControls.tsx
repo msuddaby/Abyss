@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useVoiceStore, useServerStore, hasChannelPermission, Permission } from '@abyss/shared';
+import { useVoiceStore, useServerStore, useMediaProviderStore, useWatchPartyStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 
 function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
@@ -14,7 +14,7 @@ function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
 }
 
 export function formatKeybind(bind: string): string {
-  const isMac = navigator.platform.toUpperCase().includes('MAC');
+  const isMac = /mac|iphone|ipad|ipod/i.test(navigator.userAgent);
   return bind
     .split('+')
     .map((p) => {
@@ -36,15 +36,26 @@ export default function VoiceControls() {
   const toggleDeafen = useVoiceStore((s) => s.toggleDeafen);
   const connectionState = useVoiceStore((s) => s.connectionState);
 
+  const connections = useMediaProviderStore((s) => s.connections);
+  const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
+  const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
+
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
   const canStream = channel ? hasChannelPermission(channel.permissions, Permission.Stream) : false;
+  const hasProviders = connections.length > 0;
 
-  // Connection quality stats
+  // Connection quality stats — read cached stats from useWebRTC's collection interval
   const [stats, setStats] = useState<ConnectionStats>({ roundTripTime: null, packetLoss: null, jitter: null });
   useEffect(() => {
-    if (!currentChannelId) return;
-    const id = setInterval(() => setStats(getConnectionStats()), 3000);
+    if (!currentChannelId) {
+      setStats({ roundTripTime: null, packetLoss: null, jitter: null });
+      return;
+    }
+    // Read cached stats at half the collection rate to stay fresh without duplicating getStats() calls
+    const id = setInterval(() => setStats(getConnectionStats()), 5000);
+    // Read immediately on mount
+    setStats(getConnectionStats());
     return () => clearInterval(id);
   }, [currentChannelId]);
 
@@ -151,6 +162,15 @@ export default function VoiceControls() {
             title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
           >
             {isScreenShareLoading ? '⏳' : '🖥️'}
+          </button>
+        )}
+        {canStream && hasProviders && (
+          <button
+            className={`voice-ctrl-btn ${isBrowsingLibrary ? 'active' : ''}`}
+            onClick={() => setIsBrowsingLibrary(!isBrowsingLibrary)}
+            title="Watch Party"
+          >
+            🎬
           </button>
         )}
         <button className="voice-ctrl-btn disconnect" onClick={leaveVoice} title={`Disconnect (${formatKeybind(keybindDisconnect)})`}>

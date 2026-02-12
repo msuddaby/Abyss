@@ -31,6 +31,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<UserServerNotificationSetting> UserServerNotificationSettings => Set<UserServerNotificationSetting>();
     public DbSet<UserChannelNotificationSetting> UserChannelNotificationSettings => Set<UserChannelNotificationSetting>();
     public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
+    public DbSet<MediaProviderConnection> MediaProviderConnections => Set<MediaProviderConnection>();
+    public DbSet<WatchParty> WatchParties => Set<WatchParty>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -361,5 +363,39 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .HasOne(up => up.User)
             .WithMany()
             .HasForeignKey(up => up.UserId);
+
+        // MediaProviderConnection
+        builder.Entity<MediaProviderConnection>()
+            .HasOne(mpc => mpc.Server)
+            .WithMany()
+            .HasForeignKey(mpc => mpc.ServerId);
+
+        builder.Entity<MediaProviderConnection>()
+            .HasOne(mpc => mpc.Owner)
+            .WithMany()
+            .HasForeignKey(mpc => mpc.OwnerId);
+
+        builder.Entity<MediaProviderConnection>()
+            .HasIndex(mpc => new { mpc.ServerId, mpc.ProviderType });
+
+        // WatchParty
+        builder.Entity<WatchParty>()
+            .HasOne(wp => wp.Channel)
+            .WithMany()
+            .HasForeignKey(wp => wp.ChannelId);
+
+        builder.Entity<WatchParty>()
+            .HasOne(wp => wp.MediaProviderConnection)
+            .WithMany()
+            .HasForeignKey(wp => wp.MediaProviderConnectionId);
+
+        builder.Entity<WatchParty>()
+            .HasOne(wp => wp.HostUser)
+            .WithMany()
+            .HasForeignKey(wp => wp.HostUserId);
+
+        builder.Entity<WatchParty>()
+            .HasIndex(wp => wp.ChannelId)
+            .IsUnique();
     }
 }

@@ -22,15 +22,38 @@ export default function ScreenShareView() {
       ? getLocalScreenStream()
       : getScreenVideoStream(watchingUserId);
 
-    if (!stream) return;
+    if (!stream) {
+      video.srcObject = null;
+      return;
+    }
 
     video.srcObject = stream;
 
     const tryPlay = () => {
-      video.play().catch((err) => console.error('Screen share video play failed:', err));
+      // Check if stream and tracks are still active before playing
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack || videoTrack.readyState === 'ended') {
+        console.log('Screen share track ended, skipping play');
+        return;
+      }
+
+      // Check if video element is ready
+      if (video.readyState < 2) {
+        console.log('Video not ready yet, waiting for loadedmetadata');
+        return;
+      }
+
+      video.play().catch((err) => {
+        // Ignore abort errors - these happen when stream ends during play
+        if (err.name === 'AbortError') {
+          console.log('Screen share play aborted (stream likely ended)');
+        } else {
+          console.error('Screen share video play failed:', err);
+        }
+      });
     };
 
-    // Play immediately
+    // Play immediately (will skip if not ready and wait for loadedmetadata)
     tryPlay();
 
     // Retry on loadedmetadata in case the track wasn't producing frames yet
@@ -84,7 +107,7 @@ export default function ScreenShareView() {
             className="screen-share-video"
             autoPlay
             playsInline
-            muted={isWatchingSelf}
+            muted
           />
         </div>
         {otherSharers.length > 0 && (

@@ -27,6 +27,8 @@ export { useToastStore } from './stores/toastStore.js';
 export { useVoiceChatStore } from './stores/voiceChatStore.js';
 export { useNotificationSettingsStore } from './stores/notificationSettingsStore.js';
 export { useUserPreferencesStore } from './stores/userPreferencesStore.js';
+export { useMediaProviderStore } from './stores/mediaProviderStore.js';
+export { useWatchPartyStore } from './stores/watchPartyStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

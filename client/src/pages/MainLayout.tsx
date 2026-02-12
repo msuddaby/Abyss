@@ -10,8 +10,9 @@ import SearchPanel from '../components/SearchPanel';
 import PinnedMessagesModal from '../components/PinnedMessagesModal';
 import UpdateBanner from '../components/UpdateBanner';
 import VoiceChatOverlay from '../components/VoiceChatOverlay';
+import MediaLibraryBrowser from '../components/MediaLibraryBrowser';
 import ContextMenu from '../components/contextMenu/ContextMenu';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore } from '@abyss/shared';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 
 export default function MainLayout() {
@@ -24,6 +25,8 @@ export default function MainLayout() {
   const closeSearch = useSearchStore((s) => s.closeSearch);
   const signalRStatus = useSignalRStore((s) => s.status);
   const fetchConfig = useAppConfigStore((s) => s.fetchConfig);
+  const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
+  const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -159,6 +162,7 @@ export default function MainLayout() {
       {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : memberListVisible ? <MemberList /> : null)}
       <VoiceChatOverlay />
       <ContextMenu />
+      {isBrowsingLibrary && <MediaLibraryBrowser onClose={() => setIsBrowsingLibrary(false)} />}
     </div>
   );
 }

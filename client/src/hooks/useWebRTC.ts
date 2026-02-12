@@ -1,14 +1,17 @@
 import { useCallback, useEffect } from "react";
+import type { HubConnection } from "@microsoft/signalr";
 import {
   ensureConnected,
   getConnection,
   getTurnCredentials,
+  onReconnected,
   subscribeTurnCredentials,
   useVoiceStore,
   useAuthStore,
   useServerStore,
   useVoiceChatStore,
   useToastStore,
+  useWatchPartyStore,
 } from "@abyss/shared";
 
 const STUN_URL =
@@ -24,6 +27,17 @@ const ICE_RESTART_COOLDOWN = 30_000; // 30s minimum between restarts per peer
 // Flag to prevent the input device effect from re-obtaining a stream right after joinVoice
 let skipNextDeviceEffect = false;
 
+// Flag to buffer UserJoinedVoice events while waiting for initial VoiceChannelUsers
+let waitingForInitialParticipants = false;
+const INITIAL_PARTICIPANTS_TIMEOUT_MS = 5000;
+let initialParticipantsTimeout: ReturnType<typeof setTimeout> | null = null;
+// Buffered UserJoinedVoice events (userId -> displayName) while initial participant list is pending
+const bufferedUserJoinedVoiceEvents: Map<string, string> = new Map();
+// Flag indicating SignalR reconnected while tab was hidden and voice must be rejoined on visibility
+let pendingVisibilityRejoin = false;
+// Guard to prevent concurrent visibility-triggered rejoins
+let rejoinInProgress = false;
+
 // All state is module-level so it's shared across hook instances
 const peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
@@ -32,7 +46,7 @@ const audioElements: Map<string, HTMLAudioElement> = new Map();
 const screenAudioElements: Map<string, HTMLAudioElement> = new Map();
 const screenVideoStreams: Map<string, MediaStream> = new Map();
 const pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
-let listenersRegistered = false;
+let listenersRegisteredForConnection: HubConnection | null = null;
 let currentOutputDeviceId: string = "default";
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
@@ -42,7 +56,19 @@ const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 let cameraStream: MediaStream | null = null;
 const cameraVideoStreams: Map<string, MediaStream> = new Map(); // peerId → remote camera stream
 const cameraTrackSenders: Map<string, RTCRtpSender> = new Map(); // peerId → sender
-const pendingTrackTypes: Map<string, string[]> = new Map(); // peerId → FIFO queue of "camera"|"screen"
+type TrackInfoType = "camera" | "screen" | "screen-audio";
+interface PendingRemoteTrack {
+  track: MediaStreamTrack;
+  stream: MediaStream;
+  timeout: ReturnType<typeof setTimeout>;
+}
+const TRACK_INFO_WAIT_TIMEOUT_MS = 400;
+// peerId -> trackId -> track type
+const pendingTrackInfoById: Map<string, Map<string, TrackInfoType>> = new Map();
+// Backward-compat queue for track-info messages without trackId
+const pendingLegacyTrackTypes: Map<string, TrackInfoType[]> = new Map();
+// peerId -> trackId -> pending track waiting for matching track-info
+const pendingRemoteTracks: Map<string, Map<string, PendingRemoteTrack>> = new Map();
 
 // Per-peer GainNode chain for user volume control (0-200%)
 const gainNodes: Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; dest: MediaStreamAudioDestinationNode }> = new Map();
@@ -142,6 +168,10 @@ let analyserInterval: ReturnType<typeof setInterval> | null = null;
 const SPEAKING_THRESHOLD = 0.015;
 const INPUT_THRESHOLD_MIN = 0.005;
 const INPUT_THRESHOLD_MAX = 0.05;
+// Hysteresis for voice-activity gate: once mic opens, keep it open for this many ms
+// after RMS drops below threshold to avoid rapid toggling during natural speech pauses
+const VA_HOLD_OPEN_MS = 200;
+let vaLastAboveThresholdAt = 0;
 
 // Keep-alive interval to prevent browser from suspending audio
 let audioKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
@@ -451,9 +481,13 @@ function startAnalyserLoop() {
           const threshold =
             INPUT_THRESHOLD_MAX -
             (INPUT_THRESHOLD_MAX - INPUT_THRESHOLD_MIN) * sensitivity;
-          const enabled = !store.isMuted && rms >= threshold;
+          const now = Date.now();
+          const aboveThreshold = rms >= threshold;
+          if (aboveThreshold) vaLastAboveThresholdAt = now;
+          // Hold mic open for VA_HOLD_OPEN_MS after last above-threshold sample
+          const enabled = !store.isMuted && (now - vaLastAboveThresholdAt < VA_HOLD_OPEN_MS);
           localStream.getAudioTracks().forEach((track) => {
-            track.enabled = enabled;
+            if (track.enabled !== enabled) track.enabled = enabled;
           });
         }
       }
@@ -540,7 +574,10 @@ export function getLocalCameraStream(): MediaStream | null {
 export function applyUserVolume(peerId: string, volume: number) {
   const entry = gainNodes.get(peerId);
   if (entry) {
-    entry.gain.gain.value = volume / 100;
+    const now = entry.gain.context.currentTime;
+    entry.gain.gain.cancelScheduledValues(now);
+    entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
+    entry.gain.gain.linearRampToValueAtTime(volume / 100, now + 0.05);
   }
 }
 
@@ -602,11 +639,7 @@ async function recreatePeer(peerId: string) {
     if (cameraStream) {
       const camTrack = cameraStream.getVideoTracks()[0];
       if (camTrack) {
-        await conn.invoke(
-          "SendSignal",
-          peerId,
-          JSON.stringify({ type: "track-info", trackType: "camera" }),
-        );
+        await sendTrackInfo(conn, peerId, "camera", camTrack.id);
         const sender = pc.addTrack(camTrack, cameraStream);
         cameraTrackSenders.set(peerId, sender);
       }
@@ -662,6 +695,206 @@ async function restartIceForAllPeers() {
   for (const [peerId] of entries) {
     await restartIceForPeer(peerId);
   }
+}
+
+function queueTrackInfo(peerId: string, trackType: TrackInfoType, trackId?: string) {
+  if (trackId) {
+    if (!pendingTrackInfoById.has(peerId)) {
+      pendingTrackInfoById.set(peerId, new Map());
+    }
+    pendingTrackInfoById.get(peerId)!.set(trackId, trackType);
+    return;
+  }
+
+  if (!pendingLegacyTrackTypes.has(peerId)) {
+    pendingLegacyTrackTypes.set(peerId, []);
+  }
+  pendingLegacyTrackTypes.get(peerId)!.push(trackType);
+}
+
+function consumeTrackInfo(peerId: string, trackId: string): TrackInfoType | undefined {
+  const byId = pendingTrackInfoById.get(peerId);
+  if (byId?.has(trackId)) {
+    const trackType = byId.get(trackId)!;
+    byId.delete(trackId);
+    if (byId.size === 0) pendingTrackInfoById.delete(peerId);
+    return trackType;
+  }
+
+  const legacyQueue = pendingLegacyTrackTypes.get(peerId);
+  if (legacyQueue?.length) {
+    const trackType = legacyQueue.shift();
+    if (!legacyQueue.length) pendingLegacyTrackTypes.delete(peerId);
+    return trackType;
+  }
+
+  return undefined;
+}
+
+function clearPendingTrackStateForPeer(peerId: string) {
+  pendingTrackInfoById.delete(peerId);
+  pendingLegacyTrackTypes.delete(peerId);
+  const pendingTracks = pendingRemoteTracks.get(peerId);
+  if (pendingTracks) {
+    for (const entry of pendingTracks.values()) {
+      clearTimeout(entry.timeout);
+    }
+    pendingRemoteTracks.delete(peerId);
+  }
+}
+
+function clearAllPendingTrackState() {
+  pendingTrackInfoById.clear();
+  pendingLegacyTrackTypes.clear();
+  pendingRemoteTracks.forEach((tracks) => {
+    tracks.forEach((entry) => clearTimeout(entry.timeout));
+  });
+  pendingRemoteTracks.clear();
+}
+
+function inferVideoTrackType(peerId: string): TrackInfoType {
+  const store = useVoiceStore.getState();
+  if (store.watchingUserId === peerId && !screenVideoStreams.has(peerId)) {
+    console.warn(`track-info missing: inferring screen track from ${peerId} (watching)`);
+    return "screen";
+  }
+  if (
+    store.activeSharers.has(peerId) &&
+    !screenVideoStreams.has(peerId) &&
+    cameraVideoStreams.has(peerId)
+  ) {
+    console.warn(`track-info missing: inferring screen track from ${peerId} (sharer + has camera)`);
+    return "screen";
+  }
+
+  console.warn(`track-info missing: defaulting to camera track from ${peerId}`);
+  return "camera";
+}
+
+function applyIncomingRemoteTrack(
+  peerId: string,
+  track: MediaStreamTrack,
+  stream: MediaStream,
+  trackType?: TrackInfoType,
+) {
+  if (track.kind === "audio") {
+    const isScreenAudio = trackType === "screen-audio";
+    if (isScreenAudio) {
+      let audio = screenAudioElements.get(peerId);
+      if (!audio) {
+        audio = new Audio();
+        audio.autoplay = true;
+        audio.setAttribute("playsinline", "true");
+        audio.volume = 1.0;
+        screenAudioElements.set(peerId, audio);
+      }
+      applyOutputDevice(audio, currentOutputDeviceId);
+      audio.srcObject = stream;
+      audio.muted = useVoiceStore.getState().isDeafened;
+      audio
+        .play()
+        .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+        .catch((err) => {
+          console.error("Screen audio play failed:", err);
+          useVoiceStore.getState().setNeedsAudioUnlock(true);
+        });
+      return;
+    }
+
+    // Mic audio
+    let audio = audioElements.get(peerId);
+    if (!audio) {
+      audio = new Audio();
+      audio.autoplay = true;
+      audio.setAttribute("playsinline", "true");
+      audio.volume = 1.0;
+      audioElements.set(peerId, audio);
+    }
+    applyOutputDevice(audio, currentOutputDeviceId);
+
+    // Route through GainNode for per-user volume control (0-200%)
+    try {
+      const ctx = ensureAudioContext();
+      // Clean up previous gain chain for this peer
+      const prev = gainNodes.get(peerId);
+      if (prev) prev.source.disconnect();
+      const source = ctx.createMediaStreamSource(stream);
+      const gain = ctx.createGain();
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(gain);
+      gain.connect(dest);
+      const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
+      gain.gain.value = vol / 100;
+      gainNodes.set(peerId, { source, gain, dest });
+      audio.srcObject = dest.stream;
+    } catch (err) {
+      console.warn("GainNode chain failed, using raw stream:", err);
+      audio.srcObject = stream;
+    }
+
+    audio.muted = useVoiceStore.getState().isDeafened;
+    audio
+      .play()
+      .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+      .catch((err) => {
+        console.error("Audio play failed:", err);
+        useVoiceStore.getState().setNeedsAudioUnlock(true);
+      });
+    // Analyser uses original raw stream (unaffected by volume)
+    addAnalyser(peerId, stream);
+    return;
+  }
+
+  if (track.kind === "video") {
+    const resolvedType = trackType === "screen" ? "screen" : trackType === "camera" ? "camera" : inferVideoTrackType(peerId);
+    if (resolvedType === "screen") {
+      screenVideoStreams.set(peerId, stream);
+      useVoiceStore.getState().bumpScreenStreamVersion();
+    } else {
+      cameraVideoStreams.set(peerId, stream);
+      useVoiceStore.getState().bumpCameraStreamVersion();
+    }
+  }
+}
+
+function resolvePendingRemoteTrack(peerId: string, trackId: string) {
+  const pendingForPeer = pendingRemoteTracks.get(peerId);
+  const pendingTrack = pendingForPeer?.get(trackId);
+  if (!pendingTrack) return;
+
+  pendingForPeer!.delete(trackId);
+  if (!pendingForPeer!.size) pendingRemoteTracks.delete(peerId);
+
+  const trackType = consumeTrackInfo(peerId, trackId);
+  applyIncomingRemoteTrack(peerId, pendingTrack.track, pendingTrack.stream, trackType);
+}
+
+function queuePendingRemoteTrack(peerId: string, track: MediaStreamTrack, stream: MediaStream) {
+  if (!pendingRemoteTracks.has(peerId)) {
+    pendingRemoteTracks.set(peerId, new Map());
+  }
+  const pendingForPeer = pendingRemoteTracks.get(peerId)!;
+  const existing = pendingForPeer.get(track.id);
+  if (existing) clearTimeout(existing.timeout);
+
+  const timeout = setTimeout(() => {
+    resolvePendingRemoteTrack(peerId, track.id);
+  }, TRACK_INFO_WAIT_TIMEOUT_MS);
+
+  pendingForPeer.set(track.id, { track, stream, timeout });
+}
+
+async function sendTrackInfo(
+  conn: ReturnType<typeof getConnection>,
+  peerId: string,
+  trackType: TrackInfoType,
+  trackId: string,
+) {
+  await conn.invoke(
+    "SendSignal",
+    peerId,
+    JSON.stringify({ type: "track-info", trackType, trackId }),
+  );
 }
 
 function createPeerConnection(peerId: string): RTCPeerConnection {
@@ -738,121 +971,12 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       event.streams && event.streams.length > 0
         ? event.streams[0]
         : new MediaStream([track]);
-
-    if (track.kind === "audio") {
-      // Check if this is screen audio vs mic audio
-      const trackTypes = pendingTrackTypes.get(peerId);
-      const nextType = trackTypes?.[0];
-      const isScreenAudio = nextType === "screen-audio";
-      if (isScreenAudio) {
-        trackTypes!.shift();
-        if (!trackTypes!.length) pendingTrackTypes.delete(peerId);
-      }
-
-      if (isScreenAudio) {
-        // Screen/tab audio — play through a separate element so it doesn't
-        // overwrite the mic audio stream.
-        let audio = screenAudioElements.get(peerId);
-        if (!audio) {
-          audio = new Audio();
-          audio.autoplay = true;
-          audio.setAttribute("playsinline", "true");
-          audio.volume = 1.0;
-          screenAudioElements.set(peerId, audio);
-        }
-        applyOutputDevice(audio, currentOutputDeviceId);
-        audio.srcObject = stream;
-        audio.muted = useVoiceStore.getState().isDeafened;
-        audio
-          .play()
-          .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
-          .catch((err) => {
-            console.error("Screen audio play failed:", err);
-            useVoiceStore.getState().setNeedsAudioUnlock(true);
-          });
-      } else {
-        // Mic audio
-        let audio = audioElements.get(peerId);
-        if (!audio) {
-          audio = new Audio();
-          audio.autoplay = true;
-          audio.setAttribute("playsinline", "true");
-          audio.volume = 1.0;
-          audioElements.set(peerId, audio);
-        }
-        applyOutputDevice(audio, currentOutputDeviceId);
-
-        // Route through GainNode for per-user volume control (0-200%)
-        try {
-          const ctx = ensureAudioContext();
-          // Clean up previous gain chain for this peer
-          const prev = gainNodes.get(peerId);
-          if (prev) prev.source.disconnect();
-          const source = ctx.createMediaStreamSource(stream);
-          const gain = ctx.createGain();
-          const dest = ctx.createMediaStreamDestination();
-          source.connect(gain);
-          gain.connect(dest);
-          const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
-          gain.gain.value = vol / 100;
-          gainNodes.set(peerId, { source, gain, dest });
-          audio.srcObject = dest.stream;
-        } catch (err) {
-          console.warn("GainNode chain failed, using raw stream:", err);
-          audio.srcObject = stream;
-        }
-
-        audio.muted = useVoiceStore.getState().isDeafened;
-        audio
-          .play()
-          .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
-          .catch((err) => {
-            console.error("Audio play failed:", err);
-            useVoiceStore.getState().setNeedsAudioUnlock(true);
-          });
-        // Analyser uses original raw stream (unaffected by volume)
-        addAnalyser(peerId, stream);
-      }
-    } else if (track.kind === "video") {
-      const applyVideoTrack = () => {
-        const trackTypes = pendingTrackTypes.get(peerId);
-        let trackType = trackTypes?.shift();
-        if (!trackTypes?.length) pendingTrackTypes.delete(peerId);
-
-        // Fallback disambiguation if track-info was lost or raced
-        if (!trackType) {
-          const store = useVoiceStore.getState();
-          if (store.watchingUserId === peerId && !screenVideoStreams.has(peerId)) {
-            trackType = "screen";
-            console.warn(`track-info race: inferring screen track from ${peerId} (watching)`);
-          } else if (store.activeSharers.has(peerId) && !screenVideoStreams.has(peerId) && cameraVideoStreams.has(peerId)) {
-            trackType = "screen";
-            console.warn(`track-info race: inferring screen track from ${peerId} (sharer + has camera)`);
-          } else {
-            trackType = "camera";
-            console.warn(`track-info race: defaulting to camera track from ${peerId}`);
-          }
-        }
-
-        if (trackType === "screen") {
-          screenVideoStreams.set(peerId, stream);
-          useVoiceStore.getState().bumpScreenStreamVersion();
-        } else {
-          cameraVideoStreams.set(peerId, stream);
-          useVoiceStore.getState().bumpCameraStreamVersion();
-        }
-      };
-
-      // If track-info already arrived, process immediately
-      const trackTypes = pendingTrackTypes.get(peerId);
-      if (trackTypes && trackTypes.length > 0) {
-        applyVideoTrack();
-      } else {
-        // Brief delay to allow in-flight track-info signal to arrive via SignalR
-        // before falling back to heuristics
-        setTimeout(applyVideoTrack, 150);
-      }
+    const trackType = consumeTrackInfo(peerId, track.id);
+    if (trackType) {
+      applyIncomingRemoteTrack(peerId, track, stream, trackType);
+      return;
     }
+    queuePendingRemoteTrack(peerId, track, stream);
   };
 
   return pc;
@@ -866,21 +990,27 @@ function closePeer(peerId: string) {
   }
   const audio = audioElements.get(peerId);
   if (audio) {
+    audio.pause();
     audio.srcObject = null;
+    audio.remove();
     audioElements.delete(peerId);
   }
   const screenAudio = screenAudioElements.get(peerId);
   if (screenAudio) {
+    screenAudio.pause();
     screenAudio.srcObject = null;
+    screenAudio.remove();
     screenAudioElements.delete(peerId);
   }
   removeAnalyser(peerId);
   const gainEntry = gainNodes.get(peerId);
   if (gainEntry) { gainEntry.source.disconnect(); gainNodes.delete(peerId); }
-  screenVideoStreams.delete(peerId);
-  cameraVideoStreams.delete(peerId);
+  const hadScreen = screenVideoStreams.delete(peerId);
+  const hadCamera = cameraVideoStreams.delete(peerId);
+  if (hadScreen) useVoiceStore.getState().bumpScreenStreamVersion();
+  if (hadCamera) useVoiceStore.getState().bumpCameraStreamVersion();
   pendingCandidates.delete(peerId);
-  pendingTrackTypes.delete(peerId);
+  clearPendingTrackStateForPeer(peerId);
   screenTrackSenders.delete(peerId);
   cameraTrackSenders.delete(peerId);
   iceRestartInFlight.delete(peerId);
@@ -896,11 +1026,15 @@ function cleanupAll() {
   });
   peers.clear();
   audioElements.forEach((audio) => {
+    audio.pause();
     audio.srcObject = null;
+    audio.remove();
   });
   audioElements.clear();
   screenAudioElements.forEach((audio) => {
+    audio.pause();
     audio.srcObject = null;
+    audio.remove();
   });
   screenAudioElements.clear();
   cleanupAnalysers();
@@ -909,7 +1043,7 @@ function cleanupAll() {
   screenVideoStreams.clear();
   cameraVideoStreams.clear();
   pendingCandidates.clear();
-  pendingTrackTypes.clear();
+  clearAllPendingTrackState();
   screenTrackSenders.clear();
   cameraTrackSenders.clear();
   signalingQueues.clear();
@@ -917,9 +1051,10 @@ function cleanupAll() {
   // Clear ICE reconnect timers
   iceReconnectTimers.forEach((t) => clearTimeout(t));
   iceReconnectTimers.clear();
+  cancelInitialParticipantWait();
   stopStatsCollection();
   const vs = useVoiceStore.getState();
-  vs.setConnectionState("connected");
+  vs.setConnectionState("disconnected");
   vs.setNeedsAudioUnlock(false);
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
@@ -1145,12 +1280,21 @@ async function stopCameraInternal() {
           if (!pc) return;
           pc.removeTrack(sender);
           if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            await conn.invoke(
-              "SendSignal",
-              peerId,
-              JSON.stringify({ type: "offer", sdp: offer.sdp }),
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              await conn.invoke(
+                "SendSignal",
+                peerId,
+                JSON.stringify({ type: "offer", sdp: offer.sdp }),
+              );
+            } catch (err) {
+              console.warn(`Renegotiation after camera stop failed for ${peerId}, recreating:`, err);
+              await recreatePeer(peerId).catch(console.error);
+            }
+          } else {
+            console.warn(
+              `Skipping camera-stop renegotiation for ${peerId} - signaling: ${pc.signalingState}, ICE: ${pc.iceConnectionState}`,
             );
           }
         }),
@@ -1184,11 +1328,7 @@ async function addCameraTrackToPeer(
     if (!videoTrack) return;
 
     // Send track-info before adding track
-    await conn.invoke(
-      "SendSignal",
-      peerId,
-      JSON.stringify({ type: "track-info", trackType: "camera" }),
-    );
+    await sendTrackInfo(conn, peerId, "camera", videoTrack.id);
 
     const sender = pc.addTrack(videoTrack, cameraStream);
     cameraTrackSenders.set(peerId, sender);
@@ -1219,11 +1359,7 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
     // Add video tracks with track-info so the receiver knows it's a screen track
     for (const track of activeScreenStream.getVideoTracks()) {
-      await conn.invoke(
-        "SendSignal",
-        viewerUserId,
-        JSON.stringify({ type: "track-info", trackType: "screen" }),
-      );
+      await sendTrackInfo(conn, viewerUserId, "screen", track.id);
       console.log(`Adding screen video track for viewer ${viewerUserId}`);
       senders.push(pc.addTrack(track, activeScreenStream));
     }
@@ -1232,11 +1368,7 @@ async function addVideoTrackForViewer(viewerUserId: string) {
     // so the receiver plays them through a separate element instead of
     // overwriting the mic audio.
     for (const track of activeScreenStream.getAudioTracks()) {
-      await conn.invoke(
-        "SendSignal",
-        viewerUserId,
-        JSON.stringify({ type: "track-info", trackType: "screen-audio" }),
-      );
+      await sendTrackInfo(conn, viewerUserId, "screen-audio", track.id);
       console.log(`Adding screen audio track for viewer ${viewerUserId}`);
       senders.push(pc.addTrack(track, activeScreenStream));
     }
@@ -1317,54 +1449,109 @@ export async function stopWatching() {
   store.bumpScreenStreamVersion();
 }
 
-function setupSignalRListeners() {
-  if (listenersRegistered) return;
-  listenersRegistered = true;
+async function handleUserJoinedVoice(
+  conn: HubConnection,
+  userId: string,
+  displayName: string,
+) {
+  useVoiceStore.getState().addParticipant(userId, displayName);
 
-  const conn = getConnection();
+  const currentUser = useAuthStore.getState().user;
+  if (userId === currentUser?.id || !localStream) return;
 
-  conn.on("UserJoinedVoice", async (userId: string, displayName: string) => {
-    console.log(`UserJoinedVoice: ${displayName} (${userId})`);
-    useVoiceStore.getState().addParticipant(userId, displayName);
+  await enqueueSignaling(userId, async () => {
+    const pc = createPeerConnection(userId);
 
-    const currentUser = useAuthStore.getState().user;
-    if (userId === currentUser?.id || !localStream) return;
+    // Add audio tracks only - screen track is added lazily on WatchStreamRequested
+    localStream!
+      .getTracks()
+      .forEach((track) => pc.addTrack(track, localStream!));
 
-    await enqueueSignaling(userId, async () => {
-      const pc = createPeerConnection(userId);
-
-      // Add audio tracks only — screen track is added lazily on WatchStreamRequested
-      localStream!
-        .getTracks()
-        .forEach((track) => pc.addTrack(track, localStream!));
-
-      // Add camera track if camera is on (eager — send track-info first)
-      if (cameraStream) {
-        const camTrack = cameraStream.getVideoTracks()[0];
-        if (camTrack) {
-          await conn.invoke(
-            "SendSignal",
-            userId,
-            JSON.stringify({ type: "track-info", trackType: "camera" }),
-          );
-          const sender = pc.addTrack(camTrack, cameraStream);
-          cameraTrackSenders.set(userId, sender);
-        }
+    // Add camera track if camera is on (eager - send track-info first)
+    if (cameraStream) {
+      const camTrack = cameraStream.getVideoTracks()[0];
+      if (camTrack) {
+        await sendTrackInfo(conn, userId, "camera", camTrack.id);
+        const sender = pc.addTrack(camTrack, cameraStream);
+        cameraTrackSenders.set(userId, sender);
       }
+    }
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      console.log(`Sending offer to ${userId}`);
-      await conn.invoke(
-        "SendSignal",
-        userId,
-        JSON.stringify({ type: "offer", sdp: offer.sdp }),
-      );
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    console.log(`Sending offer to ${userId}`);
+    await conn.invoke(
+      "SendSignal",
+      userId,
+      JSON.stringify({ type: "offer", sdp: offer.sdp }),
+    );
+  });
+}
+
+function replayBufferedUserJoinedVoiceEvents(conn: HubConnection) {
+  if (bufferedUserJoinedVoiceEvents.size === 0) return;
+  const bufferedEvents = Array.from(bufferedUserJoinedVoiceEvents.entries());
+  bufferedUserJoinedVoiceEvents.clear();
+
+  for (const [userId, displayName] of bufferedEvents) {
+    console.log(`Replaying buffered UserJoinedVoice: ${displayName} (${userId})`);
+    void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
+      console.warn(`Failed to process buffered UserJoinedVoice for ${userId}:`, err);
+    });
+  }
+}
+
+function cancelInitialParticipantWait() {
+  waitingForInitialParticipants = false;
+  if (initialParticipantsTimeout) {
+    clearTimeout(initialParticipantsTimeout);
+    initialParticipantsTimeout = null;
+  }
+  bufferedUserJoinedVoiceEvents.clear();
+}
+
+function completeInitialParticipantWait(conn: HubConnection) {
+  waitingForInitialParticipants = false;
+  if (initialParticipantsTimeout) {
+    clearTimeout(initialParticipantsTimeout);
+    initialParticipantsTimeout = null;
+  }
+  replayBufferedUserJoinedVoiceEvents(conn);
+}
+
+function beginInitialParticipantWait(conn: HubConnection) {
+  cancelInitialParticipantWait();
+  waitingForInitialParticipants = true;
+  initialParticipantsTimeout = setTimeout(() => {
+    if (!waitingForInitialParticipants) return;
+    console.warn("VoiceChannelUsers not received within 5s, replaying buffered join events");
+    completeInitialParticipantWait(conn);
+  }, INITIAL_PARTICIPANTS_TIMEOUT_MS);
+}
+
+function setupSignalRListeners() {
+  const conn = getConnection();
+  if (listenersRegisteredForConnection === conn) return;
+  listenersRegisteredForConnection = conn;
+
+  conn.on("UserJoinedVoice", (userId: string, displayName: string) => {
+    console.log(`UserJoinedVoice: ${displayName} (${userId})`);
+
+    // Buffer joins until we get initial VoiceChannelUsers, then replay.
+    if (waitingForInitialParticipants) {
+      console.log(`Buffering UserJoinedVoice for ${displayName} while waiting for initial participants`);
+      bufferedUserJoinedVoiceEvents.set(userId, displayName);
+      return;
+    }
+
+    void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
+      console.warn(`Failed to process UserJoinedVoice for ${userId}:`, err);
     });
   });
 
   conn.on("UserLeftVoice", (userId: string) => {
     console.log(`UserLeftVoice: ${userId}`);
+    bufferedUserJoinedVoiceEvents.delete(userId);
     useVoiceStore.getState().removeParticipant(userId);
     closePeer(userId);
   });
@@ -1378,11 +1565,18 @@ function setupSignalRListeners() {
     const data = JSON.parse(signal);
 
     if (data.type === "track-info") {
-      // Queue track type for disambiguation in ontrack
-      if (!pendingTrackTypes.has(fromUserId)) {
-        pendingTrackTypes.set(fromUserId, []);
+      if (
+        data.trackType !== "camera" &&
+        data.trackType !== "screen" &&
+        data.trackType !== "screen-audio"
+      ) {
+        return;
       }
-      pendingTrackTypes.get(fromUserId)!.push(data.trackType);
+      const trackId = typeof data.trackId === "string" ? data.trackId : undefined;
+      queueTrackInfo(fromUserId, data.trackType, trackId);
+      if (trackId) {
+        resolvePendingRemoteTrack(fromUserId, trackId);
+      }
       return;
     }
 
@@ -1440,11 +1634,7 @@ function setupSignalRListeners() {
             if (cameraStream) {
               const camTrack = cameraStream.getVideoTracks()[0];
               if (camTrack) {
-                await conn.invoke(
-                  "SendSignal",
-                  fromUserId,
-                  JSON.stringify({ type: "track-info", trackType: "camera" }),
-                );
+                await sendTrackInfo(conn, fromUserId, "camera", camTrack.id);
                 const sender = pc!.addTrack(camTrack, cameraStream);
                 cameraTrackSenders.set(fromUserId, sender);
               }
@@ -1473,11 +1663,7 @@ function setupSignalRListeners() {
           if (cameraStream) {
             const camTrack = cameraStream.getVideoTracks()[0];
             if (camTrack) {
-              await conn.invoke(
-                "SendSignal",
-                fromUserId,
-                JSON.stringify({ type: "track-info", trackType: "camera" }),
-              );
+              await sendTrackInfo(conn, fromUserId, "camera", camTrack.id);
               const sender = pc.addTrack(camTrack, cameraStream);
               cameraTrackSenders.set(fromUserId, sender);
             }
@@ -1537,7 +1723,34 @@ function setupSignalRListeners() {
   });
 
   conn.on("VoiceChannelUsers", (users: Record<string, string>) => {
-    useVoiceStore.getState().setParticipants(new Map(Object.entries(users)));
+    const authoritative = new Map(Object.entries(users));
+    useVoiceStore.getState().setParticipants(authoritative);
+    completeInitialParticipantWait(conn);
+    console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
+
+    // Reconcile WebRTC peers against authoritative participant list
+    const currentUser = useAuthStore.getState().user;
+    const myId = currentUser?.id;
+    // Close peers for users no longer in the channel
+    for (const peerId of peers.keys()) {
+      if (!authoritative.has(peerId)) {
+        console.log(`Reconciliation: closing stale peer ${peerId}`);
+        closePeer(peerId);
+      }
+    }
+    // Create peers for users present on server but missing locally (not during initial join —
+    // those are handled by buffered join replay)
+    if (localStream) {
+      for (const [userId, displayName] of authoritative) {
+        if (userId === myId) continue;
+        if (!peers.has(userId)) {
+          console.log(`Reconciliation: creating missing peer for ${userId}`);
+          void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
+            console.warn(`Reconciliation: failed to create peer for ${userId}:`, err);
+          });
+        }
+      }
+    }
   });
 
   // Screen share events (multi-sharer)
@@ -1610,6 +1823,8 @@ function setupSignalRListeners() {
   conn.on("VoiceSessionReplaced", (message: string) => {
     console.warn("Voice session replaced:", message);
     // Force leave voice - clean up all WebRTC state
+    pendingVisibilityRejoin = false;
+    rejoinInProgress = false;
     cleanupAll();
     useVoiceStore.getState().setCurrentChannel(null);
     useVoiceStore.getState().setParticipants(new Map());
@@ -1619,6 +1834,9 @@ function setupSignalRListeners() {
     useVoiceStore.getState().setCameraOn(false);
     useVoiceStore.getState().setActiveCameras(new Map());
     useVoiceStore.getState().setFocusedUserId(null);
+    useVoiceChatStore.getState().clear();
+    useWatchPartyStore.getState().setActiveParty(null);
+    useToastStore.getState().addToast("Voice session replaced — you joined from another device.", "info");
   });
 }
 
@@ -1740,9 +1958,9 @@ export function useWebRTC() {
     const unsub = useVoiceStore.subscribe((state) => {
       if (state.userVolumes !== prevVolumes) {
         prevVolumes = state.userVolumes;
-        for (const [peerId, entry] of gainNodes) {
+        for (const [peerId] of gainNodes) {
           const vol = state.userVolumes.get(peerId) ?? 100;
-          entry.gain.gain.value = vol / 100;
+          applyUserVolume(peerId, vol);
         }
       }
     });
@@ -1802,6 +2020,7 @@ export function useWebRTC() {
     let cancelled = false;
     (async () => {
       try {
+        deviceResolutionFailed = false;
         const audioConstraints = await buildAudioConstraintsResolved();
         const constraints: MediaStreamConstraints = {
           audio: audioConstraints,
@@ -1889,6 +2108,8 @@ export function useWebRTC() {
   const joinVoice = useCallback(
     async (channelId: string) => {
       useVoiceStore.getState().setJoiningVoice(true);
+      pendingVisibilityRejoin = false;
+      rejoinInProgress = false;
       try {
         await initializeTurn();
 
@@ -1936,18 +2157,39 @@ export function useWebRTC() {
         // Start keep-alive to prevent audio suspension in background
         startAudioKeepAlive();
 
+        const conn = getConnection();
+        beginInitialParticipantWait(conn);
+        try {
+          await conn.invoke(
+            "JoinVoiceChannel",
+            channelId,
+            voiceState.isMuted,
+            voiceState.isDeafened,
+          );
+        } catch (err) {
+          cancelInitialParticipantWait();
+          console.error("Failed to join voice channel:", err);
+          cleanupAll();
+          setCurrentChannel(null);
+          setParticipants(new Map());
+          voiceState.setScreenSharing(false);
+          voiceState.setActiveSharers(new Map());
+          voiceState.setWatching(null);
+          voiceState.setCameraOn(false);
+          voiceState.setActiveCameras(new Map());
+          voiceState.setFocusedUserId(null);
+          voiceState.setVoiceChatOpen(false);
+          voiceState.setConnectionState("disconnected");
+          useVoiceChatStore.getState().clear();
+          useToastStore.getState().addToast("Failed to join voice channel.", "error");
+          return;
+        }
+
         voiceState.setConnectionState("connected");
         // Prevent the input device effect from re-obtaining a stream
         // — joinVoice already has the right stream
         skipNextDeviceEffect = true;
         setCurrentChannel(channelId);
-        const conn = getConnection();
-        await conn.invoke(
-          "JoinVoiceChannel",
-          channelId,
-          voiceState.isMuted,
-          voiceState.isDeafened,
-        );
 
         // Start collecting connection quality stats
         startStatsCollection();
@@ -1959,25 +2201,33 @@ export function useWebRTC() {
         useVoiceStore.getState().setJoiningVoice(false);
       }
     },
-    [buildAudioConstraintsResolved, currentChannelId, setCurrentChannel],
+    [buildAudioConstraintsResolved, currentChannelId, setCurrentChannel, setParticipants],
   );
 
   const leaveVoice = useCallback(async () => {
-    if (currentChannelId) {
-      const conn = getConnection();
-      await conn.invoke("LeaveVoiceChannel", currentChannelId);
+    try {
+      if (currentChannelId) {
+        const conn = getConnection();
+        await conn.invoke("LeaveVoiceChannel", currentChannelId);
+      }
+    } catch (error) {
+      console.warn("Failed to notify server when leaving voice channel:", error);
+    } finally {
+      pendingVisibilityRejoin = false;
+      rejoinInProgress = false;
+      cleanupAll();
+      setCurrentChannel(null);
+      setParticipants(new Map());
+      useVoiceStore.getState().setScreenSharing(false);
+      useVoiceStore.getState().setActiveSharers(new Map());
+      useVoiceStore.getState().setWatching(null);
+      useVoiceStore.getState().setCameraOn(false);
+      useVoiceStore.getState().setActiveCameras(new Map());
+      useVoiceStore.getState().setFocusedUserId(null);
+      useVoiceStore.getState().setVoiceChatOpen(false);
+      useVoiceChatStore.getState().clear();
+      useWatchPartyStore.getState().setActiveParty(null);
     }
-    cleanupAll();
-    setCurrentChannel(null);
-    setParticipants(new Map());
-    useVoiceStore.getState().setScreenSharing(false);
-    useVoiceStore.getState().setActiveSharers(new Map());
-    useVoiceStore.getState().setWatching(null);
-    useVoiceStore.getState().setCameraOn(false);
-    useVoiceStore.getState().setActiveCameras(new Map());
-    useVoiceStore.getState().setFocusedUserId(null);
-    useVoiceStore.getState().setVoiceChatOpen(false);
-    useVoiceChatStore.getState().clear();
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
   const startScreenShare = useCallback(async () => {
@@ -1996,17 +2246,243 @@ export function useWebRTC() {
     await stopCameraInternal();
   }, []);
 
-  // Send periodic heartbeat to keep backend LastSeen fresh while in voice
+  // Send periodic heartbeat + reconcile WebRTC peers against server state
   useEffect(() => {
     if (!currentChannelId) return;
     const interval = setInterval(() => {
       const conn = getConnection();
       if (conn.state === "Connected") {
         conn.invoke("VoiceHeartbeat").catch(() => {});
+        // Periodic peer reconciliation: fetch authoritative participant list
+        // and let the VoiceChannelUsers handler reconcile peers
+        conn.invoke("GetVoiceChannelUsers", currentChannelId)
+          .then((users: Record<string, string>) => {
+            const authoritative = new Map(Object.entries(users));
+            useVoiceStore.getState().setParticipants(authoritative);
+
+            const currentUser = useAuthStore.getState().user;
+            const myId = currentUser?.id;
+            for (const peerId of peers.keys()) {
+              if (!authoritative.has(peerId)) {
+                console.log(`Periodic reconciliation: closing stale peer ${peerId}`);
+                closePeer(peerId);
+              }
+            }
+            if (localStream) {
+              for (const [userId, displayName] of authoritative) {
+                if (userId === myId) continue;
+                if (!peers.has(userId)) {
+                  console.log(`Periodic reconciliation: creating missing peer for ${userId}`);
+                  void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                }
+              }
+            }
+          })
+          .catch(() => {});
       }
     }, 30_000);
     return () => clearInterval(interval);
   }, [currentChannelId]);
+
+  // Auto-rejoin voice channel after SignalR reconnects (e.g. server restart)
+  useEffect(() => {
+    return onReconnected(async () => {
+      const channelId = useVoiceStore.getState().currentChannelId;
+      if (!channelId) return;
+
+      // If tab is hidden, delay rejoin until tab becomes visible
+      // getUserMedia requires user gesture or visible tab
+      if (document.hidden) {
+        pendingVisibilityRejoin = true;
+        console.log("SignalR reconnected but tab is hidden, will rejoin when visible");
+        return;
+      }
+      if (rejoinInProgress) {
+        console.log("Rejoin already in progress, skipping reconnect rejoin");
+        return;
+      }
+      rejoinInProgress = true;
+      pendingVisibilityRejoin = false;
+
+      console.log("SignalR reconnected while in voice channel, rejoining:", channelId);
+      useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
+
+      // Clean up stale WebRTC state (server already removed us on disconnect)
+      cleanupAll();
+      useVoiceStore.getState().setScreenSharing(false);
+      useVoiceStore.getState().setActiveSharers(new Map());
+      useVoiceStore.getState().setWatching(null);
+      useVoiceStore.getState().setCameraOn(false);
+      useVoiceStore.getState().setActiveCameras(new Map());
+      useVoiceStore.getState().setFocusedUserId(null);
+
+      try {
+        await initializeTurn();
+        deviceResolutionFailed = false;
+
+        // Re-acquire microphone with current audio settings
+        const vs = useVoiceStore.getState();
+        const base: MediaTrackConstraints = {
+          noiseSuppression: vs.noiseSuppression,
+          echoCancellation: vs.echoCancellation,
+          autoGainControl: vs.autoGainControl,
+        };
+        let audioConstraints = base;
+        if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
+          const resolvedId = await resolveDefaultInputDevice();
+          if (resolvedId !== "default") {
+            audioConstraints = { ...base, deviceId: { exact: resolvedId } };
+          }
+        } else {
+          audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
+        }
+
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+        // Apply mute state
+        const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
+        localStream.getAudioTracks().forEach((t) => { t.enabled = shouldEnable; });
+
+        // Set up analyser for speaking indicator
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser) addAnalyser(currentUser.id, localStream);
+
+        startAudioKeepAlive();
+        vs.setConnectionState("connected");
+
+        // Clear participants right before rejoining to prevent race conditions
+        // (UserJoinedVoice events from other rejoining users might arrive before this)
+        useVoiceStore.getState().setParticipants(new Map());
+
+        // Rejoin on server - this will send us VoiceChannelUsers with authoritative state
+        skipNextDeviceEffect = true;
+        const conn = getConnection();
+        beginInitialParticipantWait(conn);
+        await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
+
+        startStatsCollection();
+
+        // Re-initialize voice chat
+        const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+        useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
+      } catch (err) {
+        cancelInitialParticipantWait();
+        console.error("Failed to rejoin voice channel after reconnect:", err);
+        useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
+        // Full cleanup on failure — drop user out of voice
+        cleanupAll();
+        useVoiceStore.getState().setCurrentChannel(null);
+        useVoiceStore.getState().setParticipants(new Map());
+        useVoiceChatStore.getState().clear();
+      } finally {
+        rejoinInProgress = false;
+      }
+    });
+  }, []);
+
+  // Handle tab visibility changes - rejoin voice if we missed reconnection while hidden
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.hidden) return;
+
+      const channelId = useVoiceStore.getState().currentChannelId;
+      if (!channelId) {
+        pendingVisibilityRejoin = false;
+        return;
+      }
+
+      if (rejoinInProgress) {
+        console.log("Rejoin already in progress, skipping visibility rejoin");
+        return;
+      }
+
+      const connectionState = useVoiceStore.getState().connectionState;
+      const forcedRejoinFromHiddenReconnect = pendingVisibilityRejoin;
+      // Existing recovery path: if we're supposed to be in voice but not connected, try to rejoin
+      const disconnectedRecovery = connectionState !== "connected" && !localStream;
+
+      if (forcedRejoinFromHiddenReconnect || disconnectedRecovery) {
+        const conn = getConnection();
+        if (conn.state === "Connected") {
+          rejoinInProgress = true;
+          if (forcedRejoinFromHiddenReconnect) {
+            console.log("Tab became visible with pending hidden reconnect, forcing voice rejoin");
+          } else {
+            console.log("Tab became visible, checking voice state and rejoining if needed");
+          }
+
+          try {
+            if (forcedRejoinFromHiddenReconnect) {
+              // Local media/peer state may still look connected while server-side membership was lost.
+              cleanupAll();
+              useVoiceStore.getState().setScreenSharing(false);
+              useVoiceStore.getState().setActiveSharers(new Map());
+              useVoiceStore.getState().setWatching(null);
+              useVoiceStore.getState().setCameraOn(false);
+              useVoiceStore.getState().setActiveCameras(new Map());
+              useVoiceStore.getState().setFocusedUserId(null);
+            }
+
+            // Re-acquire microphone
+            const vs = useVoiceStore.getState();
+            const base: MediaTrackConstraints = {
+              noiseSuppression: vs.noiseSuppression,
+              echoCancellation: vs.echoCancellation,
+              autoGainControl: vs.autoGainControl,
+            };
+            let audioConstraints = base;
+            if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
+              const resolvedId = await resolveDefaultInputDevice();
+              if (resolvedId !== "default") {
+                audioConstraints = { ...base, deviceId: { exact: resolvedId } };
+              }
+            } else {
+              audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
+            }
+
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+            // Apply mute state
+            const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
+            localStream.getAudioTracks().forEach((t) => { t.enabled = shouldEnable; });
+
+            // Set up analyser
+            const currentUser = useAuthStore.getState().user;
+            if (currentUser) addAnalyser(currentUser.id, localStream);
+
+            startAudioKeepAlive();
+            vs.setConnectionState("connected");
+
+            // Clear participants and rejoin
+            useVoiceStore.getState().setParticipants(new Map());
+            beginInitialParticipantWait(conn);
+
+            skipNextDeviceEffect = true;
+            await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
+
+            startStatsCollection();
+
+            const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+            useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
+
+            pendingVisibilityRejoin = false;
+            useToastStore.getState().addToast("Reconnected to voice channel", "success");
+          } catch (err) {
+            cancelInitialParticipantWait();
+            if (forcedRejoinFromHiddenReconnect) {
+              pendingVisibilityRejoin = true;
+            }
+            console.error("Failed to rejoin voice on visibility change:", err);
+          } finally {
+            rejoinInProgress = false;
+          }
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
   return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera };
 }

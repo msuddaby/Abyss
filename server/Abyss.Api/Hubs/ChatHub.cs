@@ -17,22 +17,37 @@ public class ChatHub : Hub
     private readonly VoiceStateService _voiceState;
     private readonly PermissionService _perms;
     private readonly NotificationService _notifications;
+    private readonly WatchPartyService _watchPartyService;
 
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
     private const int MaxAttachmentsPerMessage = 10;
     private const int MaxPinnedMessagesPerChannel = 50;
     private const string MaxMessageLengthKey = "MaxMessageLength";
+    private static readonly TimeSpan VoiceDisconnectGracePeriod = TimeSpan.FromSeconds(12);
 
     // Track online users: connectionId -> userId
     internal static readonly ConcurrentDictionary<string, string> _connections = new();
+    private static readonly ConcurrentDictionary<string, PendingVoiceDisconnect> _pendingVoiceDisconnects = new();
 
-    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications)
+    private sealed class PendingVoiceDisconnect
+    {
+        public PendingVoiceDisconnect(string? expectedVoiceConnectionId)
+        {
+            ExpectedVoiceConnectionId = expectedVoiceConnectionId;
+        }
+
+        public string? ExpectedVoiceConnectionId { get; }
+        public CancellationTokenSource Cancellation { get; } = new();
+    }
+
+    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService)
     {
         _db = db;
         _voiceState = voiceState;
         _perms = perms;
         _notifications = notifications;
+        _watchPartyService = watchPartyService;
     }
 
     private string UserId => Context.User!.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -59,6 +74,61 @@ public class ChatHub : Hub
             .Select(p => type == "join" ? p.JoinSoundUrl : p.LeaveSoundUrl)
             .FirstOrDefaultAsync();
         return prefs;
+    }
+
+    private static void CancelPendingVoiceDisconnect(string userId)
+    {
+        if (_pendingVoiceDisconnects.TryRemove(userId, out var pending))
+        {
+            pending.Cancellation.Cancel();
+        }
+    }
+
+    private static PendingVoiceDisconnect ReplacePendingVoiceDisconnect(string userId, string? expectedVoiceConnectionId)
+    {
+        var pending = new PendingVoiceDisconnect(expectedVoiceConnectionId);
+
+        while (true)
+        {
+            if (_pendingVoiceDisconnects.TryAdd(userId, pending))
+            {
+                return pending;
+            }
+
+            if (_pendingVoiceDisconnects.TryRemove(userId, out var existing))
+            {
+                existing.Cancellation.Cancel();
+            }
+        }
+    }
+
+    private async Task SendCurrentVoiceChannelStateToCaller(Guid channelGuid, string channelId)
+    {
+        var users = _voiceState.GetChannelUsersDisplayNames(channelGuid);
+        await Clients.Caller.SendAsync("VoiceChannelUsers", users);
+
+        var currentSharers = _voiceState.GetScreenSharers(channelGuid);
+        if (currentSharers.Count > 0)
+        {
+            await Clients.Caller.SendAsync("ActiveSharers", currentSharers);
+        }
+
+        var currentCameras = _voiceState.GetCameraUsers(channelGuid);
+        if (currentCameras.Count > 0)
+        {
+            await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
+        }
+
+        var watchParty = _watchPartyService.GetParty(channelGuid);
+        if (watchParty != null)
+        {
+            var wpDto = new WatchPartyDto(
+                watchParty.Id, watchParty.ChannelId, watchParty.MediaProviderConnectionId,
+                watchParty.HostUserId, watchParty.ProviderItemId, watchParty.ItemTitle,
+                watchParty.ItemThumbnail, watchParty.ItemDurationMs, watchParty.CurrentTimeMs,
+                watchParty.IsPlaying, watchParty.LastSyncAt, watchParty.Queue, watchParty.StartedAt);
+            await Clients.Caller.SendAsync("WatchPartyActive", wpDto);
+        }
     }
 
     private static bool TryNormalizeAndValidateMessageForSend(string content, int attachmentCount, int maxMessageLength, out string normalized, out string? error)
@@ -232,9 +302,47 @@ public class ChatHub : Hub
         var isVoiceConn = _voiceState.IsVoiceConnection(UserId, Context.ConnectionId);
         if (isVoiceConn || !stillOnline)
         {
-            var voiceChannel = _voiceState.GetUserChannel(UserId);
-            if (voiceChannel.HasValue)
+            var initialVoiceChannel = _voiceState.GetUserChannel(UserId);
+            if (initialVoiceChannel.HasValue)
             {
+                var expectedVoiceConnectionId = _voiceState.GetVoiceConnectionId(UserId);
+                var pendingDisconnect = ReplacePendingVoiceDisconnect(UserId, expectedVoiceConnectionId);
+
+                try
+                {
+                    await Task.Delay(VoiceDisconnectGracePeriod, pendingDisconnect.Cancellation.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    await base.OnDisconnectedAsync(exception);
+                    return;
+                }
+                finally
+                {
+                    if (_pendingVoiceDisconnects.TryGetValue(UserId, out var currentPending) &&
+                        ReferenceEquals(currentPending, pendingDisconnect))
+                    {
+                        _pendingVoiceDisconnects.TryRemove(UserId, out _);
+                    }
+
+                    pendingDisconnect.Cancellation.Dispose();
+                }
+
+                // User rejoined voice before grace window ended.
+                if (pendingDisconnect.ExpectedVoiceConnectionId is { } expectedConnId &&
+                    !_voiceState.IsVoiceConnection(UserId, expectedConnId))
+                {
+                    await base.OnDisconnectedAsync(exception);
+                    return;
+                }
+
+                var voiceChannel = _voiceState.GetUserChannel(UserId);
+                if (!voiceChannel.HasValue || voiceChannel.Value != initialVoiceChannel.Value)
+                {
+                    await base.OnDisconnectedAsync(exception);
+                    return;
+                }
+
                 // Check if user was screen sharing before leaving
                 var wasSharing = _voiceState.IsScreenSharing(voiceChannel.Value, UserId);
                 if (wasSharing)
@@ -254,6 +362,9 @@ public class ChatHub : Hub
                 _voiceState.LeaveChannel(voiceChannel.Value, UserId);
                 await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("UserLeftVoice", UserId);
                 await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{voiceChannel.Value}");
+
+                // Handle watch party host promotion or cleanup
+                await HandleWatchPartyLeave(voiceChannel.Value);
 
                 await CleanupVoiceChatIfEmpty(voiceChannel.Value);
 
@@ -776,11 +887,74 @@ public class ChatHub : Hub
         if (voiceChannel == null || !voiceChannel.ServerId.HasValue) return;
         if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Connect)) return;
         var canSpeak = await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Speak);
+        CancelPendingVoiceDisconnect(UserId);
+
+        var effectiveMuted = isMuted || !canSpeak;
+        var currentChannel = _voiceState.GetUserChannel(UserId);
+        var currentVoiceConnectionId = _voiceState.GetVoiceConnectionId(UserId);
+        var reconnectingToSameChannel =
+            currentChannel.HasValue &&
+            currentChannel.Value == channelGuid &&
+            !string.Equals(currentVoiceConnectionId, Context.ConnectionId, StringComparison.Ordinal) &&
+            (string.IsNullOrEmpty(currentVoiceConnectionId) || !_connections.ContainsKey(currentVoiceConnectionId));
+
+        if (reconnectingToSameChannel)
+        {
+            var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
+            if (wasSharing)
+            {
+                await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
+                var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+                foreach (var userId in recipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+                }
+            }
+
+            var hadCamera = _voiceState.RemoveCameraUser(channelGuid, UserId);
+            if (hadCamera)
+            {
+                await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
+                var camRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+                foreach (var userId in camRecipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
+                }
+            }
+
+            _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
+            if (!canSpeak)
+            {
+                _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);
+            }
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
+
+            await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
+
+            // Trigger fresh WebRTC negotiation for this recovered session without a synthetic leave event.
+            await Clients.OthersInGroup($"voice:{channelId}").SendAsync("UserJoinedVoice", UserId, DisplayName);
+
+            var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
+            var reconnectRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+            foreach (var userId in reconnectRecipients)
+            {
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserStateUpdated", channelId, UserId, state);
+            }
+
+            return;
+        }
 
         // Enforce single voice session: if user is already in voice, notify other sessions to disconnect
-        var currentChannel = _voiceState.GetUserChannel(UserId);
         if (currentChannel.HasValue)
         {
+            // Remove displaced connection from voice group so it stops receiving voice traffic
+            if (!string.IsNullOrEmpty(currentVoiceConnectionId) && currentVoiceConnectionId != Context.ConnectionId)
+            {
+                await Groups.RemoveFromGroupAsync(currentVoiceConnectionId, $"voice:{currentChannel.Value}");
+                await Groups.RemoveFromGroupAsync(currentVoiceConnectionId, $"channel:{currentChannel.Value}");
+            }
             // Notify all other sessions for this user to leave voice
             await Clients.OthersInGroup($"user:{UserId}").SendAsync("VoiceSessionReplaced", "You have joined voice from another device.");
         }
@@ -840,7 +1014,6 @@ public class ChatHub : Hub
             }
         }
 
-        var effectiveMuted = isMuted || !canSpeak;
         _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
         if (!canSpeak)
         {
@@ -848,31 +1021,13 @@ public class ChatHub : Hub
         }
         await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
         await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
-
-        // Send current participants to the joining user
-        var users = _voiceState.GetChannelUsersDisplayNames(channelGuid);
-        await Clients.Caller.SendAsync("VoiceChannelUsers", users);
-
-        // Send current screen sharers to the joining user
-        var currentSharers = _voiceState.GetScreenSharers(channelGuid);
-        if (currentSharers.Count > 0)
-        {
-            await Clients.Caller.SendAsync("ActiveSharers", currentSharers);
-        }
-
-        // Send current camera users to the joining user
-        var currentCameras = _voiceState.GetCameraUsers(channelGuid);
-        if (currentCameras.Count > 0)
-        {
-            await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
-        }
+        await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
 
         // Notify voice group for WebRTC setup
         await Clients.OthersInGroup($"voice:{channelId}").SendAsync("UserJoinedVoice", UserId, DisplayName);
 
         // Notify the server group so sidebar updates for non-participants
-        var channel = await _db.Channels.FindAsync(channelGuid);
-        if (channel?.ServerId != null)
+        if (voiceChannel.ServerId != null)
         {
             var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
             var joinSoundUrl = await GetSoundUrl(UserId, "join");
@@ -927,14 +1082,18 @@ public class ChatHub : Hub
 
     public async Task LeaveVoiceChannel(string channelId)
     {
-        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        CancelPendingVoiceDisconnect(UserId);
+        var currentChannel = _voiceState.GetUserChannel(UserId);
+        if (!currentChannel.HasValue) return;
+        var channelGuid = currentChannel.Value;
+        var resolvedChannelId = channelGuid.ToString();
 
         // Clear screen share if leaving while sharing
         var wasSharing = _voiceState.IsScreenSharing(channelGuid, UserId);
         if (wasSharing)
         {
             _voiceState.RemoveScreenSharer(channelGuid, UserId);
-            await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
+            await Clients.Group($"voice:{resolvedChannelId}").SendAsync("ScreenShareStopped", UserId);
         }
 
         // Clear camera if leaving while camera was on
@@ -942,13 +1101,16 @@ public class ChatHub : Hub
         if (hadCamera)
         {
             _voiceState.RemoveCameraUser(channelGuid, UserId);
-            await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
+            await Clients.Group($"voice:{resolvedChannelId}").SendAsync("CameraStopped", UserId);
         }
 
         _voiceState.LeaveChannel(channelGuid, UserId);
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"voice:{channelId}");
-        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
-        await Clients.Group($"voice:{channelId}").SendAsync("UserLeftVoice", UserId);
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"voice:{resolvedChannelId}");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{resolvedChannelId}");
+        await Clients.Group($"voice:{resolvedChannelId}").SendAsync("UserLeftVoice", UserId);
+
+        // Handle watch party host promotion or cleanup
+        await HandleWatchPartyLeave(channelGuid);
 
         await CleanupVoiceChatIfEmpty(channelGuid);
 
@@ -961,7 +1123,7 @@ public class ChatHub : Hub
                 var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
                 foreach (var userId in recipients)
                 {
-                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
+                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", resolvedChannelId, UserId);
                 }
             }
             if (hadCamera)
@@ -969,14 +1131,14 @@ public class ChatHub : Hub
                 var camRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
                 foreach (var userId in camRecipients)
                 {
-                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
+                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", resolvedChannelId, UserId);
                 }
             }
             var explicitLeaveSoundUrl = await GetSoundUrl(UserId, "leave");
             var leftRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
             foreach (var userId in leftRecipients)
             {
-                await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", channelId, UserId, explicitLeaveSoundUrl);
+                await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", resolvedChannelId, UserId, explicitLeaveSoundUrl);
             }
         }
     }
@@ -1188,9 +1350,123 @@ public class ChatHub : Hub
         return await _notifications.GetDmUnreads(UserId);
     }
 
+    // Watch party: host sends playback commands (play/pause/seek) to all viewers
+    public async Task NotifyPlaybackCommand(string channelId, string command, double timeMs)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var party = _watchPartyService.GetParty(channelGuid);
+        if (party == null || party.HostUserId != UserId) return;
+
+        var isPlaying = command != "pause";
+        _watchPartyService.UpdatePlaybackState(channelGuid, timeMs, isPlaying);
+
+        await Clients.OthersInGroup($"voice:{channelId}").SendAsync("PlaybackCommand", command, timeMs);
+    }
+
+    // Watch party: viewer requests current sync position from host
+    public async Task RequestSync(string channelId)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var party = _watchPartyService.GetParty(channelGuid);
+        if (party == null) return;
+
+        await Clients.Caller.SendAsync("SyncPosition", party.CurrentTimeMs, party.IsPlaying);
+    }
+
+    // Watch party: host periodically reports playback position
+    public async Task ReportPlaybackPosition(string channelId, double timeMs, bool isPlaying)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var party = _watchPartyService.GetParty(channelGuid);
+        if (party == null || party.HostUserId != UserId) return;
+
+        _watchPartyService.UpdatePlaybackState(channelGuid, timeMs, isPlaying);
+
+        await Clients.OthersInGroup($"voice:{channelId}").SendAsync("SyncPosition", timeMs, isPlaying);
+    }
+
+    // Get active watch parties for a server (for sidebar WATCH badges)
+    public async Task<Dictionary<Guid, string>> GetServerWatchParties(string serverId)
+    {
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new Dictionary<Guid, string>();
+        var channelIds = await _db.Channels
+            .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Voice)
+            .Select(c => c.Id)
+            .ToListAsync();
+        var allowedChannelIds = new List<Guid>();
+        foreach (var channelId in channelIds)
+        {
+            if (await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ViewChannel))
+                allowedChannelIds.Add(channelId);
+        }
+        return _watchPartyService.GetServerWatchParties(allowedChannelIds);
+    }
+
+    // Watch party host promotion or cleanup when a user leaves voice
+    private async Task HandleWatchPartyLeave(Guid channelId)
+    {
+        var party = _watchPartyService.GetParty(channelId);
+        if (party == null) return;
+
+        // Only act if the leaving user is the host
+        if (party.HostUserId != UserId) return;
+
+        var remainingUsers = _voiceState.GetChannelUserIds(channelId);
+        if (remainingUsers.Count == 0)
+        {
+            // No users left — stop the watch party
+            _watchPartyService.StopParty(channelId);
+            var dbEntity = await _db.WatchParties.FirstOrDefaultAsync(w => w.ChannelId == channelId);
+            if (dbEntity != null)
+            {
+                _db.WatchParties.Remove(dbEntity);
+                await _db.SaveChangesAsync();
+            }
+
+            await Clients.Group($"voice:{channelId}").SendAsync("WatchPartyStopped", channelId.ToString());
+            var channel = await _db.Channels.FindAsync(channelId);
+            if (channel?.ServerId != null)
+            {
+                await Clients.Group($"server:{channel.ServerId}").SendAsync("WatchPartyStoppedInChannel", channelId.ToString());
+            }
+        }
+        else
+        {
+            // Auto-promote next user as host
+            var newHostId = remainingUsers[0];
+            _watchPartyService.TransferHost(channelId, newHostId);
+
+            var dbEntity = await _db.WatchParties.FirstOrDefaultAsync(w => w.ChannelId == channelId);
+            if (dbEntity != null)
+            {
+                dbEntity.HostUserId = newHostId;
+                await _db.SaveChangesAsync();
+            }
+
+            await Clients.Group($"voice:{channelId}").SendAsync("WatchPartyHostChanged", newHostId);
+        }
+    }
+
     private async Task CleanupVoiceChatIfEmpty(Guid channelId)
     {
         if (!_voiceState.IsChannelEmpty(channelId)) return;
+
+        // Clean up watch party if channel is empty
+        if (_watchPartyService.IsActive(channelId))
+        {
+            _watchPartyService.StopParty(channelId);
+            var wpEntity = await _db.WatchParties.FirstOrDefaultAsync(w => w.ChannelId == channelId);
+            if (wpEntity != null)
+            {
+                _db.WatchParties.Remove(wpEntity);
+                await _db.SaveChangesAsync();
+            }
+            var ch = await _db.Channels.FindAsync(channelId);
+            if (ch?.ServerId != null)
+            {
+                await Clients.Group($"server:{ch.ServerId}").SendAsync("WatchPartyStoppedInChannel", channelId.ToString());
+            }
+        }
 
         var channel = await _db.Channels.FindAsync(channelId);
         if (channel == null || channel.PersistentChat) return;

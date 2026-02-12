@@ -15,6 +15,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
   const voiceChannelCameras = useServerStore((s) => s.voiceChannelCameras);
+  const voiceChannelWatchParties = useServerStore((s) => s.voiceChannelWatchParties);
   const members = useServerStore((s) => s.members);
   const currentUser = useAuthStore((s) => s.user);
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
@@ -26,6 +27,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
   const channelUsers = voiceChannelUsers.get(channel.id);
   const channelSharers = voiceChannelSharers.get(channel.id);
   const channelCameras = voiceChannelCameras.get(channel.id);
+  const watchPartyTitle = voiceChannelWatchParties.get(channel.id);
   const participants = channelUsers ? Array.from(channelUsers.entries()) : [];
   const currentMember = members.find((m) => m.userId === currentUser?.id);
   const canModerateVoice = currentMember ? hasPermission(currentMember, Permission.MuteMembers) : false;
@@ -55,6 +57,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
       <button className="channel-item-btn" onClick={onSelect}>
         <span className="channel-voice-icon">🔊</span>
         {channel.name}
+        {watchPartyTitle && <span className="vcv-watch-badge">WATCH</span>}
       </button>
       {isConnected ? (
         <button className="voice-action-btn leave" onClick={onLeave} title="Disconnect">

@@ -253,6 +253,71 @@ export interface AdminSettings {
   codes: InviteCode[];
 }
 
+// Media provider types
+export type MediaProviderType = 'Plex' | 'YouTube' | 'Spotify' | 'Twitch' | 'SoundCloud';
+
+export interface MediaProviderConnection {
+  id: string;
+  serverId: string;
+  ownerId: string;
+  providerType: MediaProviderType;
+  displayName: string;
+  linkedAt: string;
+  lastValidatedAt?: string;
+}
+
+export interface MediaLibrary {
+  id: string;
+  name: string;
+  type: string;
+  itemCount: number;
+  thumbnailUrl?: string;
+}
+
+export interface MediaItem {
+  id: string;
+  title: string;
+  type: string;
+  summary?: string;
+  thumbnailUrl?: string;
+  durationMs?: number;
+  year?: number;
+  parentTitle?: string;
+  grandparentTitle?: string;
+  index?: number;
+  parentIndex?: number;
+}
+
+export interface PlaybackInfo {
+  url: string;
+  contentType: string;
+  headers: Record<string, string>;
+}
+
+export interface QueueItem {
+  providerItemId: string;
+  title: string;
+  thumbnail?: string;
+  durationMs?: number;
+  addedByUserId: string;
+}
+
+export interface WatchParty {
+  id: string;
+  channelId: string;
+  mediaProviderConnectionId: string;
+  hostUserId: string;
+  providerItemId: string;
+  itemTitle: string;
+  itemThumbnail?: string;
+  itemDurationMs?: number;
+  currentTimeMs: number;
+  isPlaying: boolean;
+  lastSyncAt: string;
+  queue: QueueItem[];
+  startedAt: string;
+}
+
 export const Permission = {
   ManageChannels: 1 << 0,
   ManageMessages: 1 << 1,

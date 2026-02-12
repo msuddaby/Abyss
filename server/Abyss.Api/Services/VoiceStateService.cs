@@ -45,12 +45,15 @@ public class VoiceStateService
 
     public void LeaveChannel(Guid channelId, string userId)
     {
+        var removedFromChannel = false;
         if (_voiceChannels.TryGetValue(channelId, out var users))
         {
-            users.TryRemove(userId, out _);
+            removedFromChannel = users.TryRemove(userId, out _);
             if (users.IsEmpty)
                 _voiceChannels.TryRemove(channelId, out _);
         }
+
+        if (!removedFromChannel) return;
 
         _voiceConnections.TryRemove(userId, out _);
 
@@ -89,6 +92,20 @@ public class VoiceStateService
     public string? GetVoiceConnectionId(string userId)
     {
         return _voiceConnections.TryGetValue(userId, out var connId) ? connId : null;
+    }
+
+    public bool IsUserInChannel(Guid channelId, string userId)
+    {
+        if (_voiceChannels.TryGetValue(channelId, out var users))
+            return users.ContainsKey(userId);
+        return false;
+    }
+
+    public List<string> GetChannelUserIds(Guid channelId)
+    {
+        if (_voiceChannels.TryGetValue(channelId, out var users))
+            return users.Keys.ToList();
+        return new List<string>();
     }
 
     public bool IsChannelEmpty(Guid channelId)

@@ -62,6 +62,20 @@ public record UserNotificationOverviewDto(
     ServerNotificationSettingsDto ServerSettings,
     Dictionary<Guid, ChannelNotificationSettingsDto> ChannelSettings);
 
+// Media provider DTOs
+public record MediaProviderConnectionDto(Guid Id, Guid ServerId, string OwnerId, string ProviderType, string DisplayName, DateTime LinkedAt, DateTime? LastValidatedAt);
+public record LinkProviderRequest(string ProviderType, string DisplayName, string ServerUrl, string AuthToken);
+public record MediaLibraryDto(string Id, string Name, string Type, int ItemCount, string? ThumbnailUrl);
+public record MediaItemDto(string Id, string Title, string Type, string? Summary, string? ThumbnailUrl, long? DurationMs, int? Year, string? ParentTitle, string? GrandparentTitle, int? Index, int? ParentIndex);
+public record PlaybackInfoDto(string Url, string ContentType, Dictionary<string, string> Headers);
+
+// Watch party DTOs
+public record WatchPartyDto(Guid Id, Guid ChannelId, Guid MediaProviderConnectionId, string HostUserId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs, double CurrentTimeMs, bool IsPlaying, DateTime LastSyncAt, List<QueueItemDto> Queue, DateTime StartedAt);
+public record StartWatchPartyRequest(Guid MediaProviderConnectionId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs);
+public record QueueItemDto(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs, string AddedByUserId);
+public record AddToQueueRequest(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs);
+public record ReorderQueueRequest(List<int> NewOrder);
+
 // User preferences DTOs
 public record UserPreferencesDto(
     int InputMode,

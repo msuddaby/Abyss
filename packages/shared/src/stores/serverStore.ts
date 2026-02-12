@@ -81,6 +81,10 @@ interface ServerState {
   updateEmojiLocal: (emoji: CustomEmoji) => void;
   removeEmojiLocal: (emojiId: string) => void;
   clearActiveServer: () => void;
+  voiceChannelWatchParties: Map<string, string>;
+  setVoiceChannelWatchParties: (data: Record<string, string>) => void;
+  watchPartyStartedInChannel: (channelId: string, itemTitle: string) => void;
+  watchPartyStoppedInChannel: (channelId: string) => void;
 }
 
 function getLastChannelMap(): Record<string, string> {
@@ -109,6 +113,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   voiceChannelUsers: new Map(),
   voiceChannelSharers: new Map(),
   voiceChannelCameras: new Map(),
+  voiceChannelWatchParties: new Map(),
 
   fetchServers: async () => {
     const res = await api.get('/servers');
@@ -135,7 +140,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   },
 
   setActiveServer: async (server) => {
-    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() });
+    set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map(), voiceChannelWatchParties: new Map() });
     getStorage().setItem('activeServerId', server.id);
     const channels = await get().fetchChannels(server.id);
 
@@ -336,34 +341,13 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set({ voiceChannelUsers: map });
   },
 
-  // Merge server data with local state — server data wins for known users,
-  // but locally-known users (from recent incremental signals) are preserved.
-  // This prevents races where a full-replace overwrites fresh signal data.
+  // Authoritative replace: server data is the source of truth during periodic reconciliation.
+  // Stale local-only users are removed. This prevents ghost users from persisting after missed leave events.
   mergeVoiceChannelUsers: (data) =>
-    set((s) => {
-      const incoming: VoiceChannelUsersMap = new Map();
-      for (const [channelId, users] of Object.entries(data)) {
-        incoming.set(channelId, new Map(Object.entries(users)));
-      }
+    set(() => {
       const next: VoiceChannelUsersMap = new Map();
-      // Start with all channels from the server response
-      for (const [channelId, serverUsers] of incoming) {
-        next.set(channelId, new Map(serverUsers));
-      }
-      // Merge in locally-known users that the server response may not have yet
-      for (const [channelId, localUsers] of s.voiceChannelUsers) {
-        const merged = next.get(channelId);
-        if (merged) {
-          // Channel exists in both — add any local-only users
-          for (const [userId, state] of localUsers) {
-            if (!merged.has(userId)) {
-              merged.set(userId, state);
-            }
-          }
-        } else {
-          // Channel only exists locally — keep it (may be a recent join)
-          next.set(channelId, new Map(localUsers));
-        }
+      for (const [channelId, users] of Object.entries(data)) {
+        next.set(channelId, new Map(Object.entries(users)));
       }
       return { voiceChannelUsers: next };
     }),
@@ -468,6 +452,28 @@ export const useServerStore = create<ServerState>((set, get) => ({
       return { voiceChannelCameras: next };
     }),
 
+  setVoiceChannelWatchParties: (data) => {
+    const map = new Map<string, string>();
+    for (const [channelId, title] of Object.entries(data)) {
+      map.set(channelId, title);
+    }
+    set({ voiceChannelWatchParties: map });
+  },
+
+  watchPartyStartedInChannel: (channelId, itemTitle) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelWatchParties);
+      next.set(channelId, itemTitle);
+      return { voiceChannelWatchParties: next };
+    }),
+
+  watchPartyStoppedInChannel: (channelId) =>
+    set((s) => {
+      const next = new Map(s.voiceChannelWatchParties);
+      next.delete(channelId);
+      return { voiceChannelWatchParties: next };
+    }),
+
   removeChannel: (channelId) =>
     set((s) => {
       const channels = s.channels.filter((c) => c.id !== channelId);
@@ -479,7 +485,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set((s) => {
       const servers = s.servers.filter((sv) => sv.id !== serverId);
       if (s.activeServer?.id === serverId) {
-        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() };
+        return { servers, activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map(), voiceChannelWatchParties: new Map() };
       }
       return { servers };
     }),
@@ -612,5 +618,5 @@ export const useServerStore = create<ServerState>((set, get) => ({
     set((s) => ({ emojis: s.emojis.filter((e) => e.id !== emojiId) })),
 
   clearActiveServer: () =>
-    set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map() }),
+    set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map(), voiceChannelWatchParties: new Map() }),
 }));

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useServerStore, useAuthStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
-import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
+import { useServerStore, useAuthStore, useMediaProviderStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
+import type { AuditLog, ServerRole, ServerMember, MediaProviderConnection } from '@abyss/shared';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -23,6 +23,10 @@ const ACTION_LABELS: Record<string, string> = {
   ServerUpdated: 'Updated server',
   MessagePinned: 'Pinned a message',
   MessageUnpinned: 'Unpinned a message',
+  MediaProviderLinked: 'Linked media provider',
+  MediaProviderUnlinked: 'Unlinked media provider',
+  WatchPartyStarted: 'Started watch party',
+  WatchPartyStopped: 'Stopped watch party',
 };
 
 const ACTION_ICONS: Record<string, string> = {
@@ -46,6 +50,10 @@ const ACTION_ICONS: Record<string, string> = {
   ServerUpdated: '\u{270F}',
   MessagePinned: '\u{1F4CC}',
   MessageUnpinned: '\u{1F4CC}',
+  MediaProviderLinked: '\u{1F3AC}',
+  MediaProviderUnlinked: '\u{274C}',
+  WatchPartyStarted: '\u{1F389}',
+  WatchPartyStopped: '\u{23F9}',
 };
 
 const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: string; description: string }[] }[] = [
@@ -102,7 +110,7 @@ function formatTimestamp(dateStr: string) {
   return d.toLocaleString();
 }
 
-type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
+type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'media' | 'bans' | 'audit' | 'danger';
 
 export default function ServerSettingsModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -153,6 +161,16 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [emojiUploading, setEmojiUploading] = useState(false);
   const [emojiError, setEmojiError] = useState('');
 
+  // Media provider state
+  const mediaConnections = useMediaProviderStore((s) => s.connections);
+  const mediaLoading = useMediaProviderStore((s) => s.isLoading);
+  const [mpProviderType, setMpProviderType] = useState('Plex');
+  const [mpDisplayName, setMpDisplayName] = useState('');
+  const [mpServerUrl, setMpServerUrl] = useState('');
+  const [mpAuthToken, setMpAuthToken] = useState('');
+  const [mpError, setMpError] = useState('');
+  const [mpLinking, setMpLinking] = useState(false);
+
   // Server settings
   const [serverName, setServerName] = useState(activeServer?.name ?? '');
   const [serverIconFile, setServerIconFile] = useState<File | null>(null);
@@ -169,6 +187,9 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     }
     if (tab === 'bans' && canBan) {
       fetchBans(serverId);
+    }
+    if (tab === 'media' && canManageServer) {
+      useMediaProviderStore.getState().fetchConnections(serverId);
     }
   }, [tab, serverId]);
 
@@ -302,6 +323,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     members: 'Members',
     roles: 'Roles',
     emojis: 'Emojis',
+    media: 'Media',
     bans: 'Bans',
     audit: 'Audit Log',
     danger: 'Danger Zone',
@@ -323,6 +345,9 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
           )}
           {canManageEmojis && (
             <button className={`us-nav-item ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
+          )}
+          {canManageServer && (
+            <button className={`us-nav-item ${tab === 'media' ? 'active' : ''}`} onClick={() => setTab('media')}>Media</button>
           )}
           {canBan && (
             <>
@@ -766,6 +791,111 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                       <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {tab === 'media' && canManageServer && (
+              <div className="media-tab">
+                <div className="us-card">
+                  <div className="us-card-title">Linked Providers</div>
+                  {mediaConnections.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', padding: '12px 0' }}>No media providers linked yet.</p>
+                  ) : (
+                    <div className="mps-provider-list">
+                      {mediaConnections.map((conn) => (
+                        <div key={conn.id} className="mps-provider-card">
+                          <div className="mps-provider-info">
+                            <span className="mps-provider-name">{conn.displayName}</span>
+                            <span className="mps-provider-type">{conn.providerType}</span>
+                          </div>
+                          <button
+                            className="btn-danger-sm"
+                            onClick={async () => {
+                              try {
+                                await useMediaProviderStore.getState().unlinkProvider(serverId, conn.id);
+                              } catch (e) {
+                                console.error('Failed to unlink:', e);
+                              }
+                            }}
+                          >
+                            Unlink
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Link Provider</div>
+                  <div className="mps-form">
+                    <div className="mps-form-row">
+                      <label className="mps-form-label">Provider</label>
+                      <select
+                        className="settings-select"
+                        value={mpProviderType}
+                        onChange={(e) => setMpProviderType(e.target.value)}
+                      >
+                        <option value="Plex">Plex</option>
+                      </select>
+                    </div>
+                    <div className="mps-form-row">
+                      <label className="mps-form-label">Display Name</label>
+                      <input
+                        className="mps-form-input"
+                        value={mpDisplayName}
+                        onChange={(e) => { setMpDisplayName(e.target.value); setMpError(''); }}
+                        placeholder="e.g. My Plex Server"
+                      />
+                    </div>
+                    <div className="mps-form-row">
+                      <label className="mps-form-label">Server URL</label>
+                      <input
+                        className="mps-form-input"
+                        value={mpServerUrl}
+                        onChange={(e) => { setMpServerUrl(e.target.value); setMpError(''); }}
+                        placeholder="http://192.168.1.100:32400"
+                      />
+                    </div>
+                    <div className="mps-form-row">
+                      <label className="mps-form-label">Auth Token</label>
+                      <input
+                        className="mps-form-input"
+                        type="password"
+                        value={mpAuthToken}
+                        onChange={(e) => { setMpAuthToken(e.target.value); setMpError(''); }}
+                        placeholder="Your Plex auth token"
+                      />
+                    </div>
+                    {mpError && <div className="server-error">{mpError}</div>}
+                    <button
+                      className="mps-link-btn"
+                      disabled={!mpDisplayName.trim() || !mpServerUrl.trim() || !mpAuthToken.trim() || mpLinking}
+                      onClick={async () => {
+                        setMpLinking(true);
+                        setMpError('');
+                        try {
+                          await useMediaProviderStore.getState().linkProvider(serverId, {
+                            providerType: mpProviderType,
+                            displayName: mpDisplayName.trim(),
+                            serverUrl: mpServerUrl.trim(),
+                            authToken: mpAuthToken.trim(),
+                          });
+                          setMpDisplayName('');
+                          setMpServerUrl('');
+                          setMpAuthToken('');
+                        } catch (err: unknown) {
+                          const msg = (err as { response?: { data?: string } })?.response?.data;
+                          setMpError(typeof msg === 'string' ? msg : 'Failed to link provider');
+                        } finally {
+                          setMpLinking(false);
+                        }
+                      }}
+                    >
+                      {mpLinking ? 'Linking...' : 'Link Provider'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

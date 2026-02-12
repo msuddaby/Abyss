@@ -202,7 +202,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((s) => {
       const next = new Map(s.activeCameras);
       next.delete(userId);
-      const clearFocus = s.focusedUserId === userId ? { focusedUserId: null } : {};
+      // Only clear focus if the user also has no active screen share
+      const stillSharing = s.activeSharers.has(userId);
+      const clearFocus = s.focusedUserId === userId && !stillSharing ? { focusedUserId: null } : {};
       return { activeCameras: next, ...clearFocus };
     }),
 
