@@ -20,9 +20,12 @@ let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
 let turnInitPromise: Promise<void> | null = null;
 const iceRestartInFlight: Set<string> = new Set();
 
-// Per-peer cooldown to prevent rapid ICE restart loops
+// Per-peer cooldown to prevent rapid ICE restart loops (exponential backoff)
 const lastIceRestartTime: Map<string, number> = new Map();
-const ICE_RESTART_COOLDOWN = 30_000; // 30s minimum between restarts per peer
+const iceRestartAttempts: Map<string, number> = new Map();
+const ICE_RESTART_BASE_COOLDOWN = 30_000; // 30s base cooldown
+const ICE_RESTART_MAX_COOLDOWN = 120_000; // 2 min max cooldown
+const MAX_ICE_RESTARTS = 5;
 
 // Flag to prevent the input device effect from re-obtaining a stream right after joinVoice
 let skipNextDeviceEffect = false;
@@ -37,6 +40,10 @@ const bufferedUserJoinedVoiceEvents: Map<string, string> = new Map();
 let pendingVisibilityRejoin = false;
 // Guard to prevent concurrent visibility-triggered rejoins
 let rejoinInProgress = false;
+
+// Monotonically-increasing session ID — incremented on cleanupAll() so that
+// any async work enqueued before cleanup can detect the session ended and bail.
+let voiceSessionId = 0;
 
 // All state is module-level so it's shared across hook instances
 const peers: Map<string, RTCPeerConnection> = new Map();
@@ -168,8 +175,13 @@ function enqueueSignaling(
   peerId: string,
   fn: () => Promise<void>,
 ): Promise<void> {
+  const sessionAtEnqueue = voiceSessionId;
   const prev = signalingQueues.get(peerId) ?? Promise.resolve();
-  const next = prev.then(() => fn(), () => fn()).catch((err) => {
+  const guarded = async () => {
+    if (voiceSessionId !== sessionAtEnqueue) return; // session ended, abort
+    await fn();
+  };
+  const next = prev.then(guarded, guarded).catch((err) => {
     console.error(`Signaling error for ${peerId}:`, err);
   });
   signalingQueues.set(peerId, next);
@@ -651,6 +663,8 @@ async function applyIceServersToPeers(iceServers: RTCIceServer[]) {
 // Nuclear recovery: tear down a broken PC and build a fresh one with a new offer.
 // Used when ICE restart fails (e.g. ERROR_CONTENT from SDP state corruption).
 async function recreatePeer(peerId: string) {
+  // Remember if this peer had screen tracks before closePeer() clears them
+  const hadScreenTracks = screenTrackSenders.has(peerId);
   await enqueueSignaling(peerId, async () => {
     console.warn(`Recreating peer connection for ${peerId}`);
     const pc = createPeerConnection(peerId);
@@ -666,6 +680,20 @@ async function recreatePeer(peerId: string) {
         cameraTrackSenders.set(peerId, sender);
       }
     }
+    // Restore screen share tracks for viewers who were watching
+    if (hadScreenTracks && screenStream) {
+      const videoTrack = screenStream.getVideoTracks()[0];
+      if (videoTrack) {
+        await sendTrackInfo(conn, peerId, "screen", videoTrack.id);
+        const senders: RTCRtpSender[] = [pc.addTrack(videoTrack, screenStream)];
+        const audioTrack = screenStream.getAudioTracks()[0];
+        if (audioTrack) {
+          await sendTrackInfo(conn, peerId, "screen-audio", audioTrack.id);
+          senders.push(pc.addTrack(audioTrack, screenStream));
+        }
+        screenTrackSenders.set(peerId, senders);
+      }
+    }
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     await conn.invoke(
@@ -679,10 +707,19 @@ async function recreatePeer(peerId: string) {
 async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
   if (iceRestartInFlight.has(peerId)) return;
 
-  // Enforce cooldown to prevent rapid restart loops
+  // Max restart limit — give up after MAX_ICE_RESTARTS consecutive failures
+  const attempts = iceRestartAttempts.get(peerId) ?? 0;
+  if (attempts >= MAX_ICE_RESTARTS) {
+    console.warn(`ICE restart limit reached for ${peerId} (${attempts} attempts), giving up`);
+    useToastStore.getState().addToast("Connection to a peer failed after multiple retries.", "error");
+    return;
+  }
+
+  // Exponential backoff cooldown: min(30s * 2^attempts, 120s)
+  const cooldown = Math.min(ICE_RESTART_BASE_COOLDOWN * Math.pow(2, attempts), ICE_RESTART_MAX_COOLDOWN);
   const lastRestart = lastIceRestartTime.get(peerId);
-  if (lastRestart && Date.now() - lastRestart < ICE_RESTART_COOLDOWN) {
-    console.log(`Skipping ICE restart for ${peerId} (cooldown, ${Math.round((ICE_RESTART_COOLDOWN - (Date.now() - lastRestart)) / 1000)}s remaining)`);
+  if (lastRestart && Date.now() - lastRestart < cooldown) {
+    console.log(`Skipping ICE restart for ${peerId} (cooldown, ${Math.round((cooldown - (Date.now() - lastRestart)) / 1000)}s remaining, attempt ${attempts})`);
     return;
   }
 
@@ -693,6 +730,7 @@ async function restartIceForPeer(peerId: string, _pc?: RTCPeerConnection) {
       const pc = peers.get(peerId);
       if (!pc || pc.signalingState !== "stable") return;
       lastIceRestartTime.set(peerId, Date.now());
+      iceRestartAttempts.set(peerId, attempts + 1);
       const offer = await pc.createOffer({ iceRestart: true });
       await pc.setLocalDescription(offer);
       const conn = getConnection();
@@ -970,9 +1008,10 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       useToastStore.getState().addToast("Connection issue detected. Reconnecting...", "error");
       restartIceForPeer(peerId, pc);
     } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
-      // Clear reconnect timer
+      // Clear reconnect timer and reset backoff
       const timer = iceReconnectTimers.get(peerId);
       if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
+      iceRestartAttempts.delete(peerId);
       // Check if ALL peers are connected
       let allConnected = true;
       for (const [, p] of peers) {
@@ -1031,6 +1070,9 @@ function closePeer(peerId: string) {
   const hadCamera = cameraVideoStreams.delete(peerId);
   if (hadScreen) useVoiceStore.getState().bumpScreenStreamVersion();
   if (hadCamera) useVoiceStore.getState().bumpCameraStreamVersion();
+  // Clear UI state so phantom sharers/cameras don't linger
+  useVoiceStore.getState().removeActiveSharer(peerId);
+  useVoiceStore.getState().removeActiveCamera(peerId);
   pendingCandidates.delete(peerId);
   clearPendingTrackStateForPeer(peerId);
   screenTrackSenders.delete(peerId);
@@ -1038,11 +1080,13 @@ function closePeer(peerId: string) {
   iceRestartInFlight.delete(peerId);
   signalingQueues.delete(peerId);
   lastIceRestartTime.delete(peerId);
+  iceRestartAttempts.delete(peerId);
   const timer = iceReconnectTimers.get(peerId);
   if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
 }
 
 function cleanupAll() {
+  voiceSessionId++;
   peers.forEach((pc) => {
     pc.close();
   });
@@ -1070,6 +1114,7 @@ function cleanupAll() {
   cameraTrackSenders.clear();
   signalingQueues.clear();
   lastIceRestartTime.clear();
+  iceRestartAttempts.clear();
   // Clear ICE reconnect timers
   iceReconnectTimers.forEach((t) => clearTimeout(t));
   iceReconnectTimers.clear();
@@ -1196,6 +1241,11 @@ async function stopScreenShareInternal() {
   try {
     const conn = getConnection();
 
+    // Mark as not sharing BEFORE renegotiation so queued addVideoTrackForViewer calls bail out
+    const stoppingStream = screenStream;
+    screenStream = null;
+    voiceState.setScreenSharing(false);
+
     // Remove all screen tracks from all viewers we're sending to and renegotiate
     const shareEntries = Array.from(screenTrackSenders.entries());
     await Promise.all(
@@ -1232,12 +1282,9 @@ async function stopScreenShareInternal() {
     screenTrackSenders.clear();
 
     // Stop screen tracks
-    if (screenStream) {
-      screenStream.getTracks().forEach((track) => track.stop());
-      screenStream = null;
+    if (stoppingStream) {
+      stoppingStream.getTracks().forEach((track) => track.stop());
     }
-
-    voiceState.setScreenSharing(false);
 
     if (voiceState.currentChannelId) {
       await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, false);
@@ -1371,8 +1418,11 @@ async function addCameraTrackToPeer(
 // Called when a viewer requests to watch our stream
 async function addVideoTrackForViewer(viewerUserId: string) {
   await enqueueSignaling(viewerUserId, async () => {
+    if (!screenStream || !useVoiceStore.getState().isScreenSharing) {
+      console.log(`Ignoring watch request from ${viewerUserId}: not sharing`);
+      return;
+    }
     const activeScreenStream = screenStream;
-    if (!activeScreenStream) return;
     const pc = peers.get(viewerUserId);
     if (!pc) return;
 
@@ -1457,6 +1507,15 @@ export async function requestWatch(sharerUserId: string) {
   const conn = getConnection();
   useVoiceStore.getState().setWatching(sharerUserId);
   await conn.invoke("RequestWatchStream", sharerUserId);
+
+  // Timeout: if no screen stream arrives within 10s, clear watching state
+  setTimeout(() => {
+    if (useVoiceStore.getState().watchingUserId === sharerUserId &&
+        !screenVideoStreams.has(sharerUserId)) {
+      useVoiceStore.getState().setWatching(null);
+      useToastStore.getState().addToast("Failed to load screen share", "error");
+    }
+  }, 10_000);
 }
 
 export async function stopWatching() {
@@ -1565,6 +1624,96 @@ function beginInitialParticipantWait(conn: HubConnection) {
     console.warn("VoiceChannelUsers not received within 5s, replaying buffered join events");
     completeInitialParticipantWait(conn);
   }, INITIAL_PARTICIPANTS_TIMEOUT_MS);
+}
+
+async function attemptVoiceRejoin(reason: string) {
+  if (rejoinInProgress) {
+    console.log(`Rejoin already in progress, skipping (${reason})`);
+    return;
+  }
+  rejoinInProgress = true;
+  pendingVisibilityRejoin = false;
+
+  const channelId = useVoiceStore.getState().currentChannelId;
+  if (!channelId) {
+    rejoinInProgress = false;
+    return;
+  }
+
+  console.log(`Attempting voice rejoin (${reason}):`, channelId);
+  useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
+
+  // Clean up stale WebRTC state
+  cleanupAll();
+  useVoiceStore.getState().setScreenSharing(false);
+  useVoiceStore.getState().setActiveSharers(new Map());
+  useVoiceStore.getState().setWatching(null);
+  useVoiceStore.getState().setCameraOn(false);
+  useVoiceStore.getState().setActiveCameras(new Map());
+  useVoiceStore.getState().setFocusedUserId(null);
+
+  try {
+    await initializeTurn();
+    deviceResolutionFailed = false;
+
+    // Re-acquire microphone with current audio settings
+    const vs = useVoiceStore.getState();
+    const base: MediaTrackConstraints = {
+      noiseSuppression: vs.noiseSuppression,
+      echoCancellation: vs.echoCancellation,
+      autoGainControl: vs.autoGainControl,
+    };
+    let audioConstraints = base;
+    if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
+      const resolvedId = await resolveDefaultInputDevice();
+      if (resolvedId !== "default") {
+        audioConstraints = { ...base, deviceId: { exact: resolvedId } };
+      }
+    } else {
+      audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
+    }
+
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+    // Apply mute state
+    const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
+    localStream.getAudioTracks().forEach((t) => { t.enabled = shouldEnable; });
+
+    // Set up analyser for speaking indicator
+    const currentUser = useAuthStore.getState().user;
+    if (currentUser) addAnalyser(currentUser.id, localStream);
+
+    startAudioKeepAlive();
+    vs.setConnectionState("connected");
+
+    // Clear participants right before rejoining
+    useVoiceStore.getState().setParticipants(new Map());
+
+    // Rejoin on server - this will send us VoiceChannelUsers with authoritative state
+    skipNextDeviceEffect = true;
+    const conn = getConnection();
+    beginInitialParticipantWait(conn);
+    await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
+
+    startStatsCollection();
+
+    // Re-initialize voice chat
+    const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+    useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
+
+    useToastStore.getState().addToast("Reconnected to voice channel", "success");
+  } catch (err) {
+    cancelInitialParticipantWait();
+    console.error(`Failed to rejoin voice (${reason}):`, err);
+    useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
+    // Full cleanup on failure — drop user out of voice
+    cleanupAll();
+    useVoiceStore.getState().setCurrentChannel(null);
+    useVoiceStore.getState().setParticipants(new Map());
+    useVoiceChatStore.getState().clear();
+  } finally {
+    rejoinInProgress = false;
+  }
 }
 
 function setupSignalRListeners() {
@@ -1755,7 +1904,9 @@ function setupSignalRListeners() {
           if (!pendingCandidates.has(fromUserId)) {
             pendingCandidates.set(fromUserId, []);
           }
-          pendingCandidates.get(fromUserId)!.push(data);
+          const buf = pendingCandidates.get(fromUserId)!;
+          if (buf.length > 50) buf.shift(); // cap at 50, drop oldest
+          buf.push(data);
         }
       });
     }
@@ -2341,86 +2492,7 @@ export function useWebRTC() {
         console.log("SignalR reconnected but tab is hidden, will rejoin when visible");
         return;
       }
-      if (rejoinInProgress) {
-        console.log("Rejoin already in progress, skipping reconnect rejoin");
-        return;
-      }
-      rejoinInProgress = true;
-      pendingVisibilityRejoin = false;
-
-      console.log("SignalR reconnected while in voice channel, rejoining:", channelId);
-      useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
-
-      // Clean up stale WebRTC state (server already removed us on disconnect)
-      cleanupAll();
-      useVoiceStore.getState().setScreenSharing(false);
-      useVoiceStore.getState().setActiveSharers(new Map());
-      useVoiceStore.getState().setWatching(null);
-      useVoiceStore.getState().setCameraOn(false);
-      useVoiceStore.getState().setActiveCameras(new Map());
-      useVoiceStore.getState().setFocusedUserId(null);
-
-      try {
-        await initializeTurn();
-        deviceResolutionFailed = false;
-
-        // Re-acquire microphone with current audio settings
-        const vs = useVoiceStore.getState();
-        const base: MediaTrackConstraints = {
-          noiseSuppression: vs.noiseSuppression,
-          echoCancellation: vs.echoCancellation,
-          autoGainControl: vs.autoGainControl,
-        };
-        let audioConstraints = base;
-        if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
-          const resolvedId = await resolveDefaultInputDevice();
-          if (resolvedId !== "default") {
-            audioConstraints = { ...base, deviceId: { exact: resolvedId } };
-          }
-        } else {
-          audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
-        }
-
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-
-        // Apply mute state
-        const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
-        localStream.getAudioTracks().forEach((t) => { t.enabled = shouldEnable; });
-
-        // Set up analyser for speaking indicator
-        const currentUser = useAuthStore.getState().user;
-        if (currentUser) addAnalyser(currentUser.id, localStream);
-
-        startAudioKeepAlive();
-        vs.setConnectionState("connected");
-
-        // Clear participants right before rejoining to prevent race conditions
-        // (UserJoinedVoice events from other rejoining users might arrive before this)
-        useVoiceStore.getState().setParticipants(new Map());
-
-        // Rejoin on server - this will send us VoiceChannelUsers with authoritative state
-        skipNextDeviceEffect = true;
-        const conn = getConnection();
-        beginInitialParticipantWait(conn);
-        await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
-
-        startStatsCollection();
-
-        // Re-initialize voice chat
-        const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
-        useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
-      } catch (err) {
-        cancelInitialParticipantWait();
-        console.error("Failed to rejoin voice channel after reconnect:", err);
-        useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
-        // Full cleanup on failure — drop user out of voice
-        cleanupAll();
-        useVoiceStore.getState().setCurrentChannel(null);
-        useVoiceStore.getState().setParticipants(new Map());
-        useVoiceChatStore.getState().clear();
-      } finally {
-        rejoinInProgress = false;
-      }
+      await attemptVoiceRejoin("signalr-reconnect");
     });
   }, []);
 
@@ -2435,91 +2507,14 @@ export function useWebRTC() {
         return;
       }
 
-      if (rejoinInProgress) {
-        console.log("Rejoin already in progress, skipping visibility rejoin");
-        return;
-      }
-
       const connectionState = useVoiceStore.getState().connectionState;
       const forcedRejoinFromHiddenReconnect = pendingVisibilityRejoin;
-      // Existing recovery path: if we're supposed to be in voice but not connected, try to rejoin
       const disconnectedRecovery = connectionState !== "connected" && !localStream;
 
       if (forcedRejoinFromHiddenReconnect || disconnectedRecovery) {
         const conn = getConnection();
         if (conn.state === "Connected") {
-          rejoinInProgress = true;
-          if (forcedRejoinFromHiddenReconnect) {
-            console.log("Tab became visible with pending hidden reconnect, forcing voice rejoin");
-          } else {
-            console.log("Tab became visible, checking voice state and rejoining if needed");
-          }
-
-          try {
-            if (forcedRejoinFromHiddenReconnect) {
-              // Local media/peer state may still look connected while server-side membership was lost.
-              cleanupAll();
-              useVoiceStore.getState().setScreenSharing(false);
-              useVoiceStore.getState().setActiveSharers(new Map());
-              useVoiceStore.getState().setWatching(null);
-              useVoiceStore.getState().setCameraOn(false);
-              useVoiceStore.getState().setActiveCameras(new Map());
-              useVoiceStore.getState().setFocusedUserId(null);
-            }
-
-            // Re-acquire microphone
-            const vs = useVoiceStore.getState();
-            const base: MediaTrackConstraints = {
-              noiseSuppression: vs.noiseSuppression,
-              echoCancellation: vs.echoCancellation,
-              autoGainControl: vs.autoGainControl,
-            };
-            let audioConstraints = base;
-            if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
-              const resolvedId = await resolveDefaultInputDevice();
-              if (resolvedId !== "default") {
-                audioConstraints = { ...base, deviceId: { exact: resolvedId } };
-              }
-            } else {
-              audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
-            }
-
-            localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-
-            // Apply mute state
-            const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
-            localStream.getAudioTracks().forEach((t) => { t.enabled = shouldEnable; });
-
-            // Set up analyser
-            const currentUser = useAuthStore.getState().user;
-            if (currentUser) addAnalyser(currentUser.id, localStream);
-
-            startAudioKeepAlive();
-            vs.setConnectionState("connected");
-
-            // Clear participants and rejoin
-            useVoiceStore.getState().setParticipants(new Map());
-            beginInitialParticipantWait(conn);
-
-            skipNextDeviceEffect = true;
-            await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
-
-            startStatsCollection();
-
-            const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
-            useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
-
-            pendingVisibilityRejoin = false;
-            useToastStore.getState().addToast("Reconnected to voice channel", "success");
-          } catch (err) {
-            cancelInitialParticipantWait();
-            if (forcedRejoinFromHiddenReconnect) {
-              pendingVisibilityRejoin = true;
-            }
-            console.error("Failed to rejoin voice on visibility change:", err);
-          } finally {
-            rejoinInProgress = false;
-          }
+          await attemptVoiceRejoin(forcedRejoinFromHiddenReconnect ? "visibility-pending" : "visibility-recovery");
         }
       }
     };

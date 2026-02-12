@@ -343,19 +343,16 @@ public class ChatHub : Hub
                     return;
                 }
 
-                // Check if user was screen sharing before leaving
-                var wasSharing = _voiceState.IsScreenSharing(voiceChannel.Value, UserId);
+                // Atomically remove screen share / camera state (no TOCTOU)
+                var wasSharing = _voiceState.RemoveScreenSharer(voiceChannel.Value, UserId);
                 if (wasSharing)
                 {
-                    _voiceState.RemoveScreenSharer(voiceChannel.Value, UserId);
                     await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("ScreenShareStopped", UserId);
                 }
 
-                // Check if user had camera on before leaving
-                var hadCamera = _voiceState.IsCameraOn(voiceChannel.Value, UserId);
+                var hadCamera = _voiceState.RemoveCameraUser(voiceChannel.Value, UserId);
                 if (hadCamera)
                 {
-                    _voiceState.RemoveCameraUser(voiceChannel.Value, UserId);
                     await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("CameraStopped", UserId);
                 }
 
@@ -962,19 +959,16 @@ public class ChatHub : Hub
         // Leave any existing voice channel from THIS connection
         if (currentChannel.HasValue)
         {
-            // Clear screen share if leaving while sharing
-            var wasSharing = _voiceState.IsScreenSharing(currentChannel.Value, UserId);
+            // Atomically remove screen share / camera state (no TOCTOU)
+            var wasSharing = _voiceState.RemoveScreenSharer(currentChannel.Value, UserId);
             if (wasSharing)
             {
-                _voiceState.RemoveScreenSharer(currentChannel.Value, UserId);
                 await Clients.Group($"voice:{currentChannel.Value}").SendAsync("ScreenShareStopped", UserId);
             }
 
-            // Clear camera if leaving while camera was on
-            var hadCamera = _voiceState.IsCameraOn(currentChannel.Value, UserId);
+            var hadCamera = _voiceState.RemoveCameraUser(currentChannel.Value, UserId);
             if (hadCamera)
             {
-                _voiceState.RemoveCameraUser(currentChannel.Value, UserId);
                 await Clients.Group($"voice:{currentChannel.Value}").SendAsync("CameraStopped", UserId);
             }
 
@@ -1088,19 +1082,16 @@ public class ChatHub : Hub
         var channelGuid = currentChannel.Value;
         var resolvedChannelId = channelGuid.ToString();
 
-        // Clear screen share if leaving while sharing
-        var wasSharing = _voiceState.IsScreenSharing(channelGuid, UserId);
+        // Atomically remove screen share / camera state (no TOCTOU)
+        var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
         if (wasSharing)
         {
-            _voiceState.RemoveScreenSharer(channelGuid, UserId);
             await Clients.Group($"voice:{resolvedChannelId}").SendAsync("ScreenShareStopped", UserId);
         }
 
-        // Clear camera if leaving while camera was on
-        var hadCamera = _voiceState.IsCameraOn(channelGuid, UserId);
+        var hadCamera = _voiceState.RemoveCameraUser(channelGuid, UserId);
         if (hadCamera)
         {
-            _voiceState.RemoveCameraUser(channelGuid, UserId);
             await Clients.Group($"voice:{resolvedChannelId}").SendAsync("CameraStopped", UserId);
         }
 
@@ -1147,6 +1138,7 @@ public class ChatHub : Hub
     public async Task NotifyScreenShare(string channelId, bool isSharing)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (!_voiceState.IsUserInChannel(channelGuid, UserId)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null || !channel.ServerId.HasValue) return;
         if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Stream)) return;
@@ -1216,11 +1208,15 @@ public class ChatHub : Hub
         // Refresh voice activity timestamp
         _voiceState.TouchUser(UserId);
 
+        // Verify target is in the same voice channel
+        var targetChannel = _voiceState.GetUserChannel(targetUserId);
+        if (!targetChannel.HasValue || targetChannel.Value != senderChannel.Value) return;
+
         // Route only to the target user's voice connection — not all their connections.
         // If signals are sent to non-voice connections (e.g. a browser tab), those
         // connections create broken peer connections that interfere with the real session.
         var voiceConnId = _voiceState.GetVoiceConnectionId(targetUserId);
-        if (voiceConnId == null) return;
+        if (voiceConnId == null || !_connections.ContainsKey(voiceConnId)) return;
 
         await Clients.Client(voiceConnId).SendAsync("ReceiveSignal", UserId, signal);
     }
@@ -1257,6 +1253,7 @@ public class ChatHub : Hub
     public async Task NotifyCamera(string channelId, bool isOn)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (!_voiceState.IsUserInChannel(channelGuid, UserId)) return;
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null || !channel.ServerId.HasValue) return;
         if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Stream)) return;

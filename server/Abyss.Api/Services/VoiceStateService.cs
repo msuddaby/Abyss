@@ -22,6 +22,9 @@ public class VoiceStateService
     // userId -> connectionId that owns the voice session
     private readonly ConcurrentDictionary<string, string> _voiceConnections = new();
 
+    // userId -> channelId (inverse lookup for O(1) GetUserChannel / TouchUser)
+    private readonly ConcurrentDictionary<string, Guid> _userChannels = new();
+
     // channelId -> {userId -> displayName} of active screen sharers
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _activeSharers = new();
 
@@ -41,6 +44,7 @@ public class VoiceStateService
             LastSeen = DateTime.UtcNow,
         };
         _voiceConnections[userId] = connectionId;
+        _userChannels[userId] = channelId;
     }
 
     public void LeaveChannel(Guid channelId, string userId)
@@ -56,6 +60,7 @@ public class VoiceStateService
         if (!removedFromChannel) return;
 
         _voiceConnections.TryRemove(userId, out _);
+        _userChannels.TryRemove(userId, out _);
 
         // Remove this user from screen sharers if they were sharing
         RemoveScreenSharer(channelId, userId);
@@ -76,6 +81,7 @@ public class VoiceStateService
         }
 
         _voiceConnections.TryRemove(userId, out _);
+        _userChannels.TryRemove(userId, out _);
     }
 
     /// <summary>
@@ -117,12 +123,7 @@ public class VoiceStateService
 
     public Guid? GetUserChannel(string userId)
     {
-        foreach (var (channelId, users) in _voiceChannels)
-        {
-            if (users.ContainsKey(userId))
-                return channelId;
-        }
-        return null;
+        return _userChannels.TryGetValue(userId, out var ch) ? ch : null;
     }
 
     public Dictionary<string, string> GetChannelUsersDisplayNames(Guid channelId)
@@ -277,13 +278,10 @@ public class VoiceStateService
     /// </summary>
     public void TouchUser(string userId)
     {
-        foreach (var (_, users) in _voiceChannels)
+        if (!_userChannels.TryGetValue(userId, out var channelId)) return;
+        if (_voiceChannels.TryGetValue(channelId, out var users) && users.TryGetValue(userId, out var state))
         {
-            if (users.TryGetValue(userId, out var state))
-            {
-                state.LastSeen = DateTime.UtcNow;
-                return;
-            }
+            state.LastSeen = DateTime.UtcNow;
         }
     }
 
@@ -304,6 +302,7 @@ public class VoiceStateService
                 {
                     users.TryRemove(userId, out _);
                     _voiceConnections.TryRemove(userId, out _);
+                    _userChannels.TryRemove(userId, out _);
                     RemoveScreenSharer(channelId, userId);
                     RemoveCameraUser(channelId, userId);
                     removed.Add((channelId, userId));
