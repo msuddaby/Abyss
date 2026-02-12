@@ -20,6 +20,7 @@ public class WatchPartyState
     public List<QueueItemDto> Queue { get; set; } = new();
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public string? ProviderType { get; set; }
+    public string? PlaybackUrl { get; set; }
 }
 
 public class WatchPartyService

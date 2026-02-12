@@ -48,6 +48,16 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
       return;
     }
 
+    // Use the shared playback URL from the server if available (avoids duplicate Plex transcode sessions)
+    if (activeParty.playbackUrl) {
+      const token = localStorage.getItem('token');
+      const separator = activeParty.playbackUrl.includes('?') ? '&' : '?';
+      const apiBase = import.meta.env.VITE_API_URL || '';
+      setPlaybackUrl(`${apiBase}${activeParty.playbackUrl}${token ? `${separator}token=${token}` : ''}`);
+      return;
+    }
+
+    // Fallback: fetch individually (backwards compat)
     const fetchUrl = async () => {
       const info = await useMediaProviderStore.getState().getPlaybackInfo(
         activeServer.id,
@@ -57,7 +67,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
       if (info) setPlaybackUrl(info.url);
     };
     fetchUrl();
-  }, [activeParty?.providerItemId, activeParty?.mediaProviderConnectionId, activeServer?.id, isYouTube]);
+  }, [activeParty?.providerItemId, activeParty?.mediaProviderConnectionId, activeServer?.id, isYouTube, activeParty?.playbackUrl]);
 
   // Initialize player when URL is available
   useEffect(() => {

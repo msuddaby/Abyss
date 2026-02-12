@@ -23,19 +23,25 @@ public class WatchPartyController : ControllerBase
     private readonly IHubContext<ChatHub> _hub;
     private readonly WatchPartyService _watchPartyService;
     private readonly VoiceStateService _voiceState;
+    private readonly MediaProviderFactory _providerFactory;
+    private readonly ProviderConfigProtector _protector;
 
     public WatchPartyController(
         AppDbContext db,
         PermissionService perms,
         IHubContext<ChatHub> hub,
         WatchPartyService watchPartyService,
-        VoiceStateService voiceState)
+        VoiceStateService voiceState,
+        MediaProviderFactory providerFactory,
+        ProviderConfigProtector protector)
     {
         _db = db;
         _perms = perms;
         _hub = hub;
         _watchPartyService = watchPartyService;
         _voiceState = voiceState;
+        _providerFactory = providerFactory;
+        _protector = protector;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -91,6 +97,40 @@ public class WatchPartyController : ControllerBase
             StartedAt = DateTime.UtcNow,
             ProviderType = connection.ProviderType.ToString()
         };
+
+        // Fetch a shared playback URL for non-YouTube providers so all clients
+        // use the same Plex transcode session instead of each creating their own
+        if (connection.ProviderType != MediaProviderType.YouTube)
+        {
+            try
+            {
+                var provider = _providerFactory.GetProvider(connection.ProviderType);
+                if (provider != null)
+                {
+                    var configJson = _protector.Decrypt(connection.ProviderConfigJson);
+                    var playback = await provider.GetPlaybackInfoAsync(configJson, req.ProviderItemId);
+                    if (playback != null)
+                    {
+                        if (playback.ContentType == "application/x-mpegURL")
+                        {
+                            var plexUri = new Uri(playback.Url);
+                            var plexPath = System.Text.RegularExpressions.Regex.Replace(
+                                plexUri.PathAndQuery, @"[&?]X-Plex-Token=[^&]*", "");
+                            state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/hls?path={Uri.EscapeDataString(plexPath)}";
+                        }
+                        else
+                        {
+                            state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/stream/{Uri.EscapeDataString(req.ProviderItemId)}";
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal — clients can still fall back to fetching their own URL
+                Console.WriteLine($"Failed to pre-fetch playback URL for watch party: {ex.Message}");
+            }
+        }
 
         _watchPartyService.StartParty(channelId, state);
 
@@ -238,5 +278,5 @@ public class WatchPartyController : ControllerBase
         state.HostUserId, state.ProviderItemId, state.ItemTitle,
         state.ItemThumbnail, state.ItemDurationMs, state.CurrentTimeMs,
         state.IsPlaying, state.LastSyncAt, state.Queue, state.StartedAt,
-        state.ProviderType);
+        state.ProviderType, state.PlaybackUrl);
 }

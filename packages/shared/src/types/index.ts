@@ -317,6 +317,7 @@ export interface WatchParty {
   queue: QueueItem[];
   startedAt: string;
   providerType?: string;
+  playbackUrl?: string;
 }
 
 export interface YouTubeResolveResult {
