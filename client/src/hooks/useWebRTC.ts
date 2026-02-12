@@ -1195,6 +1195,19 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       const senders = pc.getSenders();
       const receivers = pc.getReceivers();
       console.log(`[ice] Connected to ${peerId} | senders: [${senders.map(s => `${s.track?.kind ?? "null"}:${s.track?.id.slice(0,8) ?? "none"} enabled=${s.track?.enabled}`).join(", ")}] | receivers: [${receivers.map(r => `${r.track?.kind ?? "null"}:${r.track?.id.slice(0,8) ?? "none"} readyState=${r.track?.readyState}`).join(", ")}] | audioEls=${audioElements.has(peerId)} screenAudioEls=${screenAudioElements.has(peerId)} gainNode=${gainNodes.has(peerId)}`);
+      // Retry play() on paused audio elements — browsers can leave them paused
+      // when play() was called before ICE connected (no data flowing yet)
+      for (const [label, elMap] of [["mic", audioElements], ["screen", screenAudioElements]] as const) {
+        const audio = elMap.get(peerId);
+        if (audio && audio.paused && audio.srcObject) {
+          console.log(`[ice] Retrying ${label} audio play() for ${peerId} after ICE connected`);
+          audio.play().then(() => {
+            console.log(`[ice] ${label} audio play() succeeded for ${peerId} (paused=${audio.paused})`);
+          }).catch((err) => {
+            console.warn(`[ice] ${label} audio play() failed for ${peerId}:`, err);
+          });
+        }
+      }
       // Clear reconnect timer and reset backoff
       const timer = iceReconnectTimers.get(peerId);
       if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
