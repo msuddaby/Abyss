@@ -1,4 +1,4 @@
-import { useDmStore, useMessageStore, useServerStore } from '@abyss/shared';
+import { useDmStore, useFriendStore, useMessageStore, useServerStore, useToastStore } from '@abyss/shared';
 import type { MenuItem, ProviderContext } from '../types';
 
 export function userProvider(ctx: ProviderContext): MenuItem[] {
@@ -38,6 +38,28 @@ export function userProvider(ctx: ProviderContext): MenuItem[] {
         fetchMessages(dm.id);
       },
     });
+
+    // Check if already friends or pending
+    const { friends, requests } = useFriendStore.getState();
+    const isFriend = friends.some((f) => f.user.id === user.id);
+    const isPending = requests.some((r) => r.user.id === user.id);
+
+    if (!isFriend && !isPending) {
+      items.push({
+        id: 'user-add-friend',
+        label: 'Add Friend',
+        group: 'user',
+        order: 2,
+        action: async () => {
+          try {
+            await useFriendStore.getState().sendRequest(user.id);
+            useToastStore.getState().addToast('Friend request sent!', 'success');
+          } catch (err: any) {
+            useToastStore.getState().addToast(err?.response?.data || 'Failed to send request', 'error');
+          }
+        },
+      });
+    }
   }
 
   return items;
