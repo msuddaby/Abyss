@@ -219,11 +219,15 @@ let deviceResolutionFailed = false;
 function ensureAudioContext(): AudioContext {
   if (!audioContext || audioContext.state === "closed") {
     audioContext = new AudioContext();
+    console.log(`[AudioCtx] Created new AudioContext (state: ${audioContext.state}, sampleRate: ${audioContext.sampleRate})`);
   }
   // Resume if suspended (can happen when tab is backgrounded)
   if (audioContext.state === "suspended") {
-    audioContext.resume().catch((err) => {
-      console.warn("Failed to resume audio context:", err);
+    console.log("[AudioCtx] AudioContext is suspended, attempting resume...");
+    audioContext.resume().then(() => {
+      console.log(`[AudioCtx] Resume succeeded (state: ${audioContext?.state})`);
+    }).catch((err) => {
+      console.warn("[AudioCtx] Resume failed:", err);
     });
   }
   return audioContext;
@@ -425,11 +429,13 @@ function applyOutputDevice(audio: HTMLAudioElement, deviceId: string) {
 }
 
 export async function attemptAudioUnlock() {
+  console.log(`[audioUnlock] Attempting audio unlock (AudioCtx state=${audioContext?.state ?? "null"}, audioElements=${audioElements.size}, screenAudioElements=${screenAudioElements.size})`);
   if (audioContext && audioContext.state === "suspended") {
     try {
       await audioContext.resume();
+      console.log(`[audioUnlock] AudioContext resumed successfully (state=${audioContext.state})`);
     } catch (err) {
-      console.warn("Failed to resume audio context:", err);
+      console.warn("[audioUnlock] Failed to resume audio context:", err);
     }
   }
 
@@ -669,7 +675,7 @@ async function recreatePeer(peerId: string) {
   // Remember if this peer had screen tracks before closePeer() clears them
   const hadScreenTracks = screenTrackSenders.has(peerId);
   await enqueueSignaling(peerId, async () => {
-    console.warn(`Recreating peer connection for ${peerId}`);
+    console.warn(`[recreate] Recreating peer connection for ${peerId} (hadScreenTracks=${hadScreenTracks}, hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream}, hasScreenStream=${!!screenStream})`);
     const pc = createPeerConnection(peerId);
     if (localStream) {
       localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
@@ -775,13 +781,30 @@ function queueTrackInfo(peerId: string, trackType: TrackInfoType, trackId?: stri
   pendingLegacyTrackTypes.get(peerId)!.push(trackType);
 }
 
-function consumeTrackInfo(peerId: string, trackId: string): TrackInfoType | undefined {
+function consumeTrackInfo(peerId: string, trackId: string, trackKind?: string): TrackInfoType | undefined {
   const byId = pendingTrackInfoById.get(peerId);
   if (byId?.has(trackId)) {
     const trackType = byId.get(trackId)!;
     byId.delete(trackId);
     if (byId.size === 0) pendingTrackInfoById.delete(peerId);
     return trackType;
+  }
+
+  // Fallback: trackId didn't match — try to find a pending track-info whose
+  // expected media kind matches.  WebRTC can assign different track IDs on the
+  // receiver side across renegotiation in some browser combinations.
+  if (byId && trackKind) {
+    const audioTypes: TrackInfoType[] = ["screen-audio"];
+    const videoTypes: TrackInfoType[] = ["screen", "camera"];
+    const kindTypes = trackKind === "audio" ? audioTypes : videoTypes;
+    for (const [storedId, trackType] of byId) {
+      if (kindTypes.includes(trackType)) {
+        console.warn(`consumeTrackInfo: trackId mismatch for ${peerId} (expected ${storedId}, got ${trackId}), using kind-based fallback → ${trackType}`);
+        byId.delete(storedId);
+        if (byId.size === 0) pendingTrackInfoById.delete(peerId);
+        return trackType;
+      }
+    }
   }
 
   const legacyQueue = pendingLegacyTrackTypes.get(peerId);
@@ -834,14 +857,31 @@ function inferVideoTrackType(peerId: string): TrackInfoType {
   return "camera";
 }
 
+function inferAudioTrackType(peerId: string): TrackInfoType | undefined {
+  // If we already have mic audio playing for this peer, a second audio track
+  // is almost certainly screen-audio (tab/system audio from their screen share).
+  if (audioElements.has(peerId)) {
+    const store = useVoiceStore.getState();
+    if (store.watchingUserId === peerId || store.activeSharers.has(peerId)) {
+      console.warn(`track-info missing: inferring screen-audio from ${peerId} (already have mic audio)`);
+      return "screen-audio";
+    }
+  }
+  // First audio track — treat as mic audio (undefined = mic)
+  return undefined;
+}
+
 function applyIncomingRemoteTrack(
   peerId: string,
   track: MediaStreamTrack,
   stream: MediaStream,
   trackType?: TrackInfoType,
 ) {
+  console.log(`[applyTrack] peerId=${peerId} kind=${track.kind} trackType=${trackType ?? "undefined"} trackId=${track.id.slice(0,8)} readyState=${track.readyState} | existing: audioEl=${audioElements.has(peerId)} screenAudioEl=${screenAudioElements.has(peerId)} screenVideo=${screenVideoStreams.has(peerId)} cameraVideo=${cameraVideoStreams.has(peerId)}`);
   if (track.kind === "audio") {
-    const isScreenAudio = trackType === "screen-audio";
+    const resolvedAudioType = trackType ?? inferAudioTrackType(peerId);
+    console.log(`[applyTrack] Audio resolved type: ${resolvedAudioType ?? "mic"} (explicit trackType=${trackType ?? "none"}, inferred=${resolvedAudioType ?? "mic"})`);
+    const isScreenAudio = resolvedAudioType === "screen-audio";
     if (isScreenAudio) {
       let audio = screenAudioElements.get(peerId);
       if (!audio) {
@@ -854,11 +894,15 @@ function applyIncomingRemoteTrack(
       applyOutputDevice(audio, currentOutputDeviceId);
       audio.srcObject = stream;
       audio.muted = useVoiceStore.getState().isDeafened;
+      console.log(`[applyTrack] Screen audio element for ${peerId}: muted=${audio.muted} volume=${audio.volume}`);
       audio
         .play()
-        .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+        .then(() => {
+          console.log(`[applyTrack] Screen audio play() succeeded for ${peerId}`);
+          useVoiceStore.getState().setNeedsAudioUnlock(false);
+        })
         .catch((err) => {
-          console.error("Screen audio play failed:", err);
+          console.error(`[applyTrack] Screen audio play() FAILED for ${peerId}:`, err);
           useVoiceStore.getState().setNeedsAudioUnlock(true);
         });
       return;
@@ -878,29 +922,68 @@ function applyIncomingRemoteTrack(
     // Route through GainNode for per-user volume control (0-200%)
     try {
       const ctx = ensureAudioContext();
-      // Clean up previous gain chain for this peer
-      const prev = gainNodes.get(peerId);
-      if (prev) prev.source.disconnect();
-      const source = ctx.createMediaStreamSource(stream);
-      const gain = ctx.createGain();
-      const dest = ctx.createMediaStreamDestination();
-      source.connect(gain);
-      gain.connect(dest);
-      const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
-      gain.gain.value = vol / 100;
-      gainNodes.set(peerId, { source, gain, dest });
-      audio.srcObject = dest.stream;
+      // If the AudioContext is not running (suspended / blocked by autoplay policy),
+      // use the raw stream directly so audio plays immediately.  Re-route through
+      // the GainNode chain once the context is actually running.
+      if (ctx.state !== "running") {
+        console.warn(`AudioContext is ${ctx.state} — using raw stream for ${peerId}, will re-route once running`);
+        audio.srcObject = stream;
+        const capturedPeerId = peerId;
+        const capturedStream = stream;
+        ctx.resume().then(() => {
+          // Re-route through GainNode now that the context is running
+          const currentAudio = audioElements.get(capturedPeerId);
+          if (!currentAudio) return;
+          try {
+            const prev = gainNodes.get(capturedPeerId);
+            if (prev) prev.source.disconnect();
+            const source = ctx.createMediaStreamSource(capturedStream);
+            const gain = ctx.createGain();
+            const dest = ctx.createMediaStreamDestination();
+            source.connect(gain);
+            gain.connect(dest);
+            const vol = useVoiceStore.getState().userVolumes.get(capturedPeerId) ?? 100;
+            gain.gain.value = vol / 100;
+            gainNodes.set(capturedPeerId, { source, gain, dest });
+            currentAudio.srcObject = dest.stream;
+            console.log(`AudioContext resumed — re-routed ${capturedPeerId} through GainNode`);
+          } catch (err) {
+            console.warn("GainNode re-route failed:", err);
+          }
+        }).catch((err) => {
+          console.warn("AudioContext resume failed:", err);
+        });
+      } else {
+        // Clean up previous gain chain for this peer
+        const prev = gainNodes.get(peerId);
+        if (prev) prev.source.disconnect();
+        const source = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        const dest = ctx.createMediaStreamDestination();
+        source.connect(gain);
+        gain.connect(dest);
+        const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
+        gain.gain.value = vol / 100;
+        gainNodes.set(peerId, { source, gain, dest });
+        audio.srcObject = dest.stream;
+        console.log(`[applyTrack] GainNode chain created for ${peerId} (gain=${gain.gain.value}, AudioCtx state=${ctx.state})`);
+      }
     } catch (err) {
-      console.warn("GainNode chain failed, using raw stream:", err);
+      console.warn("[applyTrack] GainNode chain failed, using raw stream:", err);
       audio.srcObject = stream;
     }
 
-    audio.muted = useVoiceStore.getState().isDeafened;
+    const isDeafened = useVoiceStore.getState().isDeafened;
+    audio.muted = isDeafened;
+    console.log(`[applyTrack] Mic audio element for ${peerId}: muted=${audio.muted} volume=${audio.volume} deafened=${isDeafened} srcObject=${audio.srcObject ? "set" : "null"}`);
     audio
       .play()
-      .then(() => useVoiceStore.getState().setNeedsAudioUnlock(false))
+      .then(() => {
+        console.log(`[applyTrack] Mic audio play() succeeded for ${peerId} (paused=${audio!.paused})`);
+        useVoiceStore.getState().setNeedsAudioUnlock(false);
+      })
       .catch((err) => {
-        console.error("Audio play failed:", err);
+        console.error(`[applyTrack] Mic audio play() FAILED for ${peerId}:`, err);
         useVoiceStore.getState().setNeedsAudioUnlock(true);
       });
     // Analyser uses original raw stream (unaffected by volume)
@@ -925,10 +1008,12 @@ function resolvePendingRemoteTrack(peerId: string, trackId: string) {
   const pendingTrack = pendingForPeer?.get(trackId);
   if (!pendingTrack) return;
 
+  clearTimeout(pendingTrack.timeout);
   pendingForPeer!.delete(trackId);
   if (!pendingForPeer!.size) pendingRemoteTracks.delete(peerId);
 
-  const trackType = consumeTrackInfo(peerId, trackId);
+  const trackType = consumeTrackInfo(peerId, trackId, pendingTrack.track.kind);
+  console.log(`[resolve] Resolved pending ${pendingTrack.track.kind} track ${trackId.slice(0,8)} from ${peerId} → type=${trackType ?? "mic"}`);
   applyIncomingRemoteTrack(peerId, pendingTrack.track, pendingTrack.stream, trackType);
 }
 
@@ -940,7 +1025,13 @@ function queuePendingRemoteTrack(peerId: string, track: MediaStreamTrack, stream
   const existing = pendingForPeer.get(track.id);
   if (existing) clearTimeout(existing.timeout);
 
+  // Dump pending track-info state for debugging
+  const pendingInfos = pendingTrackInfoById.get(peerId);
+  const infoEntries = pendingInfos ? Array.from(pendingInfos.entries()).map(([id, type]) => `${id.slice(0,8)}→${type}`).join(", ") : "none";
+  console.log(`[queue] Queuing ${track.kind} track ${track.id.slice(0,8)} from ${peerId} (pending track-infos: [${infoEntries}])`);
+
   const timeout = setTimeout(() => {
+    console.log(`[queue] Timeout expired for ${track.kind} track ${track.id.slice(0,8)} from ${peerId}, resolving now`);
     resolvePendingRemoteTrack(peerId, track.id);
   }, TRACK_INFO_WAIT_TIMEOUT_MS);
 
@@ -961,6 +1052,7 @@ async function sendTrackInfo(
 }
 
 function createPeerConnection(peerId: string): RTCPeerConnection {
+  console.log(`[peer] Creating new peer connection for ${peerId} (existing peers: ${Array.from(peers.keys()).join(", ") || "none"}, ICE servers: ${currentIceServers.map(s => Array.isArray(s.urls) ? s.urls[0] : s.urls).join(", ")})`);
   closePeer(peerId);
   pendingCandidates.delete(peerId);
   const pc = new RTCPeerConnection({ iceServers: currentIceServers });
@@ -1011,6 +1103,10 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
       useToastStore.getState().addToast("Connection issue detected. Reconnecting...", "error");
       restartIceForPeer(peerId, pc);
     } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+      // Log peer summary on successful connection
+      const senders = pc.getSenders();
+      const receivers = pc.getReceivers();
+      console.log(`[ice] Connected to ${peerId} | senders: [${senders.map(s => `${s.track?.kind ?? "null"}:${s.track?.id.slice(0,8) ?? "none"} enabled=${s.track?.enabled}`).join(", ")}] | receivers: [${receivers.map(r => `${r.track?.kind ?? "null"}:${r.track?.id.slice(0,8) ?? "none"} readyState=${r.track?.readyState}`).join(", ")}] | audioEls=${audioElements.has(peerId)} screenAudioEls=${screenAudioElements.has(peerId)} gainNode=${gainNodes.has(peerId)}`);
       // Clear reconnect timer and reset backoff
       const timer = iceReconnectTimers.get(peerId);
       if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
@@ -1030,16 +1126,18 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
 
   pc.ontrack = (event) => {
     const track = event.track;
-    console.log(`Got remote ${track.kind} track from ${peerId}`);
     const stream =
       event.streams && event.streams.length > 0
         ? event.streams[0]
         : new MediaStream([track]);
-    const trackType = consumeTrackInfo(peerId, track.id);
+    console.log(`[ontrack] Got remote ${track.kind} track from ${peerId} | trackId=${track.id} readyState=${track.readyState} enabled=${track.enabled} muted=${track.muted} | stream tracks: ${stream.getTracks().map(t => `${t.kind}:${t.id.slice(0,8)}`).join(", ")} | hasStreams=${!!event.streams?.length}`);
+    const trackType = consumeTrackInfo(peerId, track.id, track.kind);
     if (trackType) {
+      console.log(`[ontrack] Matched track-info immediately: ${trackType}`);
       applyIncomingRemoteTrack(peerId, track, stream, trackType);
       return;
     }
+    console.log(`[ontrack] No track-info match, queuing for ${TRACK_INFO_WAIT_TIMEOUT_MS}ms`);
     queuePendingRemoteTrack(peerId, track, stream);
   };
 
@@ -1049,6 +1147,7 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
 function closePeer(peerId: string) {
   const pc = peers.get(peerId);
   if (pc) {
+    console.log(`[peer] Closing peer ${peerId} (connectionState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
     pc.close();
     peers.delete(peerId);
   }
@@ -1144,17 +1243,31 @@ async function replaceLocalAudioStream(newStream: MediaStream) {
   const newTrack = newStream.getAudioTracks()[0];
   if (!newTrack) return;
 
-  for (const pc of peers.values()) {
-    const sender = pc
-      .getSenders()
-      .find((s) => s.track && s.track.kind === "audio");
+  console.log(`[replaceAudio] Replacing local audio stream (newTrackId=${newTrack.id.slice(0,8)} enabled=${newTrack.enabled} readyState=${newTrack.readyState})`);
+
+  // Collect screen-audio track IDs so we skip them — only replace the mic sender
+  const screenAudioTrackIds = new Set<string>();
+  for (const senders of screenTrackSenders.values()) {
+    for (const s of senders) {
+      if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+    }
+  }
+  if (screenAudioTrackIds.size > 0) {
+    console.log(`[replaceAudio] Skipping ${screenAudioTrackIds.size} screen-audio senders`);
+  }
+
+  for (const [peerId, pc] of peers) {
+    const allAudioSenders = pc.getSenders().filter(s => s.track?.kind === "audio");
+    const sender = allAudioSenders.find(s => !screenAudioTrackIds.has(s.track!.id));
     if (sender) {
+      console.log(`[replaceAudio] Replacing mic sender for ${peerId} (oldTrackId=${sender.track?.id.slice(0,8)}, ${allAudioSenders.length} total audio senders)`);
       try {
         await sender.replaceTrack(newTrack);
       } catch (err) {
-        console.warn("Failed to replace audio track:", err);
+        console.warn(`[replaceAudio] Failed to replace audio track for ${peerId}:`, err);
       }
     } else {
+      console.log(`[replaceAudio] No mic sender found for ${peerId}, adding new track (${allAudioSenders.length} audio senders, all screen-audio)`);
       pc.addTrack(newTrack, newStream);
     }
   }
@@ -1216,7 +1329,10 @@ async function startScreenShareInternal() {
       });
     }
 
-    const videoTrack = screenStream.getVideoTracks()[0];
+    const videoTracks = screenStream.getVideoTracks();
+    const audioTracks = screenStream.getAudioTracks();
+    console.log(`[screenShare] Started screen capture: ${videoTracks.length} video + ${audioTracks.length} audio tracks (isLinuxElectron=${isLinuxElectron})`);
+    const videoTrack = videoTracks[0];
 
     // Handle browser "Stop sharing" button
     videoTrack.onended = () => {
@@ -1251,6 +1367,7 @@ async function stopScreenShareInternal() {
 
     // Remove all screen tracks from all viewers we're sending to and renegotiate
     const shareEntries = Array.from(screenTrackSenders.entries());
+    console.log(`[screenShare] Stopping screen share, removing tracks from ${shareEntries.length} viewer(s): ${shareEntries.map(([id]) => id).join(", ")}`);
     await Promise.all(
       shareEntries.map(([viewerId, senders]) =>
         enqueueSignaling(viewerId, async () => {
@@ -1431,11 +1548,13 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
     const conn = getConnection();
     const senders: RTCRtpSender[] = [];
+    const existingSenders = pc.getSenders();
+    console.log(`[screenShare] Adding screen tracks for viewer ${viewerUserId} (existing senders: ${existingSenders.map(s => `${s.track?.kind}:${s.track?.id.slice(0,8)}`).join(", ")})`);
 
     // Add video tracks with track-info so the receiver knows it's a screen track
     for (const track of activeScreenStream.getVideoTracks()) {
       await sendTrackInfo(conn, viewerUserId, "screen", track.id);
-      console.log(`Adding screen video track for viewer ${viewerUserId}`);
+      console.log(`[screenShare] Adding screen video track for viewer ${viewerUserId} (trackId=${track.id.slice(0,8)})`);
       senders.push(pc.addTrack(track, activeScreenStream));
     }
 
@@ -1444,7 +1563,7 @@ async function addVideoTrackForViewer(viewerUserId: string) {
     // overwriting the mic audio.
     for (const track of activeScreenStream.getAudioTracks()) {
       await sendTrackInfo(conn, viewerUserId, "screen-audio", track.id);
-      console.log(`Adding screen audio track for viewer ${viewerUserId}`);
+      console.log(`[screenShare] Adding screen audio track for viewer ${viewerUserId} (trackId=${track.id.slice(0,8)})`);
       senders.push(pc.addTrack(track, activeScreenStream));
     }
 
@@ -1563,9 +1682,9 @@ async function handleUserJoinedVoice(
     const pc = createPeerConnection(userId);
 
     // Add audio tracks only - screen track is added lazily on WatchStreamRequested
-    localStream!
-      .getTracks()
-      .forEach((track) => pc.addTrack(track, localStream!));
+    const localTracks = localStream!.getTracks();
+    console.log(`[join] Adding ${localTracks.length} local tracks for ${userId}: ${localTracks.map(t => `${t.kind}:${t.id.slice(0,8)} enabled=${t.enabled} readyState=${t.readyState}`).join(", ")}`);
+    localTracks.forEach((track) => pc.addTrack(track, localStream!));
 
     // Add camera track if camera is on (eager - send track-info first)
     if (cameraStream) {
@@ -1578,8 +1697,10 @@ async function handleUserJoinedVoice(
     }
 
     const offer = await pc.createOffer();
+    const audioLines = (offer.sdp?.match(/m=audio/g) || []).length;
+    const videoLines = (offer.sdp?.match(/m=video/g) || []).length;
     await pc.setLocalDescription(offer);
-    console.log(`Sending offer to ${userId}`);
+    console.log(`Sending offer to ${userId} (m=audio:${audioLines}, m=video:${videoLines}, senders=${pc.getSenders().length})`);
     await conn.invoke(
       "SendSignal",
       userId,
@@ -1763,6 +1884,7 @@ function setupSignalRListeners() {
         return;
       }
       const trackId = typeof data.trackId === "string" ? data.trackId : undefined;
+      console.log(`[track-info] Received from ${fromUserId}: type=${data.trackType} trackId=${trackId?.slice(0,8) ?? "none"}`);
       queueTrackInfo(fromUserId, data.trackType, trackId);
       if (trackId) {
         resolvePendingRemoteTrack(fromUserId, trackId);
@@ -1790,17 +1912,22 @@ function setupSignalRListeners() {
           if (pc.signalingState === "have-local-offer") {
             // Deterministic tiebreaker — "polite" peer yields its offer
             const isPolite = currentUser!.id > fromUserId;
+            console.log(`[glare] Detected with ${fromUserId} | myId=${currentUser!.id} > remoteId=${fromUserId} → ${isPolite ? "polite (we yield)" : "impolite (we win)"}`);
             if (!isPolite) {
-              console.log(`Glare with ${fromUserId}: we are impolite, ignoring remote offer`);
+              console.log(`[glare] Ignoring remote offer, waiting for answer to our offer`);
               return;
             }
-            console.log(`Glare with ${fromUserId}: we are polite, rolling back`);
+            console.log(`[glare] Rolling back our offer, will answer remote offer instead`);
             await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
+            console.log(`[glare] Rollback complete, signalingState=${pc.signalingState}`);
           }
 
           // Renegotiation: reuse existing connection — flush stale candidates
           pendingCandidates.delete(fromUserId);
           try {
+            const audioLines = (data.sdp.match(/m=audio/g) || []).length;
+            const videoLines = (data.sdp.match(/m=video/g) || []).length;
+            console.log(`[offer] Renegotiating with ${fromUserId} (sigState=${pc.signalingState}, m=audio:${audioLines}, m=video:${videoLines}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
             await pc.setRemoteDescription(
               new RTCSessionDescription({ type: "offer", sdp: data.sdp }),
             );
@@ -1843,11 +1970,12 @@ function setupSignalRListeners() {
           }
         } else {
           // New connection — audio only, screen track added lazily
+          console.log(`[offer] New connection from ${fromUserId} (hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream})`);
           pc = createPeerConnection(fromUserId);
           if (localStream) {
-            localStream
-              .getTracks()
-              .forEach((track) => pc!.addTrack(track, localStream!));
+            const tracks = localStream.getTracks();
+            console.log(`[offer] Adding ${tracks.length} local tracks: ${tracks.map(t => `${t.kind}:${t.id.slice(0,8)} enabled=${t.enabled}`).join(", ")}`);
+            tracks.forEach((track) => pc!.addTrack(track, localStream!));
           }
           // Add camera track if camera is on (eager — send track-info before answer)
           if (cameraStream) {
@@ -1863,8 +1991,10 @@ function setupSignalRListeners() {
           );
           await applyPendingCandidates(fromUserId);
           const answer = await pc.createAnswer();
+          const aLines = (answer.sdp?.match(/m=audio/g) || []).length;
+          const vLines = (answer.sdp?.match(/m=video/g) || []).length;
           await pc.setLocalDescription(answer);
-          console.log(`Sending answer to ${fromUserId}`);
+          console.log(`Sending answer to ${fromUserId} (m=audio:${aLines}, m=video:${vLines}, senders=${pc.getSenders().length})`);
           await conn.invoke(
             "SendSignal",
             fromUserId,
@@ -1884,16 +2014,23 @@ function setupSignalRListeners() {
         }
 
         const pc = peers.get(fromUserId);
-        if (!pc) return;
-        if (pc.signalingState !== "have-local-offer") {
-          console.warn(`Ignoring stale answer from ${fromUserId} (state: ${pc.signalingState})`);
+        if (!pc) {
+          console.warn(`[answer] No peer connection for ${fromUserId}, ignoring answer`);
           return;
         }
+        if (pc.signalingState !== "have-local-offer") {
+          console.warn(`[answer] Ignoring stale answer from ${fromUserId} (state: ${pc.signalingState})`);
+          return;
+        }
+        const audioLines = (data.sdp.match(/m=audio/g) || []).length;
+        const videoLines = (data.sdp.match(/m=video/g) || []).length;
+        console.log(`[answer] Applying answer from ${fromUserId} (m=audio:${audioLines}, m=video:${videoLines}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
         const fixedSdp = fixDtlsRoleInAnswerSdp(pc, data.sdp);
         await pc.setRemoteDescription(
           new RTCSessionDescription({ type: "answer", sdp: fixedSdp }),
         );
         await applyPendingCandidates(fromUserId);
+        console.log(`[answer] Answer applied for ${fromUserId}, receivers now: ${pc.getReceivers().map(r => `${r.track?.kind}:${r.track?.id.slice(0,8)}`).join(", ")}`);
       });
     } else if (data.candidate) {
       await enqueueSignaling(fromUserId, async () => {
@@ -2326,9 +2463,10 @@ export function useWebRTC() {
             audio: audioConstraints,
           };
           localStream = await navigator.mediaDevices.getUserMedia(constraints);
+          const audioTracks = localStream.getAudioTracks();
           console.log(
-            "Got local audio stream, tracks:",
-            localStream.getAudioTracks().length,
+            `Got local audio stream, tracks: ${audioTracks.length}`,
+            audioTracks.map(t => `id=${t.id.slice(0,8)} enabled=${t.enabled} readyState=${t.readyState} label="${t.label}"`).join(", "),
           );
         } catch (err) {
           console.error("Could not access microphone:", err);
@@ -2341,6 +2479,7 @@ export function useWebRTC() {
         const shouldEnable =
           !voiceState.isMuted &&
           (voiceState.voiceMode === "voice-activity" || voiceState.isPttActive);
+        console.log(`[join] Track enabled=${shouldEnable} (muted=${voiceState.isMuted}, voiceMode=${voiceState.voiceMode}, pttActive=${voiceState.isPttActive})`);
         localStream.getAudioTracks().forEach((track) => {
           track.enabled = shouldEnable;
         });
