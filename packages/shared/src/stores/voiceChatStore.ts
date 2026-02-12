@@ -70,7 +70,7 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
     if (!isOwnMessage && !message.isSystem && useVoiceStore.getState().voiceChatDesktopNotify && isElectron()) {
       const preview = message.content.replace(/<:(\w+):\w+>/g, ':$1:').slice(0, 100)
         || (message.attachments?.length > 0 ? 'sent an attachment' : '');
-      window.electron!.isFocused().then((focused) => {
+      window.electron!.isFocused().then((focused: boolean) => {
         if (!focused) {
           const serverId = useServerStore.getState().activeServer?.id ?? null;
           window.electron!.showNotification(

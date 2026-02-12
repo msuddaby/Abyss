@@ -549,7 +549,7 @@ export function useWebRTC() {
           noiseSuppression,
           echoCancellation,
           autoGainControl,
-        },
+        } as any,
       }) as MediaStream;
       console.log('[WebRTC] Got local audio stream, tracks:', localStream.getAudioTracks().length);
     } catch (err) {

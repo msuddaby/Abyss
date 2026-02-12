@@ -310,7 +310,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bgSecondary,
   } as ViewStyle,
   connectButton: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.bgAccent,
     borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
     alignItems: 'center',

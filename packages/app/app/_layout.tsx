@@ -68,10 +68,19 @@ export default function RootLayout() {
         const serverId = data.serverId as string | undefined;
 
         // Set active server/channel and navigate
+        const store = useServerStore.getState();
         if (serverId) {
-          useServerStore.getState().setActiveServer(serverId);
+          const server = store.servers.find((s) => s.id === serverId);
+          if (server) {
+            store.setActiveServer(server).then(() => {
+              const ch = useServerStore.getState().channels.find((c) => c.id === channelId);
+              if (ch) useServerStore.getState().setActiveChannel(ch);
+            });
+          }
+        } else {
+          const ch = store.channels.find((c) => c.id === channelId);
+          if (ch) store.setActiveChannel(ch);
         }
-        useServerStore.getState().setActiveChannel(channelId);
         router.push('/(main)');
       }
     });
