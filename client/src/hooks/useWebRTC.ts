@@ -80,8 +80,10 @@ const pendingLegacyTrackTypes: Map<string, TrackInfoType[]> = new Map();
 // peerId -> trackId -> pending track waiting for matching track-info
 const pendingRemoteTracks: Map<string, Map<string, PendingRemoteTrack>> = new Map();
 
-// Per-peer GainNode chain for user volume control (0-200%)
-const gainNodes: Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; dest: MediaStreamAudioDestinationNode }> = new Map();
+// Per-peer GainNode chain for volume boost (>100% only)
+const gainNodes: Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; dest: MediaStreamAudioDestinationNode | null }> = new Map();
+// Per-peer raw stream reference for volume changes that need to set up/teardown GainNode boost
+const peerStreams: Map<string, MediaStream> = new Map();
 
 // Connection stats
 export interface ConnectionStats {
@@ -631,12 +633,47 @@ export function getLocalCameraStream(): MediaStream | null {
 }
 
 export function applyUserVolume(peerId: string, volume: number) {
-  const entry = gainNodes.get(peerId);
-  if (entry) {
-    const now = entry.gain.context.currentTime;
-    entry.gain.gain.cancelScheduledValues(now);
-    entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
-    entry.gain.gain.linearRampToValueAtTime(volume / 100, now + 0.05);
+  const audio = audioElements.get(peerId);
+  const stream = peerStreams.get(peerId);
+
+  if (volume <= 100) {
+    // 0-100%: use audio.volume, tear down any GainNode boost
+    const entry = gainNodes.get(peerId);
+    if (entry) {
+      entry.source.disconnect();
+      gainNodes.delete(peerId);
+      // Restore raw stream on audio element (GainNode was routing to ctx.destination)
+      if (audio && stream) {
+        audio.srcObject = stream;
+        audio.play().catch(() => {});
+      }
+    }
+    if (audio) audio.volume = volume / 100;
+  } else {
+    // >100%: route through GainNode → audioContext.destination for boost
+    const entry = gainNodes.get(peerId);
+    if (entry) {
+      // Already boosted, just update gain
+      const now = entry.gain.context.currentTime;
+      entry.gain.gain.cancelScheduledValues(now);
+      entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
+      entry.gain.gain.linearRampToValueAtTime(volume / 100, now + 0.05);
+    } else if (stream) {
+      // Set up boost chain
+      try {
+        const ctx = ensureAudioContext();
+        const source = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        gain.gain.value = volume / 100;
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        gainNodes.set(peerId, { source, gain, dest: null as any });
+        if (audio) audio.volume = 0; // mute element, GainNode handles output
+      } catch (err) {
+        console.warn("[applyUserVolume] GainNode boost setup failed:", err);
+        if (audio) audio.volume = 1.0; // fallback to max non-boosted
+      }
+    }
   }
 }
 
@@ -986,10 +1023,48 @@ function applyIncomingRemoteTrack(
     }
     applyOutputDevice(audio, currentOutputDeviceId);
 
-    // DEBUG: Skip GainNode chain, use raw stream directly to diagnose audio issues
+    // Use raw WebRTC stream directly on the audio element for reliable playback.
+    // createMediaStreamDestination() streams don't play reliably in all browsers.
+    // Volume control uses audio.volume (0-100%) with GainNode boost for >100%.
     audio.srcObject = stream;
-    console.log(`[applyTrack] Using raw stream for ${peerId} (GainNode bypassed for debugging)`);
-    // TODO: Restore GainNode chain once raw stream audio is confirmed working
+    const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
+    if (vol <= 100) {
+      audio.volume = vol / 100;
+    } else {
+      // For >100% boost, route through GainNode → audioContext.destination
+      // and mute the direct audio element to avoid double playback
+      audio.volume = 1.0;
+      try {
+        const ctx = ensureAudioContext();
+        const setupBoost = () => {
+          try {
+            const prev = gainNodes.get(peerId);
+            if (prev) prev.source.disconnect();
+            const source = ctx.createMediaStreamSource(stream);
+            const gain = ctx.createGain();
+            gain.gain.value = vol / 100;
+            source.connect(gain);
+            gain.connect(ctx.destination);
+            gainNodes.set(peerId, { source, gain, dest: null as any });
+            audio.volume = 0; // mute element, GainNode handles output
+            console.log(`[applyTrack] GainNode boost active for ${peerId} (gain=${gain.gain.value})`);
+          } catch (err) {
+            console.warn("[applyTrack] GainNode boost failed, using audio.volume=1:", err);
+            audio.volume = 1.0;
+          }
+        };
+        if (ctx.state === "running") {
+          setupBoost();
+        } else {
+          ctx.resume().then(setupBoost).catch(() => {});
+        }
+      } catch (err) {
+        console.warn("[applyTrack] AudioContext error:", err);
+        audio.volume = 1.0;
+      }
+    }
+    console.log(`[applyTrack] Raw stream set for ${peerId} (volume=${audio.volume})`);
+    peerStreams.set(peerId, stream);
 
     const isDeafened = useVoiceStore.getState().isDeafened;
     audio.muted = isDeafened;
@@ -1218,6 +1293,7 @@ function closePeer(peerId: string) {
     screenAudioElements.delete(peerId);
   }
   removeAnalyser(peerId);
+  peerStreams.delete(peerId);
   const gainEntry = gainNodes.get(peerId);
   if (gainEntry) { gainEntry.source.disconnect(); gainNodes.delete(peerId); }
   const hadScreen = screenVideoStreams.delete(peerId);
@@ -1258,6 +1334,7 @@ function cleanupAll() {
   });
   screenAudioElements.clear();
   cleanupAnalysers();
+  peerStreams.clear();
   gainNodes.forEach((entry) => entry.source.disconnect());
   gainNodes.clear();
   screenVideoStreams.clear();
