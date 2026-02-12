@@ -945,6 +945,22 @@ function applyIncomingRemoteTrack(
       applyOutputDevice(audio, currentOutputDeviceId);
       audio.srcObject = stream;
       audio.muted = useVoiceStore.getState().isDeafened;
+      track.onmute = () => {
+        console.log(`[applyTrack] Screen audio track muted for ${peerId} (${track.id.slice(0,8)})`);
+      };
+      track.onunmute = () => {
+        console.log(`[applyTrack] Screen audio track unmuted for ${peerId} (${track.id.slice(0,8)}), retrying play()`);
+        audio
+          .play()
+          .then(() => {
+            console.log(`[applyTrack] Screen audio play() on unmute succeeded for ${peerId} (paused=${audio!.paused})`);
+            useVoiceStore.getState().setNeedsAudioUnlock(false);
+          })
+          .catch((err) => {
+            console.error(`[applyTrack] Screen audio play() on unmute FAILED for ${peerId}:`, err);
+            useVoiceStore.getState().setNeedsAudioUnlock(true);
+          });
+      };
       console.log(`[applyTrack] Screen audio element for ${peerId}: muted=${audio.muted} volume=${audio.volume}`);
       audio
         .play()
@@ -1026,6 +1042,22 @@ function applyIncomingRemoteTrack(
 
     const isDeafened = useVoiceStore.getState().isDeafened;
     audio.muted = isDeafened;
+    track.onmute = () => {
+      console.log(`[applyTrack] Mic audio track muted for ${peerId} (${track.id.slice(0,8)})`);
+    };
+    track.onunmute = () => {
+      console.log(`[applyTrack] Mic audio track unmuted for ${peerId} (${track.id.slice(0,8)}), retrying play()`);
+      audio
+        .play()
+        .then(() => {
+          console.log(`[applyTrack] Mic audio play() on unmute succeeded for ${peerId} (paused=${audio!.paused})`);
+          useVoiceStore.getState().setNeedsAudioUnlock(false);
+        })
+        .catch((err) => {
+          console.error(`[applyTrack] Mic audio play() on unmute FAILED for ${peerId}:`, err);
+          useVoiceStore.getState().setNeedsAudioUnlock(true);
+        });
+    };
     console.log(`[applyTrack] Mic audio element for ${peerId}: muted=${audio.muted} volume=${audio.volume} deafened=${isDeafened} srcObject=${audio.srcObject ? "set" : "null"}`);
     audio
       .play()
