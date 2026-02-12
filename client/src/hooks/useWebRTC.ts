@@ -1482,6 +1482,22 @@ async function handleUserJoinedVoice(
   if (userId === currentUser?.id || !localStream) return;
 
   await enqueueSignaling(userId, async () => {
+    // Idempotency: skip if we already have a healthy peer for this user.
+    // This prevents duplicate handleUserJoinedVoice calls (e.g. from both
+    // buffered replay and VoiceChannelUsers reconciliation) from tearing
+    // down a working connection and triggering repeated renegotiation.
+    const existingPc = peers.get(userId);
+    if (
+      existingPc &&
+      existingPc.connectionState !== "failed" &&
+      existingPc.connectionState !== "closed"
+    ) {
+      console.log(
+        `Skipping duplicate peer setup for ${userId} (state: ${existingPc.connectionState})`,
+      );
+      return;
+    }
+
     const pc = createPeerConnection(userId);
 
     // Add audio tracks only - screen track is added lazily on WatchStreamRequested
@@ -1748,6 +1764,11 @@ function setupSignalRListeners() {
   conn.on("VoiceChannelUsers", (users: Record<string, string>) => {
     const authoritative = new Map(Object.entries(users));
     useVoiceStore.getState().setParticipants(authoritative);
+
+    // Capture which users are pending in the buffer before replay clears them,
+    // so reconciliation below doesn't double-trigger handleUserJoinedVoice.
+    const pendingFromBuffer = new Set(bufferedUserJoinedVoiceEvents.keys());
+
     completeInitialParticipantWait(conn);
     console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
 
@@ -1762,11 +1783,11 @@ function setupSignalRListeners() {
       }
     }
     // Create peers for users present on server but missing locally (not during initial join —
-    // those are handled by buffered join replay)
+    // those are handled by buffered join replay above)
     if (localStream) {
       for (const [userId, displayName] of authoritative) {
         if (userId === myId) continue;
-        if (!peers.has(userId)) {
+        if (!peers.has(userId) && !pendingFromBuffer.has(userId)) {
           console.log(`Reconciliation: creating missing peer for ${userId}`);
           void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
             console.warn(`Reconciliation: failed to create peer for ${userId}:`, err);

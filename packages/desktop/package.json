@@ -10,7 +10,8 @@
     "build": "tsc",
     "rebuild": "electron-rebuild",
     "postinstall": "electron-rebuild",
-    "make": "cd ../../client && ELECTRON=true npx vite build && cd ../packages/desktop && tsc && electron-forge make",
+    "make": "electron-forge make",
+    "make:full": "cd ../../client && ELECTRON=true npx vite build && cd ../packages/desktop && tsc && electron-forge make",
     "package": "electron-forge package"
   },
   "keywords": [],
