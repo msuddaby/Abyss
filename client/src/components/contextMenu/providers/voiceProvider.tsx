@@ -1,4 +1,4 @@
-import { useVoiceStore, useVoiceChatStore } from '@abyss/shared';
+import { useVoiceChatStore } from '@abyss/shared';
 import type { MenuItem, ProviderContext } from '../types';
 
 export function voiceProvider(ctx: ProviderContext): MenuItem[] {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useServerStore, useAuthStore, useMediaProviderStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
-import type { AuditLog, ServerRole, ServerMember, MediaProviderConnection } from '@abyss/shared';
+import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -163,7 +163,6 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
 
   // Media provider state
   const mediaConnections = useMediaProviderStore((s) => s.connections);
-  const mediaLoading = useMediaProviderStore((s) => s.isLoading);
   const [mpProviderType, setMpProviderType] = useState('Plex');
   const [mpDisplayName, setMpDisplayName] = useState('');
   const [mpServerUrl, setMpServerUrl] = useState('');

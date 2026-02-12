@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useWatchPartyStore } from '@abyss/shared';
 import type { QueueItem } from '@abyss/shared';
 

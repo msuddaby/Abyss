@@ -24,7 +24,6 @@ export default function WatchPartyPlayer() {
   const containerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<PlayerAdapter | null>(null);
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastCommandTimeRef = useRef<number>(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);

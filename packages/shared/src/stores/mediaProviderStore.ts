@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo, MediaProviderType } from '../types/index.js';
+import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo } from '../types/index.js';
 
 interface MediaProviderState {
   connections: MediaProviderConnection[];
@@ -23,7 +23,7 @@ interface MediaProviderState {
   clearLibrary: () => void;
 }
 
-export const useMediaProviderStore = create<MediaProviderState>((set, get) => ({
+export const useMediaProviderStore = create<MediaProviderState>((set) => ({
   connections: [],
   libraries: [],
   libraryItems: [],
