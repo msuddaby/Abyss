@@ -27,8 +27,11 @@ const ICE_RESTART_BASE_COOLDOWN = 30_000; // 30s base cooldown
 const ICE_RESTART_MAX_COOLDOWN = 120_000; // 2 min max cooldown
 const MAX_ICE_RESTARTS = 5;
 
-// Flag to prevent the input device effect from re-obtaining a stream right after joinVoice
-let skipNextDeviceEffect = false;
+// Timestamp of the last joinVoice or rejoin — the input device effect skips
+// re-acquiring a stream if we joined within the last 2 seconds to avoid a
+// redundant replaceTrack during the critical initial negotiation window.
+let lastVoiceJoinTime = 0;
+const DEVICE_EFFECT_SKIP_WINDOW_MS = 2000;
 
 // Flag to buffer UserJoinedVoice events while waiting for initial VoiceChannelUsers
 let waitingForInitialParticipants = false;
@@ -1690,7 +1693,7 @@ async function attemptVoiceRejoin(reason: string) {
     useVoiceStore.getState().setParticipants(new Map());
 
     // Rejoin on server - this will send us VoiceChannelUsers with authoritative state
-    skipNextDeviceEffect = true;
+    lastVoiceJoinTime = Date.now();
     const conn = getConnection();
     beginInitialParticipantWait(conn);
     await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
@@ -2208,8 +2211,7 @@ export function useWebRTC() {
   // Switch input device / processing while connected
   useEffect(() => {
     if (!currentChannelId) return;
-    if (skipNextDeviceEffect) {
-      skipNextDeviceEffect = false;
+    if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) {
       return;
     }
     let cancelled = false;
@@ -2383,7 +2385,7 @@ export function useWebRTC() {
         voiceState.setConnectionState("connected");
         // Prevent the input device effect from re-obtaining a stream
         // — joinVoice already has the right stream
-        skipNextDeviceEffect = true;
+        lastVoiceJoinTime = Date.now();
         setCurrentChannel(channelId);
 
         // Start collecting connection quality stats
