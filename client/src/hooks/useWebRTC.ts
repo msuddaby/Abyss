@@ -986,59 +986,10 @@ function applyIncomingRemoteTrack(
     }
     applyOutputDevice(audio, currentOutputDeviceId);
 
-    // Route through GainNode for per-user volume control (0-200%)
-    try {
-      const ctx = ensureAudioContext();
-      // If the AudioContext is not running (suspended / blocked by autoplay policy),
-      // use the raw stream directly so audio plays immediately.  Re-route through
-      // the GainNode chain once the context is actually running.
-      if (ctx.state !== "running") {
-        console.warn(`AudioContext is ${ctx.state} — using raw stream for ${peerId}, will re-route once running`);
-        audio.srcObject = stream;
-        const capturedPeerId = peerId;
-        const capturedStream = stream;
-        ctx.resume().then(() => {
-          // Re-route through GainNode now that the context is running
-          const currentAudio = audioElements.get(capturedPeerId);
-          if (!currentAudio) return;
-          try {
-            const prev = gainNodes.get(capturedPeerId);
-            if (prev) prev.source.disconnect();
-            const source = ctx.createMediaStreamSource(capturedStream);
-            const gain = ctx.createGain();
-            const dest = ctx.createMediaStreamDestination();
-            source.connect(gain);
-            gain.connect(dest);
-            const vol = useVoiceStore.getState().userVolumes.get(capturedPeerId) ?? 100;
-            gain.gain.value = vol / 100;
-            gainNodes.set(capturedPeerId, { source, gain, dest });
-            currentAudio.srcObject = dest.stream;
-            console.log(`AudioContext resumed — re-routed ${capturedPeerId} through GainNode`);
-          } catch (err) {
-            console.warn("GainNode re-route failed:", err);
-          }
-        }).catch((err) => {
-          console.warn("AudioContext resume failed:", err);
-        });
-      } else {
-        // Clean up previous gain chain for this peer
-        const prev = gainNodes.get(peerId);
-        if (prev) prev.source.disconnect();
-        const source = ctx.createMediaStreamSource(stream);
-        const gain = ctx.createGain();
-        const dest = ctx.createMediaStreamDestination();
-        source.connect(gain);
-        gain.connect(dest);
-        const vol = useVoiceStore.getState().userVolumes.get(peerId) ?? 100;
-        gain.gain.value = vol / 100;
-        gainNodes.set(peerId, { source, gain, dest });
-        audio.srcObject = dest.stream;
-        console.log(`[applyTrack] GainNode chain created for ${peerId} (gain=${gain.gain.value}, AudioCtx state=${ctx.state})`);
-      }
-    } catch (err) {
-      console.warn("[applyTrack] GainNode chain failed, using raw stream:", err);
-      audio.srcObject = stream;
-    }
+    // DEBUG: Skip GainNode chain, use raw stream directly to diagnose audio issues
+    audio.srcObject = stream;
+    console.log(`[applyTrack] Using raw stream for ${peerId} (GainNode bypassed for debugging)`);
+    // TODO: Restore GainNode chain once raw stream audio is confirmed working
 
     const isDeafened = useVoiceStore.getState().isDeafened;
     audio.muted = isDeafened;
