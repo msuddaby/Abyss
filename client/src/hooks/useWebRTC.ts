@@ -215,6 +215,12 @@ let audioKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
 
 // Track if device resolution is causing issues
 let deviceResolutionFailed = false;
+// Firefox interoperability: toggling track.enabled for voice-activity can
+// stick remote audio as muted in Firefox -> Chromium sessions. Keep sender
+// enabled on Firefox and gate only by mute/PTT state.
+const SHOULD_GATE_VA_WITH_TRACK_ENABLED =
+  typeof navigator === "undefined" ||
+  !navigator.userAgent.toLowerCase().includes("firefox");
 
 function ensureAudioContext(): AudioContext {
   if (!audioContext || audioContext.state === "closed") {
@@ -475,6 +481,11 @@ function addAnalyser(userId: string, stream: MediaStream) {
   // Without this, disabling track.enabled causes the analyser to read silence,
   // preventing voice activity detection from ever re-enabling the track.
   const analysisStream = stream.clone();
+  // Ensure analyser input is always active even if the source stream was muted
+  // when the clone was created (e.g. joining while muted, then unmuting later).
+  analysisStream.getAudioTracks().forEach((track) => {
+    track.enabled = true;
+  });
   const source = ctx.createMediaStreamSource(analysisStream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
@@ -527,8 +538,13 @@ function startAnalyserLoop() {
           const now = Date.now();
           const aboveThreshold = rms >= threshold;
           if (aboveThreshold) vaLastAboveThresholdAt = now;
-          // Hold mic open for VA_HOLD_OPEN_MS after last above-threshold sample
-          const enabled = !store.isMuted && (now - vaLastAboveThresholdAt < VA_HOLD_OPEN_MS);
+          const shouldGateByActivity = SHOULD_GATE_VA_WITH_TRACK_ENABLED;
+          // Hold mic open for VA_HOLD_OPEN_MS after last above-threshold sample.
+          // On Firefox, avoid toggling track.enabled for VA; keep sender active.
+          const enabled =
+            !store.isMuted &&
+            (!shouldGateByActivity ||
+              now - vaLastAboveThresholdAt < VA_HOLD_OPEN_MS);
           localStream.getAudioTracks().forEach((track) => {
             if (track.enabled !== enabled) track.enabled = enabled;
           });
@@ -2269,9 +2285,10 @@ export function useWebRTC() {
         localStream.getAudioTracks().forEach((track) => {
           track.enabled = enabled;
         });
-      } else if (isMuted) {
+      } else {
+        const enabled = !isMuted;
         localStream.getAudioTracks().forEach((track) => {
-          track.enabled = false;
+          track.enabled = enabled;
         });
       }
     }
