@@ -1488,6 +1488,30 @@ public class ChatHub : Hub
         ");
     }
 
+    // Soundboard
+    public async Task PlaySoundboardClip(string channelId, string clipId)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (!Guid.TryParse(clipId, out var clipGuid)) return;
+
+        // Verify user is in voice channel
+        var userChannel = _voiceState.GetUserChannel(UserId);
+        if (!userChannel.HasValue || userChannel.Value != channelGuid) return;
+
+        // Get channel → server
+        var channel = await _db.Channels.FindAsync(channelGuid);
+        if (channel == null || !channel.ServerId.HasValue) return;
+
+        // Check UseSoundboard permission
+        if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.UseSoundboard)) return;
+
+        // Load clip and verify it belongs to this server
+        var clip = await _db.SoundboardClips.FirstOrDefaultAsync(sc => sc.Id == clipGuid && sc.ServerId == channel.ServerId.Value);
+        if (clip == null) return;
+
+        await Clients.Group($"voice:{channelId}").SendAsync("SoundboardClipPlayed", channelId, clip.Url, clip.Name, UserId);
+    }
+
     // Get online user IDs (for @here mention resolution)
     public static HashSet<string> GetOnlineUserIds()
     {

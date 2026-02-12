@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
-import { useServerStore, useAuthStore, useMediaProviderStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
+import { useState, useEffect, useRef } from 'react';
+import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
+import AudioTrimmer from './AudioTrimmer';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -27,6 +28,8 @@ const ACTION_LABELS: Record<string, string> = {
   MediaProviderUnlinked: 'Unlinked media provider',
   WatchPartyStarted: 'Started watch party',
   WatchPartyStopped: 'Stopped watch party',
+  SoundboardClipUploaded: 'Uploaded soundboard clip',
+  SoundboardClipDeleted: 'Deleted soundboard clip',
 };
 
 const ACTION_ICONS: Record<string, string> = {
@@ -54,6 +57,8 @@ const ACTION_ICONS: Record<string, string> = {
   MediaProviderUnlinked: '\u{274C}',
   WatchPartyStarted: '\u{1F389}',
   WatchPartyStopped: '\u{23F9}',
+  SoundboardClipUploaded: '\u{1F50A}',
+  SoundboardClipDeleted: '\u{274C}',
 };
 
 const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: string; description: string }[] }[] = [
@@ -94,6 +99,8 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
       { perm: Permission.Connect, label: 'Connect', description: 'Join voice channels' },
       { perm: Permission.Speak, label: 'Speak', description: 'Talk in voice channels' },
       { perm: Permission.Stream, label: 'Stream', description: 'Share screen in voice channels' },
+      { perm: Permission.ManageSoundboard, label: 'Manage Soundboard', description: 'Upload and delete soundboard clips' },
+      { perm: Permission.UseSoundboard, label: 'Use Soundboard', description: 'Play soundboard clips in voice channels' },
     ],
   },
 ];
@@ -110,7 +117,7 @@ function formatTimestamp(dateStr: string) {
   return d.toLocaleString();
 }
 
-type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'media' | 'bans' | 'audit' | 'danger';
+type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'soundboard' | 'media' | 'bans' | 'audit' | 'danger';
 
 export default function ServerSettingsModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -129,6 +136,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const canBan = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
   const canViewAuditLog = currentMember ? hasPermission(currentMember, Permission.ViewAuditLog) : false;
   const canManageEmojis = currentMember ? hasPermission(currentMember, Permission.ManageEmojis) : false;
+  const canManageSoundboard = currentMember ? hasPermission(currentMember, Permission.ManageSoundboard) : false;
   const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
   const canManageAnyMembers = canManageRoles || canKick || canBan;
 
@@ -160,6 +168,17 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [emojiPreview, setEmojiPreview] = useState<string | null>(null);
   const [emojiUploading, setEmojiUploading] = useState(false);
   const [emojiError, setEmojiError] = useState('');
+
+  // Soundboard tab state
+  const soundboardClips = useSoundboardStore((s) => s.clips);
+  const [sbName, setSbName] = useState('');
+  const [sbFile, setSbFile] = useState<File | null>(null);
+  const [sbTrimming, setSbTrimming] = useState(false);
+  const [sbUploading, setSbUploading] = useState(false);
+  const [sbError, setSbError] = useState('');
+  const sbFileRef = useRef<HTMLInputElement>(null);
+  const [sbPreviewAudio, setSbPreviewAudio] = useState<HTMLAudioElement | null>(null);
+  const [sbPreviewClipId, setSbPreviewClipId] = useState<string | null>(null);
 
   // Media provider state
   const mediaConnections = useMediaProviderStore((s) => s.connections);
@@ -322,6 +341,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
     members: 'Members',
     roles: 'Roles',
     emojis: 'Emojis',
+    soundboard: 'Soundboard',
     media: 'Media',
     bans: 'Bans',
     audit: 'Audit Log',
@@ -344,6 +364,9 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
           )}
           {canManageEmojis && (
             <button className={`us-nav-item ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
+          )}
+          {canManageSoundboard && (
+            <button className={`us-nav-item ${tab === 'soundboard' ? 'active' : ''}`} onClick={() => setTab('soundboard')}>Soundboard</button>
           )}
           {canManageServer && (
             <button className={`us-nav-item ${tab === 'media' ? 'active' : ''}`} onClick={() => setTab('media')}>Media</button>
@@ -788,6 +811,121 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                       <img src={`${getApiBase()}${emoji.imageUrl}`} alt={emoji.name} className="emoji-item-img" />
                       <span className="emoji-item-name">:{emoji.name}:</span>
                       <button className="role-delete-btn" onClick={() => useServerStore.getState().deleteEmoji(serverId, emoji.id)} title="Delete Emoji">&times;</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tab === 'soundboard' && canManageSoundboard && (
+              <div className="soundboard-tab">
+                <div className="us-card">
+                  <div className="us-card-title">Upload Clip ({soundboardClips.length} / 50)</div>
+                  {!sbFile && (
+                    <div className="sb-upload-row">
+                      <input
+                        type="file"
+                        ref={sbFileRef}
+                        accept="audio/*"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          setSbFile(f);
+                          setSbError('');
+                          if (f) {
+                            setSbTrimming(true);
+                            const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\- ]/g, '_').slice(0, 32);
+                            if (base.length >= 2) setSbName(base);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+                  {sbTrimming && sbFile && (
+                    <AudioTrimmer
+                      file={sbFile}
+                      maxDuration={5}
+                      onConfirm={async (trimmedFile) => {
+                        setSbTrimming(false);
+                        if (!sbName.trim()) {
+                          setSbError('Please enter a clip name');
+                          return;
+                        }
+                        setSbUploading(true);
+                        setSbError('');
+                        try {
+                          const fd = new FormData();
+                          fd.append('file', trimmedFile);
+                          fd.append('name', sbName);
+                          await useSoundboardStore.getState().uploadClip(serverId, fd);
+                          setSbName('');
+                          setSbFile(null);
+                          if (sbFileRef.current) sbFileRef.current.value = '';
+                        } catch (err: unknown) {
+                          const msg = (err as { response?: { data?: string } })?.response?.data;
+                          setSbError(typeof msg === 'string' ? msg : 'Upload failed');
+                        } finally {
+                          setSbUploading(false);
+                        }
+                      }}
+                      onCancel={() => {
+                        setSbTrimming(false);
+                        setSbFile(null);
+                        setSbName('');
+                        if (sbFileRef.current) sbFileRef.current.value = '';
+                      }}
+                    />
+                  )}
+                  {sbFile && (
+                    <div className="sb-upload-row" style={{ marginTop: sbTrimming ? 8 : 0 }}>
+                      <input
+                        type="text"
+                        placeholder="Clip name"
+                        value={sbName}
+                        onChange={(e) => { setSbName(e.target.value); setSbError(''); }}
+                        maxLength={32}
+                        autoFocus
+                      />
+                    </div>
+                  )}
+                  {sbUploading && <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Uploading...</p>}
+                  {sbError && <p className="emoji-error">{sbError}</p>}
+                </div>
+                <div className="sb-clip-list">
+                  {soundboardClips.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No soundboard clips yet.</p>}
+                  {soundboardClips.map((clip) => (
+                    <div key={clip.id} className="sb-clip-item">
+                      <span className="sb-clip-name">{clip.name}</span>
+                      <span className="sb-clip-duration">{clip.duration.toFixed(1)}s</span>
+                      <button
+                        className="sb-clip-preview"
+                        onClick={() => {
+                          if (sbPreviewClipId === clip.id && sbPreviewAudio) {
+                            sbPreviewAudio.pause();
+                            sbPreviewAudio.currentTime = 0;
+                            setSbPreviewClipId(null);
+                            setSbPreviewAudio(null);
+                          } else {
+                            if (sbPreviewAudio) { sbPreviewAudio.pause(); sbPreviewAudio.currentTime = 0; }
+                            const url = clip.url.startsWith('http') ? clip.url : `${getApiBase()}${clip.url}`;
+                            const audio = new Audio(url);
+                            audio.volume = 0.5;
+                            audio.onended = () => { setSbPreviewClipId(null); setSbPreviewAudio(null); };
+                            audio.play().catch(() => {});
+                            setSbPreviewAudio(audio);
+                            setSbPreviewClipId(clip.id);
+                          }
+                        }}
+                        title={sbPreviewClipId === clip.id ? 'Stop' : 'Preview'}
+                      >
+                        {sbPreviewClipId === clip.id ? '⏹' : '▶'}
+                      </button>
+                      <button
+                        className="role-delete-btn"
+                        onClick={() => useSoundboardStore.getState().deleteClip(serverId, clip.id)}
+                        title="Delete Clip"
+                      >
+                        &times;
+                      </button>
                     </div>
                   ))}
                 </div>

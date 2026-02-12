@@ -34,6 +34,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<MediaProviderConnection> MediaProviderConnections => Set<MediaProviderConnection>();
     public DbSet<WatchParty> WatchParties => Set<WatchParty>();
     public DbSet<Friendship> Friendships => Set<Friendship>();
+    public DbSet<SoundboardClip> SoundboardClips => Set<SoundboardClip>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -400,6 +401,21 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .IsUnique();
 
         // Friendship
+        // SoundboardClip
+        builder.Entity<SoundboardClip>()
+            .HasOne(sc => sc.Server)
+            .WithMany(s => s.SoundboardClips)
+            .HasForeignKey(sc => sc.ServerId);
+
+        builder.Entity<SoundboardClip>()
+            .HasOne(sc => sc.UploadedBy)
+            .WithMany()
+            .HasForeignKey(sc => sc.UploadedById);
+
+        builder.Entity<SoundboardClip>()
+            .HasIndex(sc => new { sc.ServerId, sc.Name })
+            .IsUnique();
+
         builder.Entity<Friendship>()
             .HasOne(f => f.Requester)
             .WithMany()

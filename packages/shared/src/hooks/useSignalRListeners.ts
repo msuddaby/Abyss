@@ -16,10 +16,11 @@ import { useNotificationSettingsStore } from '../stores/notificationSettingsStor
 import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { useWatchPartyStore } from '../stores/watchPartyStore.js';
 import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
+import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerMember, ServerRole, CustomEmoji, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -131,6 +132,8 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
   }).catch(console.error);
 
   useNotificationSettingsStore.getState().fetchSettings(serverId);
+
+  useSoundboardStore.getState().fetchClips(serverId);
 }
 
 export function refreshSignalRState(conn: HubConnection) {
@@ -201,6 +204,7 @@ export function useSignalRListeners() {
         'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged',
         'WatchPartyStartedInChannel', 'WatchPartyStoppedInChannel',
         'MediaProviderLinked', 'MediaProviderUnlinked',
+        'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
       ];
       for (const e of events) conn.off(e);
 
@@ -532,6 +536,26 @@ export function useSignalRListeners() {
 
       conn.on('MediaProviderUnlinked', (connectionId: string) => {
         useMediaProviderStore.getState().removeConnection(connectionId);
+      });
+
+      // Soundboard event handlers
+      conn.on('SoundboardClipPlayed', (_channelId: string, clipUrl: string, _clipName: string, _userId: string) => {
+        const voiceState = useVoiceStore.getState();
+        if (voiceState.currentChannelId && !voiceState.isDeafened) {
+          playVoiceSound(clipUrl, '');
+        }
+      });
+
+      conn.on('SoundboardClipAdded', (_serverId: string, clip: SoundboardClip) => {
+        useSoundboardStore.getState().addClipLocal(clip);
+      });
+
+      conn.on('SoundboardClipUpdated', (_serverId: string, clip: SoundboardClip) => {
+        useSoundboardStore.getState().updateClipLocal(clip);
+      });
+
+      conn.on('SoundboardClipRemoved', (_serverId: string, clipId: string) => {
+        useSoundboardStore.getState().removeClipLocal(clipId);
       });
 
       refreshSignalRState(conn);

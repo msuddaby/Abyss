@@ -15,4 +15,5 @@ public class Server
     public ICollection<ServerRole> Roles { get; set; } = new List<ServerRole>();
     public ICollection<ServerBan> Bans { get; set; } = new List<ServerBan>();
     public ICollection<CustomEmoji> Emojis { get; set; } = new List<CustomEmoji>();
+    public ICollection<SoundboardClip> SoundboardClips { get; set; } = new List<SoundboardClip>();
 }

@@ -97,7 +97,7 @@ public class MediaUploadService
         return (true, null, url);
     }
 
-    public async Task<(bool IsValid, string? ErrorMessage, string? Url)> StoreSoundAsync(IFormFile file)
+    public async Task<(bool IsValid, string? ErrorMessage, string? Url, double Duration)> StoreSoundAsync(IFormFile file, string subdir = "sounds")
     {
         var options = new MediaValidator.MediaValidationOptions(
             MaxSize: _mediaConfig.SoundMaxSize,
@@ -108,13 +108,14 @@ public class MediaUploadService
 
         var validation = await _mediaValidator.ValidateUploadAsync(file, options);
         if (!validation.IsValid)
-            return (false, validation.ErrorMessage, null);
+            return (false, validation.ErrorMessage, null, 0);
 
         // Validate duration with TagLibSharp
         using var memoryStream = new MemoryStream();
         await file.CopyToAsync(memoryStream);
         memoryStream.Position = 0;
 
+        double duration;
         try
         {
             var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
@@ -123,7 +124,7 @@ public class MediaUploadService
             // TagLib's Properties.Duration can be wildly wrong for MP3s with large
             // embedded artwork because it estimates duration from total file size.
             // Compute duration from just the audio data portion instead.
-            var duration = tagFile.Properties.Duration.TotalSeconds;
+            duration = tagFile.Properties.Duration.TotalSeconds;
             if (tagFile.Properties.AudioBitrate > 0)
             {
                 var audioBytes = tagFile.InvariantEndPosition - tagFile.InvariantStartPosition;
@@ -131,15 +132,15 @@ public class MediaUploadService
             }
 
             if (duration > _mediaConfig.SoundMaxDurationSeconds)
-                return (false, $"Sound must be {_mediaConfig.SoundMaxDurationSeconds} seconds or shorter", null);
+                return (false, $"Sound must be {_mediaConfig.SoundMaxDurationSeconds} seconds or shorter", null, 0);
         }
         catch
         {
-            return (false, "Could not read audio file. Ensure it is a valid audio file.", null);
+            return (false, "Could not read audio file. Ensure it is a valid audio file.", null, 0);
         }
 
-        // Save to uploads/sounds/{guid}.{ext}
-        var soundDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "sounds");
+        // Save to uploads/{subdir}/{guid}.{ext}
+        var soundDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", subdir);
         Directory.CreateDirectory(soundDir);
 
         var fileExt = Path.GetExtension(file.FileName);
@@ -152,7 +153,7 @@ public class MediaUploadService
             await memoryStream.CopyToAsync(fs);
         }
 
-        return (true, null, $"/uploads/sounds/{fileName}");
+        return (true, null, $"/uploads/{subdir}/{fileName}", duration);
     }
 
     /// <summary>

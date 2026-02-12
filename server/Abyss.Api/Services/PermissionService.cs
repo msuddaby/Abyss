@@ -16,7 +16,8 @@ public class PermissionService
         Permission.MentionEveryone |
         Permission.Connect |
         Permission.Speak |
-        Permission.Stream);
+        Permission.Stream |
+        Permission.UseSoundboard);
 
     public PermissionService(AppDbContext db) => _db = db;
 

@@ -267,7 +267,10 @@ export class UpdateManager {
       throw new Error('No update downloaded to install');
     }
 
-    // This will quit the app and install the update
+    // Destroy all windows first to bypass the close-to-tray handler
+    // (which calls event.preventDefault() and hides instead of closing)
+    BrowserWindow.getAllWindows().forEach(w => w.destroy());
+
     autoUpdater.quitAndInstall(false, true);
   }
 

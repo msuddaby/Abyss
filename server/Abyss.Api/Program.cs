@@ -254,6 +254,18 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
+var soundboardDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "soundboard");
+Directory.CreateDirectory(soundboardDir);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(soundboardDir),
+    RequestPath = "/uploads/soundboard",
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+    }
+});
+
 app.MapControllers().RequireRateLimiting("api");
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapGet("/health", () => Results.Ok());

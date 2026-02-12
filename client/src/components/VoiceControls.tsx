@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useVoiceStore, useServerStore, useWatchPartyStore, hasChannelPermission, Permission } from '@abyss/shared';
+import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
+import SoundboardPanel from './SoundboardPanel';
 
 function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
   const parts = bind.split('+');
@@ -39,9 +40,13 @@ export default function VoiceControls() {
   const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
   const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
 
+  const [showSoundboard, setShowSoundboard] = useState(false);
+  const soundboardClips = useSoundboardStore((s) => s.clips);
+
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
   const canStream = channel ? hasChannelPermission(channel.permissions, Permission.Stream) : false;
+  const canUseSoundboard = channel ? hasChannelPermission(channel.permissions, Permission.UseSoundboard) : false;
 
   // Connection quality stats — read cached stats from useWebRTC's collection interval
   const [stats, setStats] = useState<ConnectionStats>({ roundTripTime: null, packetLoss: null, jitter: null });
@@ -112,69 +117,96 @@ export default function VoiceControls() {
   if (!currentChannelId) return null;
 
   return (
+    <div className="voice-controls-wrapper">
     <div className="voice-controls">
-      <div className="voice-controls-info">
-        <span className="voice-connected-label">
-          <span className={`voice-quality-dot ${qualityLevel}`} title={qualityTitle} />
-          Voice Connected
-        </span>
-        {channel && <span className="voice-channel-name">🔊 {channel.name}</span>}
+      <div className="voice-controls-header">
+        <div className="voice-controls-info">
+          <span className="voice-connected-label">
+            <span className={`voice-quality-dot ${qualityLevel}`} title={qualityTitle} />
+            Voice Connected
+          </span>
+          {channel && <span className="voice-channel-name">{channel.name}</span>}
+          {isPtt && (
+            <span className="vc-ptt-hint">
+              {isPttActive ? '● Transmitting' : `Press ${pttKey.startsWith('Mouse') ? `Mouse ${pttKey.slice(5)}` : pttKey} to talk`}
+            </span>
+          )}
+        </div>
+        <button className="vc-disconnect-btn" onClick={leaveVoice} title={`Disconnect (${formatKeybind(keybindDisconnect)})`}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
+          </svg>
+        </button>
       </div>
-      <div className="voice-controls-buttons">
-        {needsAudioUnlock && (
-          <button
-            className="voice-ctrl-btn audio-unlock"
-            onClick={() => attemptAudioUnlock()}
-            title="Enable audio playback"
-          >
-            Enable Audio
-          </button>
-        )}
+      {needsAudioUnlock && (
         <button
-          className={`voice-ctrl-btn voice-mode-toggle`}
+          className="vc-audio-unlock"
+          onClick={() => attemptAudioUnlock()}
+        >
+          Click to enable audio playback
+        </button>
+      )}
+      <div className="voice-controls-buttons">
+        <button
+          className={`vc-btn ${isPtt ? 'vc-active' : ''}`}
           onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}
           title={isPtt ? 'Switch to Voice Activity' : 'Switch to Push to Talk'}
         >
-          {isPtt ? 'PTT' : 'VA'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+          <span>{isPtt ? 'PTT' : 'VA'}</span>
         </button>
-        {isPtt && (
-          <span className="ptt-hint">
-            {isPttActive ? '🎤' : `[${pttKey.startsWith('Mouse') ? `M${pttKey.slice(5)}` : pttKey}]`}
-          </span>
-        )}
         {canStream && (
           <button
-            className={`voice-ctrl-btn ${isCameraOn ? 'active' : ''}${isCameraLoading ? ' loading' : ''}`}
+            className={`vc-btn ${isCameraOn ? 'vc-active' : ''}${isCameraLoading ? ' loading' : ''}`}
             onClick={isCameraOn ? stopCamera : startCamera}
             disabled={isCameraLoading}
             title={isCameraOn ? 'Stop Camera' : 'Start Camera'}
           >
-            {isCameraLoading ? '⏳' : '📷'}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+            </svg>
           </button>
         )}
         {canStream && (
           <button
-            className={`voice-ctrl-btn ${isScreenSharing ? 'active' : ''}${isScreenShareLoading ? ' loading' : ''}`}
+            className={`vc-btn ${isScreenSharing ? 'vc-active' : ''}${isScreenShareLoading ? ' loading' : ''}`}
             onClick={isScreenSharing ? stopScreenShare : startScreenShare}
             disabled={isScreenShareLoading}
             title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
           >
-            {isScreenShareLoading ? '⏳' : '🖥️'}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
+            </svg>
           </button>
         )}
         {canStream && (
           <button
-            className={`voice-ctrl-btn ${isBrowsingLibrary ? 'active' : ''}`}
+            className={`vc-btn ${isBrowsingLibrary ? 'vc-active' : ''}`}
             onClick={() => setIsBrowsingLibrary(!isBrowsingLibrary)}
             title="Watch Party"
           >
-            🎬
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M18 4l2 4h-3l-2-4h-2l2 4h-3l-2-4H8l2 4H7L5 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4h-4z"/>
+            </svg>
           </button>
         )}
-        <button className="voice-ctrl-btn disconnect" onClick={leaveVoice} title={`Disconnect (${formatKeybind(keybindDisconnect)})`}>
-          📞
-        </button>
+        {canUseSoundboard && soundboardClips.length > 0 && (
+          <button
+            className={`vc-btn ${showSoundboard ? 'vc-active' : ''}`}
+            onClick={() => setShowSoundboard(!showSoundboard)}
+            title="Soundboard"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+          </button>
+        )}
       </div>
+    </div>
+    {showSoundboard && <SoundboardPanel />}
     </div>
   );
 }

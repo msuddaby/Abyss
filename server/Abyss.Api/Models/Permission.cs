@@ -22,4 +22,6 @@ public enum Permission : long
     Connect = 1 << 16,
     Speak = 1 << 17,
     Stream = 1 << 18,
+    ManageSoundboard = 1 << 19,
+    UseSoundboard = 1 << 20,
 }

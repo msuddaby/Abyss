@@ -344,6 +344,17 @@ export interface YouTubeResolveResult {
   thumbnailUrl: string;
 }
 
+export interface SoundboardClip {
+  id: string;
+  serverId: string;
+  name: string;
+  url: string;
+  uploadedById: string;
+  duration: number;
+  fileSize: number;
+  createdAt: string;
+}
+
 export const Permission = {
   ManageChannels: 1 << 0,
   ManageMessages: 1 << 1,
@@ -364,6 +375,8 @@ export const Permission = {
   Connect: 1 << 16,
   Speak: 1 << 17,
   Stream: 1 << 18,
+  ManageSoundboard: 1 << 19,
+  UseSoundboard: 1 << 20,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

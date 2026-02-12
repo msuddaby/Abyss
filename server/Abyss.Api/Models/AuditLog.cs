@@ -25,7 +25,9 @@ public enum AuditAction
     MediaProviderLinked,
     MediaProviderUnlinked,
     WatchPartyStarted,
-    WatchPartyStopped
+    WatchPartyStopped,
+    SoundboardClipUploaded,
+    SoundboardClipDeleted
 }
 
 public class AuditLog

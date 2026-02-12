@@ -3,6 +3,7 @@ import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
 import { setupTray } from './tray';
+import { setupAppMenu } from './app-menu';
 import { UpdateManager } from './update-manager';
 import Store from 'electron-store';
 
@@ -174,6 +175,9 @@ function createWindow() {
 
   // Setup system tray
   setupTray(mainWindow, updateManager ?? undefined);
+
+  // Setup macOS application menu (top-left menu bar with Check for Updates)
+  setupAppMenu(mainWindow, updateManager ?? undefined);
 
   // Handle window close (minimize to tray instead of quit)
   mainWindow.on('close', (event) => {

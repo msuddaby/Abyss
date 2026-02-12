@@ -78,7 +78,7 @@ public class PreferencesController : ControllerBase
         if (type is not "join" and not "leave")
             return BadRequest("Type must be 'join' or 'leave'");
 
-        var (isValid, error, url) = await _media.StoreSoundAsync(file);
+        var (isValid, error, url, _) = await _media.StoreSoundAsync(file);
         if (!isValid)
             return BadRequest(error);
 
