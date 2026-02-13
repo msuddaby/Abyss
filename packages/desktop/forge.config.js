@@ -9,7 +9,7 @@ module.exports = {
     name: "Abyss",
     executableName: "abyss-desktop",
     icon: "./resources/icon",
-    extraResource: ["../../client/dist", "./resources/app-update.yml"],
+    extraResource: ["../../client/dist", "./resources/app-update.yml", "./resources/icon.png"],
     appBundleId: "com.abyss.desktop",
     osxSign: {
       identity: process.env.APPLE_IDENTITY,

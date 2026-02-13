@@ -8,6 +8,8 @@
 listening-port=3478
 listening-ip=0.0.0.0
 relay-ip=0.0.0.0
+no-multicast-peers
+allowed-peer-ip=0.0.0.0/0
 external-ip=YOUR_PUBLIC_IP
 realm=abyss
 use-auth-secret

@@ -5,6 +5,7 @@ import { GlobalShortcutManager } from './global-shortcuts';
 import { setupTray } from './tray';
 import { setupAppMenu } from './app-menu';
 import { UpdateManager } from './update-manager';
+import { installDesktopEntry } from './linux-desktop-integration';
 import Store from 'electron-store';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
@@ -92,7 +93,7 @@ function createWindow() {
   }) as { width: number; height: number; x?: number; y?: number };
 
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'resources/icon.png')
+    ? path.join(process.resourcesPath, 'icon.png')
     : path.join(__dirname, '../../resources/icon.png');
 
   mainWindow = new BrowserWindow({
@@ -189,7 +190,12 @@ function createWindow() {
 }
 
 // This method will be called when Electron has finished initialization
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (process.platform === 'linux') {
+    installDesktopEntry();
+  }
+  createWindow();
+});
 
 // Quit when all windows are closed, except on macOS
 app.on('window-all-closed', () => {

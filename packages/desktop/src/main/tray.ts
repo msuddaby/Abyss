@@ -9,7 +9,7 @@ export function setupTray(window: BrowserWindow, manager?: UpdateManager) {
   updateManager = manager;
   // Create tray icon
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, "resources/icon.png")
+    ? path.join(process.resourcesPath, "icon.png")
     : path.join(__dirname, "../../resources/icon.png");
 
   let icon = nativeImage.createFromPath(iconPath);

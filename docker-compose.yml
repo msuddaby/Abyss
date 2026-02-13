@@ -28,6 +28,7 @@ services:
     volumes:
       - ./data/uploads:/app/wwwroot/uploads
       - ./data/uploads-files:/app/uploads
+      - ./data/data-protection-keys:/app/data-protection-keys
     env_file:
       - .env
     healthcheck:

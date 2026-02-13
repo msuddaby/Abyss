@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/publish .
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
-    mkdir -p wwwroot/uploads/emojis /app/uploads && \
-    chown -R $APP_UID:$APP_UID wwwroot/uploads /app/uploads
+    mkdir -p wwwroot/uploads/emojis /app/uploads /app/data-protection-keys && \
+    chown -R $APP_UID:$APP_UID wwwroot/uploads /app/uploads /app/data-protection-keys
 ENV ASPNETCORE_URLS=http://+:5000
 ENV ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 5000
