@@ -12,7 +12,7 @@ using Abyss.Api.Services;
 namespace Abyss.Api.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/servers")]
 [Authorize]
 public class ServersController : ControllerBase
 {
@@ -21,14 +21,16 @@ public class ServersController : ControllerBase
     private readonly IHubContext<ChatHub> _hub;
     private readonly ImageService _imageService;
     private readonly SystemMessageService _systemMessages;
+    private readonly CosmeticService _cosmeticService;
 
-    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages)
+    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService)
     {
         _db = db;
         _perms = perms;
         _hub = hub;
         _imageService = imageService;
         _systemMessages = systemMessages;
+        _cosmeticService = cosmeticService;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -370,10 +372,14 @@ public class ServersController : ControllerBase
             .Where(sm => sm.ServerId == serverId)
             .ToListAsync();
 
+        var userIds = members.Select(m => m.UserId).ToList();
+        var cosmeticsMap = await _cosmeticService.GetEquippedBatchAsync(userIds);
+
         var dtos = members.Select(sm => new ServerMemberDto(
             sm.ServerId,
             sm.UserId,
-            new UserDto(sm.User.Id, sm.User.UserName!, sm.User.DisplayName, sm.User.AvatarUrl, sm.User.Status, sm.User.Bio),
+            new UserDto(sm.User.Id, sm.User.UserName!, sm.User.DisplayName, sm.User.AvatarUrl, sm.User.Status, sm.User.Bio,
+                cosmeticsMap.GetValueOrDefault(sm.UserId)),
             sm.IsOwner,
             sm.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault, mr.Role.DisplaySeparately)).ToList(),
             sm.JoinedAt)).ToList();

@@ -16,11 +16,13 @@ public class ChannelsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
+    private readonly CosmeticService _cosmetics;
 
-    public ChannelsController(AppDbContext db, PermissionService perms)
+    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics)
     {
         _db = db;
         _perms = perms;
+        _cosmetics = cosmetics;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -81,7 +83,7 @@ public class ChannelsController : ControllerBase
                 ))
                 .ToListAsync();
 
-            return Ok(newerMessages);
+            return Ok(await _cosmetics.AttachCosmeticsAsync(newerMessages));
         }
 
         if (before.HasValue)
@@ -118,7 +120,7 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(messages);
+        return Ok(await _cosmetics.AttachCosmeticsAsync(messages));
     }
 
     [HttpGet("{channelId}/messages/around/{messageId}")]
@@ -186,7 +188,7 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(messages);
+        return Ok(await _cosmetics.AttachCosmeticsAsync(messages));
     }
 
     [HttpGet("{channelId}/pins")]

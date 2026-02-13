@@ -113,6 +113,7 @@ builder.Services.AddSingleton<VideoPosterService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
+builder.Services.AddScoped<CosmeticService>();
 
 // Watch party / media providers
 builder.Services.AddDataProtection();

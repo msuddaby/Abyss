@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import api from '../services/api.js';
 import { ensureConnected } from '../services/signalr.js';
 import { getStorage } from '../storage.js';
-import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji, VoiceUserState } from '../types/index.js';
+import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji, VoiceUserState, EquippedCosmetics } from '../types/index.js';
 
 // channelId -> Map<userId, VoiceUserState>
 type VoiceChannelUsersMap = Map<string, Map<string, VoiceUserState>>;
@@ -72,6 +72,7 @@ interface ServerState {
   updateRoleLocal: (role: ServerRole) => void;
   removeRoleLocal: (roleId: string) => void;
   updateMemberRolesLocal: (userId: string, roles: ServerRole[]) => void;
+  updateMemberCosmetics: (userId: string, cosmetics: EquippedCosmetics | null) => void;
   removeBanLocal: (userId: string) => void;
   fetchEmojis: (serverId: string) => Promise<void>;
   uploadEmoji: (serverId: string, formData: FormData) => Promise<CustomEmoji>;
@@ -576,6 +577,11 @@ export const useServerStore = create<ServerState>((set, get) => ({
   updateMemberRolesLocal: (userId, roles) =>
     set((s) => ({
       members: s.members.map((m) => (m.userId === userId ? { ...m, roles } : m)),
+    })),
+
+  updateMemberCosmetics: (userId, cosmetics) =>
+    set((s) => ({
+      members: s.members.map((m) => (m.userId === userId ? { ...m, user: { ...m.user, cosmetics } } : m)),
     })),
 
   removeBanLocal: (userId) =>

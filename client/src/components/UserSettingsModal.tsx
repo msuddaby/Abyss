@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, isElectron } from "@abyss/shared";
+import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from "@abyss/shared";
+import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
 
-type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "account";
+type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -72,6 +73,13 @@ export default function UserSettingsModal({
   const [soundError, setSoundError] = useState<string | null>(null);
   const joinSoundInputRef = useRef<HTMLInputElement>(null);
   const leaveSoundInputRef = useRef<HTMLInputElement>(null);
+
+  // Cosmetics state
+  const [myCosmetics, setMyCosmetics] = useState<UserCosmetic[]>([]);
+  const [cosmeticsLoading, setCosmeticsLoading] = useState(false);
+  const [cosmeticsLoaded, setCosmeticsLoaded] = useState(false);
+  const [cosmeticError, setCosmeticError] = useState<string | null>(null);
+  const [cosmeticTypeFilter, setCosmeticTypeFilter] = useState<number>(-1);
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -526,6 +534,91 @@ export default function UserSettingsModal({
     }
   };
 
+  // Cosmetics logic
+  const loadMyCosmetics = async () => {
+    setCosmeticsLoading(true);
+    setCosmeticError(null);
+    try {
+      const res = await api.get('/cosmetics/my');
+      setMyCosmetics(res.data);
+      setCosmeticsLoaded(true);
+    } catch (err: any) {
+      setCosmeticError(err?.response?.data || 'Failed to load cosmetics.');
+    } finally {
+      setCosmeticsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'cosmetics' && !cosmeticsLoaded && !cosmeticsLoading) {
+      loadMyCosmetics();
+    }
+  }, [activeTab]);
+
+  const handleEquip = async (cosmeticItemId: string) => {
+    setCosmeticError(null);
+    try {
+      const res = await api.put('/cosmetics/equip', { cosmeticItemId });
+      // Update local list
+      const equipped = res.data;
+      setMyCosmetics((prev) => prev.map((uc) => {
+        const equippedItem = [equipped.nameplate, equipped.messageStyle, equipped.profileEffect, equipped.avatarDecoration].find((e: CosmeticItem | null) => e?.id === uc.item.id);
+        if (equippedItem) return { ...uc, isEquipped: true };
+        // Unequip others of same type if this was just equipped
+        const targetItem = prev.find((c) => c.item.id === cosmeticItemId);
+        if (targetItem && uc.item.type === targetItem.item.type && uc.item.id !== cosmeticItemId) return { ...uc, isEquipped: false };
+        return uc;
+      }));
+      // Update auth store so cosmetics show across the app
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser) {
+        const updatedUser = { ...currentUser, cosmetics: equipped };
+        getStorage().setItem('user', JSON.stringify(updatedUser));
+        useAuthStore.setState({ user: updatedUser });
+      }
+    } catch (err: any) {
+      setCosmeticError(err?.response?.data || 'Failed to equip cosmetic.');
+    }
+  };
+
+  const handleUnequip = async (cosmeticItemId: string) => {
+    setCosmeticError(null);
+    try {
+      const res = await api.put(`/cosmetics/unequip/${cosmeticItemId}`);
+      const equipped = res.data;
+      setMyCosmetics((prev) => prev.map((uc) => uc.item.id === cosmeticItemId ? { ...uc, isEquipped: false } : uc));
+      const currentUser = useAuthStore.getState().user;
+      if (currentUser) {
+        const updatedUser = { ...currentUser, cosmetics: equipped };
+        getStorage().setItem('user', JSON.stringify(updatedUser));
+        useAuthStore.setState({ user: updatedUser });
+      }
+    } catch (err: any) {
+      setCosmeticError(err?.response?.data || 'Failed to unequip cosmetic.');
+    }
+  };
+
+  const filteredMyCosmetics = cosmeticTypeFilter >= 0
+    ? myCosmetics.filter((uc) => uc.item.type === cosmeticTypeFilter)
+    : myCosmetics;
+
+  const renderCosmeticPreview = (item: CosmeticItem) => {
+    if (item.type === CosmeticType.Nameplate) {
+      const style = parseCosmeticCss(item.cssData, 'nameplate');
+      return <span className="cosmetic-preview-name" style={style}>{item.name}</span>;
+    }
+    if (item.type === CosmeticType.MessageStyle) {
+      const style = parseCosmeticCss(item.cssData, 'messageStyle');
+      return (
+        <div className="cosmetic-preview-msg" style={style}>
+          <div className="cosmetic-preview-msg-author">SampleUser</div>
+          <div className="cosmetic-preview-msg-text">Preview message with this style.</div>
+        </div>
+      );
+    }
+    return <span className="cosmetic-preview-name">{item.name}</span>;
+  };
+
   const currentAvatar =
     avatarPreview ||
     (user.avatarUrl
@@ -566,6 +659,12 @@ export default function UserSettingsModal({
           >
             Keybinds
           </button>
+          <button
+            className={`us-nav-item ${activeTab === "cosmetics" ? "active" : ""}`}
+            onClick={() => setActiveTab("cosmetics")}
+          >
+            Cosmetics
+          </button>
           <div className="us-nav-separator" />
           <button
             className={`us-nav-item ${activeTab === "account" ? "active" : ""}`}
@@ -582,6 +681,7 @@ export default function UserSettingsModal({
               {activeTab === "voice" && "Voice & Audio"}
               {activeTab === "video" && "Video"}
               {activeTab === "keybinds" && "Keybinds"}
+              {activeTab === "cosmetics" && "Cosmetics"}
               {activeTab === "account" && "Account"}
             </h2>
             <button className="us-close" onClick={onClose}>
@@ -1020,6 +1120,64 @@ export default function UserSettingsModal({
                     Reset All
                   </button>
                 </div>
+              </>
+            )}
+
+            {activeTab === "cosmetics" && (
+              <>
+                {cosmeticError && <div className="admin-error">{cosmeticError}</div>}
+                {cosmeticsLoading && (
+                  <div className="admin-loading">Loading your cosmetics...</div>
+                )}
+                {cosmeticsLoaded && myCosmetics.length === 0 && (
+                  <div className="us-card">
+                    <div className="admin-empty">You don't have any cosmetics yet.</div>
+                  </div>
+                )}
+                {cosmeticsLoaded && myCosmetics.length > 0 && (
+                  <>
+                    <div className="cosmetic-filter-bar" style={{ marginBottom: 12 }}>
+                      <select value={cosmeticTypeFilter} onChange={(e) => setCosmeticTypeFilter(Number(e.target.value))}>
+                        <option value={-1}>All Types</option>
+                        <option value={0}>Nameplate</option>
+                        <option value={1}>Message Style</option>
+                        <option value={2}>Profile Effect</option>
+                        <option value={3}>Avatar Decoration</option>
+                      </select>
+                    </div>
+                    <div className="cosmetics-equip-grid">
+                      {filteredMyCosmetics.map((uc) => (
+                        <div
+                          key={uc.item.id}
+                          className={`cosmetic-equip-card${uc.isEquipped ? ' equipped' : ''}`}
+                        >
+                          <div className="cosmetic-equip-card-header">
+                            <span className="cosmetic-card-name">{uc.item.name}</span>
+                            <span className="cosmetic-card-rarity" style={{ background: `${CosmeticRarityColors[uc.item.rarity]}22`, color: CosmeticRarityColors[uc.item.rarity] }}>
+                              {CosmeticRarityNames[uc.item.rarity]}
+                            </span>
+                          </div>
+                          <div className="cosmetic-card-type">{CosmeticTypeNames[uc.item.type]}</div>
+                          <div className="cosmetic-card-preview">
+                            {renderCosmeticPreview(uc.item)}
+                          </div>
+                          {uc.item.description && <div className="cosmetic-card-desc">{uc.item.description}</div>}
+                          <div className="cosmetic-equip-action">
+                            {uc.isEquipped ? (
+                              <button className="btn-secondary cosmetic-unequip-btn" onClick={() => handleUnequip(uc.item.id)}>
+                                Unequip
+                              </button>
+                            ) : (
+                              <button className="cosmetic-equip-btn" onClick={() => handleEquip(uc.item.id)}>
+                                Equip
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
               </>
             )}
 

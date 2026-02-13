@@ -35,6 +35,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<WatchParty> WatchParties => Set<WatchParty>();
     public DbSet<Friendship> Friendships => Set<Friendship>();
     public DbSet<SoundboardClip> SoundboardClips => Set<SoundboardClip>();
+    public DbSet<CosmeticItem> CosmeticItems => Set<CosmeticItem>();
+    public DbSet<UserCosmetic> UserCosmetics => Set<UserCosmetic>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -434,5 +436,26 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<Friendship>()
             .HasIndex(f => f.AddresseeId);
+
+        // CosmeticItem
+        builder.Entity<CosmeticItem>()
+            .HasIndex(c => c.Type);
+
+        // UserCosmetic
+        builder.Entity<UserCosmetic>()
+            .HasKey(uc => new { uc.UserId, uc.CosmeticItemId });
+
+        builder.Entity<UserCosmetic>()
+            .HasOne(uc => uc.User)
+            .WithMany()
+            .HasForeignKey(uc => uc.UserId);
+
+        builder.Entity<UserCosmetic>()
+            .HasOne(uc => uc.CosmeticItem)
+            .WithMany(c => c.UserCosmetics)
+            .HasForeignKey(uc => uc.CosmeticItemId);
+
+        builder.Entity<UserCosmetic>()
+            .HasIndex(uc => new { uc.UserId, uc.IsEquipped });
     }
 }

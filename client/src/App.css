@@ -1384,15 +1384,23 @@
   color: var(--text-secondary);
 }
 
+.message-group {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.message-cosmetic-group {
+  border-radius: 4px;
+  margin: 4px 8px;
+}
+
 .message-item {
   display: flex;
   padding: 2px 16px;
-  margin-top: 16px;
   position: relative;
 }
 
 .message-item.system-message {
-  margin-top: 8px;
   padding: 6px 16px;
   color: var(--text-muted);
 }
@@ -1425,10 +1433,6 @@
   font-size: 11px;
 }
 
-.message-item.message-grouped {
-  margin-top: 0;
-}
-
 .message-item:hover {
   background: rgba(0, 0, 0, 0.06);
 }
@@ -1444,7 +1448,6 @@
 }
 
 .message-item.message-has-reply {
-  margin-top: 16px;
   flex-wrap: wrap;
 }
 
@@ -7937,4 +7940,533 @@
   font-size: 13px;
   text-align: center;
   padding: 12px 0;
+}
+
+/* ============================================ */
+/* COSMETIC ANIMATIONS                          */
+/* ============================================ */
+
+@keyframes nameplate-shimmer {
+  0% { background-position: 0% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes nameplate-shimmer-300 {
+  0% { background-position: 0% center; }
+  100% { background-position: 150% center; }
+}
+
+@keyframes nameplate-shimmer-400 {
+  0% { background-position: 0% center; }
+  100% { background-position: 133.33% center; }
+}
+
+@keyframes nameplate-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes msg-glow {
+  0%, 100% { box-shadow: -2px 0 6px rgba(114, 137, 218, 0.1); }
+  50% { box-shadow: -4px 0 16px rgba(114, 137, 218, 0.25); }
+}
+
+@keyframes msg-holo-shimmer {
+  0% { background-position: 0% center; }
+  100% { background-position: 150% center; }
+}
+
+/* ============================================ */
+/* ADMIN COSMETICS TAB                          */
+/* ============================================ */
+
+.admin-cosmetics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.cosmetic-card {
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.06);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.cosmetic-card:hover {
+  border-color: rgba(255,255,255,0.15);
+}
+
+.cosmetic-card.selected {
+  border-color: var(--accent);
+}
+
+.cosmetic-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cosmetic-card-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.cosmetic-card-rarity {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.cosmetic-card-type {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.cosmetic-card-preview {
+  background: var(--bg-primary);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 8px;
+}
+
+.cosmetic-preview-name {
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-block;
+}
+
+.cosmetic-preview-msg {
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.cosmetic-preview-msg-author {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.cosmetic-preview-msg-text {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.cosmetic-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.cosmetic-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cosmetic-card-actions button {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.cosmetic-card-actions button:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+
+.cosmetic-card-actions button.danger:hover {
+  background: rgba(237, 66, 69, 0.2);
+  color: #ed4245;
+}
+
+.cosmetic-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cosmetic-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.cosmetic-form-row > * {
+  flex: 1;
+}
+
+.cosmetic-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.cosmetic-form input,
+.cosmetic-form select,
+.cosmetic-form textarea {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.cosmetic-form textarea {
+  min-height: 80px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.cosmetic-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.cosmetic-live-preview {
+  background: var(--bg-primary);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 8px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.cosmetic-live-preview-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.cosmetic-assign-section {
+  margin-top: 16px;
+}
+
+.cosmetic-assign-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.cosmetic-assign-row input {
+  flex: 1;
+}
+
+.cosmetic-user-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  margin-top: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.cosmetic-user-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.cosmetic-user-dropdown-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.cosmetic-user-dropdown-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.cosmetic-user-dropdown-avatar img {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.cosmetic-user-dropdown-avatar-fallback {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cosmetic-user-dropdown-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cosmetic-user-dropdown-display {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cosmetic-user-dropdown-username {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cosmetic-user-dropdown-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* User settings cosmetics equip grid */
+.cosmetics-equip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.cosmetic-equip-card {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s;
+}
+
+.cosmetic-equip-card.equipped {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.cosmetic-equip-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.cosmetic-equip-action {
+  margin-top: 6px;
+}
+
+.cosmetic-equip-btn,
+.cosmetic-unequip-btn {
+  width: 100%;
+  padding: 6px 0;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s;
+}
+
+.cosmetic-equip-btn {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cosmetic-equip-btn:hover {
+  background: var(--accent-hover, #4752c4);
+}
+
+.cosmetic-unequip-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.cosmetic-unequip-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cosmetic-owners-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cosmetic-owner-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 12px;
+  padding: 3px 8px 3px 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cosmetic-owner-chip button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.cosmetic-owner-chip button:hover {
+  color: #ed4245;
+}
+
+.cosmetic-filter-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cosmetic-filter-bar select,
+.cosmetic-filter-bar input {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.cosmetic-user-inventory {
+  margin-top: 16px;
+}
+
+.cosmetic-user-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.cosmetic-user-item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cosmetic-user-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.cosmetic-user-item-type {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cosmetic-equipped-badge {
+  font-size: 10px;
+  background: rgba(67, 181, 129, 0.2);
+  color: #43b581;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.cosmetic-user-item-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.cosmetic-user-item-actions button {
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+
+.cosmetic-user-item-actions button:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+
+.cosmetic-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.cosmetic-preset-item {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 10px;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.06);
+  transition: border-color 0.15s;
+}
+
+.cosmetic-preset-item:hover {
+  border-color: var(--accent);
+}
+
+.cosmetic-preset-preview {
+  margin-bottom: 6px;
+}
+
+.cosmetic-preset-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.cosmetic-preset-rarity {
+  font-size: 10px;
+  font-weight: 600;
 }

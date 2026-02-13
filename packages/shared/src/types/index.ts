@@ -1,3 +1,66 @@
+export interface CosmeticItem {
+  id: string;
+  name: string;
+  description: string;
+  type: CosmeticType;
+  rarity: CosmeticRarity;
+  cssData: string;
+  previewImageUrl?: string;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export enum CosmeticType {
+  Nameplate = 0,
+  MessageStyle = 1,
+  ProfileEffect = 2,
+  AvatarDecoration = 3,
+}
+
+export enum CosmeticRarity {
+  Common = 0,
+  Uncommon = 1,
+  Rare = 2,
+  Epic = 3,
+  Legendary = 4,
+}
+
+export const CosmeticRarityNames: Record<number, string> = {
+  0: 'Common',
+  1: 'Uncommon',
+  2: 'Rare',
+  3: 'Epic',
+  4: 'Legendary',
+};
+
+export const CosmeticRarityColors: Record<number, string> = {
+  0: '#95a5a6',
+  1: '#2ecc71',
+  2: '#3498db',
+  3: '#9b59b6',
+  4: '#f39c12',
+};
+
+export const CosmeticTypeNames: Record<number, string> = {
+  0: 'Nameplate',
+  1: 'Message Style',
+  2: 'Profile Effect',
+  3: 'Avatar Decoration',
+};
+
+export interface EquippedCosmetics {
+  nameplate?: CosmeticItem | null;
+  messageStyle?: CosmeticItem | null;
+  profileEffect?: CosmeticItem | null;
+  avatarDecoration?: CosmeticItem | null;
+}
+
+export interface UserCosmetic {
+  item: CosmeticItem;
+  isEquipped: boolean;
+  acquiredAt: string;
+}
+
 export interface User {
   id: string;
   username: string;
@@ -5,6 +68,7 @@ export interface User {
   avatarUrl?: string;
   status: string;
   bio: string;
+  cosmetics?: EquippedCosmetics | null;
 }
 
 export interface AuthResponse {
@@ -247,6 +311,7 @@ export interface AdminUser {
   displayName: string;
   email?: string;
   status: string;
+  avatarUrl?: string | null;
 }
 
 export interface AdminOverview {

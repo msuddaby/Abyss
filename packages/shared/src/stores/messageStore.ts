@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { ensureConnected } from '../services/signalr.js';
-import type { Message, Reaction, PinnedMessage } from '../types/index.js';
+import type { Message, Reaction, PinnedMessage, EquippedCosmetics } from '../types/index.js';
 
 interface CachedChannel {
   messages: Message[];
@@ -43,6 +43,7 @@ interface MessageState {
   sendMessage: (channelId: string, content: string, attachmentIds?: string[], replyToMessageId?: string) => Promise<void>;
   joinChannel: (channelId: string) => Promise<void>;
   leaveChannel: (channelId: string) => Promise<void>;
+  updateAuthorCosmetics: (userId: string, cosmetics: EquippedCosmetics | null) => void;
   clear: () => void;
 }
 
@@ -312,6 +313,20 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     const conn = await ensureConnected();
     await conn.invoke('LeaveChannel', channelId);
   },
+
+  updateAuthorCosmetics: (userId, cosmetics) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        const authorMatch = m.authorId === userId;
+        const replyMatch = m.replyTo && m.replyTo.authorId === userId;
+        if (!authorMatch && !replyMatch) return m;
+        return {
+          ...m,
+          author: authorMatch ? { ...m.author, cosmetics } : m.author,
+          replyTo: m.replyTo && replyMatch ? { ...m.replyTo, author: { ...m.replyTo.author, cosmetics } } : m.replyTo,
+        };
+      }),
+    })),
 
   clear: () => set({
     messages: [],

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { useVoiceChatStore, useVoiceStore } from '@abyss/shared';
+import { useVoiceChatStore, useVoiceStore, getMessageStyle } from '@abyss/shared';
+import type { Message } from '@abyss/shared';
 import MessageItem from './MessageItem';
 import MessageInput from './MessageInput';
 
@@ -51,26 +52,39 @@ export default function VoiceChatPanel() {
         {!hasMore && messages.length > 0 && (
           <div className="voice-chat-start">Beginning of chat</div>
         )}
-        {messages.map((msg, i) => {
-          const prev = messages[i - 1];
-          const grouped =
-            !!prev &&
-            !msg.isSystem &&
-            !prev.isSystem &&
-            !prev.isDeleted &&
-            !msg.replyTo &&
-            prev.authorId === msg.authorId &&
-            new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
-          return (
-            <div key={msg.id} data-message-id={msg.id}>
-              <MessageItem
-                message={msg}
-                grouped={grouped}
-                onScrollToMessage={scrollToMessage}
-              />
+        {(() => {
+          const groups: { key: string; msgs: { msg: Message; grouped: boolean }[]; cosmeticStyle?: React.CSSProperties }[] = [];
+          for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            const prev = messages[i - 1];
+            const grouped =
+              !!prev &&
+              !msg.isSystem &&
+              !prev.isSystem &&
+              !prev.isDeleted &&
+              !msg.replyTo &&
+              prev.authorId === msg.authorId &&
+              new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60 * 1000;
+            if (grouped && groups.length > 0) {
+              groups[groups.length - 1].msgs.push({ msg, grouped: true });
+            } else {
+              groups.push({ key: msg.id, msgs: [{ msg, grouped: false }], cosmeticStyle: getMessageStyle(msg.author) });
+            }
+          }
+          return groups.map((group) => (
+            <div key={group.key} className={`message-group${group.cosmeticStyle ? ' message-cosmetic-group' : ''}`} style={group.cosmeticStyle}>
+              {group.msgs.map(({ msg, grouped }) => (
+                <div key={msg.id} data-message-id={msg.id}>
+                  <MessageItem
+                    message={msg}
+                    grouped={grouped}
+                    onScrollToMessage={scrollToMessage}
+                  />
+                </div>
+              ))}
             </div>
-          );
-        })}
+          ));
+        })()}
         <div ref={bottomRef} />
       </div>
       {channelId && <MessageInput channelId={channelId} />}

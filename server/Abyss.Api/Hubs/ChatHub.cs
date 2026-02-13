@@ -18,6 +18,7 @@ public class ChatHub : Hub
     private readonly PermissionService _perms;
     private readonly NotificationService _notifications;
     private readonly WatchPartyService _watchPartyService;
+    private readonly CosmeticService _cosmetics;
 
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
@@ -41,13 +42,14 @@ public class ChatHub : Hub
         public CancellationTokenSource Cancellation { get; } = new();
     }
 
-    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService)
+    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics)
     {
         _db = db;
         _voiceState = voiceState;
         _perms = perms;
         _notifications = notifications;
         _watchPartyService = watchPartyService;
+        _cosmetics = cosmetics;
     }
 
     private string UserId => Context.User!.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -516,7 +518,8 @@ public class ChatHub : Hub
         await _db.SaveChangesAsync();
 
         var author = await _db.Users.FindAsync(UserId);
-        var authorDto = new UserDto(author!.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio);
+        var authorCosmetics = await _cosmetics.GetEquippedAsync(UserId);
+        var authorDto = new UserDto(author!.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio, authorCosmetics);
 
         // Build reply reference DTO
         ReplyReferenceDto? replyDto = null;
@@ -525,7 +528,8 @@ public class ChatHub : Hub
             var replyMsg = await _db.Messages.Include(m => m.Author).FirstOrDefaultAsync(m => m.Id == replyToGuid.Value);
             if (replyMsg != null)
             {
-                var replyAuthorDto = new UserDto(replyMsg.Author.Id, replyMsg.Author.UserName!, replyMsg.Author.DisplayName, replyMsg.Author.AvatarUrl, replyMsg.Author.Status, replyMsg.Author.Bio);
+                var replyCosmetics = replyMsg.AuthorId == UserId ? authorCosmetics : await _cosmetics.GetEquippedAsync(replyMsg.AuthorId);
+                var replyAuthorDto = new UserDto(replyMsg.Author.Id, replyMsg.Author.UserName!, replyMsg.Author.DisplayName, replyMsg.Author.AvatarUrl, replyMsg.Author.Status, replyMsg.Author.Bio, replyCosmetics);
                 replyDto = new ReplyReferenceDto(replyMsg.Id, replyMsg.IsDeleted ? "" : replyMsg.Content, replyMsg.AuthorId, replyAuthorDto, replyMsg.IsDeleted);
             }
         }

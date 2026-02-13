@@ -10,6 +10,7 @@ import {
   hasChannelPermission,
   Permission,
   getDisplayColor,
+  getNameplateStyle,
   useDmStore,
 } from "@abyss/shared";
 import type { Message, Attachment } from "@abyss/shared";
@@ -67,6 +68,8 @@ export default function MessageItem({
     : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
+  const nameplateStyle = getNameplateStyle(message.author);
+  const authorStyle = nameplateStyle ?? (authorColor ? { color: authorColor } : undefined);
   const membersById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const m of members) {
@@ -209,7 +212,7 @@ export default function MessageItem({
             <span
               className="message-author clickable"
               onClick={handleAuthorClick}
-              style={authorColor ? { color: authorColor } : undefined}
+              style={authorStyle}
             >
               {authorDisplayName}
             </span>
@@ -272,7 +275,7 @@ export default function MessageItem({
             <span
               className="message-author clickable"
               onClick={handleAuthorClick}
-              style={authorColor ? { color: authorColor } : undefined}
+              style={authorStyle}
             >
               {message.author.displayName}
             </span>

@@ -20,7 +20,7 @@ import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
-import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -285,6 +285,16 @@ export function useSignalRListeners() {
 
       conn.on('MemberRolesUpdated', (_serverId: string, userId: string, roles: ServerRole[]) => {
         useServerStore.getState().updateMemberRolesLocal(userId, roles);
+      });
+
+      conn.on('UserCosmeticsChanged', (userId: string, cosmetics: EquippedCosmetics | null) => {
+        useServerStore.getState().updateMemberCosmetics(userId, cosmetics);
+        useMessageStore.getState().updateAuthorCosmetics(userId, cosmetics);
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser?.id === userId) {
+          const updatedUser = { ...currentUser, cosmetics };
+          useAuthStore.setState({ user: updatedUser });
+        }
       });
 
       conn.on('MemberKicked', (serverId: string, userId: string) => {

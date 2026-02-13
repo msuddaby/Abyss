@@ -40,3 +40,4 @@ export { formatTime, formatDate } from './utils/formatting.js';
 export { parseMentions, resolveMentionName, resolveCustomEmoji, MENTION_EMOJI_REGEX } from './utils/mentions.js';
 export type { MentionSegment } from './utils/mentions.js';
 export { shouldGroupMessage, groupReactions } from './utils/messages.js';
+export { getNameplateStyle, getMessageStyle, parseCosmeticCss } from './utils/cosmetics.js';

@@ -50,7 +50,8 @@ public class AdminController : ControllerBase
                 u.UserName!,
                 u.DisplayName,
                 u.Email,
-                u.Status))
+                u.Status,
+                u.AvatarUrl))
             .ToListAsync();
 
         return Ok(new AdminOverviewDto(servers, users));

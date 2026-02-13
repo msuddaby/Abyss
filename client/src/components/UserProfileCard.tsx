@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, getApiBase, useServerStore, useAuthStore, useFriendStore, useDmStore, useMessageStore, useToastStore } from '@abyss/shared';
+import { api, getApiBase, useServerStore, useAuthStore, useFriendStore, useDmStore, useMessageStore, useToastStore, getNameplateStyle } from '@abyss/shared';
 import type { User } from '@abyss/shared';
 
 interface Props {
@@ -112,7 +112,7 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
         )}
       </div>
       <div className="profile-card-body">
-        <div className="profile-card-name">{user.displayName}</div>
+        <div className="profile-card-name" style={getNameplateStyle(user)}>{user.displayName}</div>
         <div className="profile-card-status">{user.status || ''}</div>
         <div className="profile-card-username">@{user.username}</div>
         {nonDefaultRoles.length > 0 && (

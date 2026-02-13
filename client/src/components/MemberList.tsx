@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor } from '@abyss/shared';
+import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor, getNameplateStyle } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
 import { useContextMenuStore } from '../stores/contextMenuStore';
@@ -100,6 +100,8 @@ export default function MemberList() {
 
   const renderMember = (m: ServerMember) => {
     const displayColor = getDisplayColor(m);
+    const nameplateStyle = getNameplateStyle(m.user);
+    const nameStyle = nameplateStyle ?? (displayColor ? { color: displayColor } : undefined);
     return (
       <div key={m.userId} className={`member-item${!onlineUsers.has(m.userId) ? ' offline' : ''}`} onClick={(e) => handleMemberClick(m.userId, e)} onContextMenu={(e) => handleContextMenu(m, e)}>
         <div className="member-avatar">
@@ -111,7 +113,7 @@ export default function MemberList() {
           <span className={`presence-dot ${onlineUsers.has(m.userId) ? 'online' : 'offline'}`} />
         </div>
         <div className="member-text">
-          <span className="member-name" style={displayColor ? { color: displayColor } : undefined}>{m.user.displayName}</span>
+          <span className="member-name" style={nameStyle}>{m.user.displayName}</span>
           <span className="member-status">{m.user.status || ''}</span>
         </div>
         {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}

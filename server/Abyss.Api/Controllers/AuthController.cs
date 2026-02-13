@@ -26,6 +26,7 @@ public class AuthController : ControllerBase
     private readonly IHubContext<ChatHub> _hubContext;
     private readonly AppDbContext _db;
     private readonly ImageService _imageService;
+    private readonly CosmeticService _cosmeticService;
     private const string InviteOnlyKey = "InviteOnly";
     private const int DefaultRefreshTokenDays = 30;
 
@@ -35,13 +36,15 @@ public class AuthController : ControllerBase
         TokenService tokenService,
         IHubContext<ChatHub> hubContext,
         AppDbContext db,
-        ImageService imageService)
+        ImageService imageService,
+        CosmeticService cosmeticService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
         _tokenService = tokenService;
         _hubContext = hubContext;
         _db = db;
+        _cosmeticService = cosmeticService;
         _imageService = imageService;
     }
 
@@ -191,7 +194,8 @@ public class AuthController : ControllerBase
     {
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();
-        return Ok(ToUserDto(user));
+        var cosmetics = await _cosmeticService.GetEquippedAsync(userId);
+        return Ok(new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, cosmetics));
     }
 
     private async Task BroadcastProfileUpdate(string userId, UserDto dto)
