@@ -13,6 +13,7 @@ import {
   useToastStore,
   useWatchPartyStore,
 } from "@abyss/shared";
+import { NoiseSuppressor } from "../audio/NoiseSuppressor";
 
 const STUN_URL =
   import.meta.env.VITE_STUN_URL || "stun:stun.l.google.com:19302";
@@ -61,6 +62,10 @@ let currentOutputDeviceId: string = "default";
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
 const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
+
+// Noise suppression state
+let noiseSuppressor: NoiseSuppressor | null = null;
+let peerStream: MediaStream | null = null; // processed stream sent to peers (or localStream if suppressor inactive)
 
 // Camera state
 let cameraStream: MediaStream | null = null;
@@ -239,6 +244,34 @@ function ensureAudioContext(): AudioContext {
     });
   }
   return audioContext;
+}
+
+/** Returns the stream to add to peer connections — processed if suppressor is active, raw otherwise. */
+function getPeerStream(): MediaStream | null {
+  return peerStream ?? localStream;
+}
+
+/**
+ * Create and initialize a NoiseSuppressor for the given raw stream.
+ * Sets module-level `noiseSuppressor` and `peerStream`.
+ * On failure, peerStream falls back to localStream.
+ */
+async function applySuppressor(rawStream: MediaStream): Promise<void> {
+  const vs = useVoiceStore.getState();
+  if (!vs.noiseSuppression) {
+    peerStream = rawStream;
+    return;
+  }
+  const suppressor = new NoiseSuppressor();
+  const ctx = ensureAudioContext();
+  const processed = await suppressor.initialize(rawStream, ctx);
+  if (processed) {
+    noiseSuppressor = suppressor;
+    peerStream = processed;
+  } else {
+    // Fallback — suppressor failed, use raw stream
+    peerStream = rawStream;
+  }
 }
 
 function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & {
@@ -752,8 +785,9 @@ async function recreatePeer(peerId: string) {
   await enqueueSignaling(peerId, async () => {
     console.warn(`[recreate] Recreating peer connection for ${peerId} (hadScreenTracks=${hadScreenTracks}, hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream}, hasScreenStream=${!!screenStream})`);
     const pc = createPeerConnection(peerId);
-    if (localStream) {
-      localStream.getTracks().forEach((track) => pc.addTrack(track, localStream!));
+    const outStream = getPeerStream();
+    if (outStream) {
+      outStream.getTracks().forEach((track) => pc.addTrack(track, outStream));
     }
     const conn = getConnection();
     if (cameraStream) {
@@ -1321,6 +1355,11 @@ function closePeer(peerId: string) {
 
 function cleanupAll() {
   voiceSessionId++;
+  if (noiseSuppressor) {
+    noiseSuppressor.destroy();
+    noiseSuppressor = null;
+  }
+  peerStream = null;
   peers.forEach((pc) => {
     pc.close();
   });
@@ -1378,30 +1417,38 @@ async function replaceLocalAudioStream(newStream: MediaStream) {
 
   console.log(`[replaceAudio] Replacing local audio stream (newTrackId=${newTrack.id.slice(0,8)} enabled=${newTrack.enabled} readyState=${newTrack.readyState})`);
 
-  // Collect screen-audio track IDs so we skip them — only replace the mic sender
-  const screenAudioTrackIds = new Set<string>();
-  for (const senders of screenTrackSenders.values()) {
-    for (const s of senders) {
-      if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
-    }
-  }
-  if (screenAudioTrackIds.size > 0) {
-    console.log(`[replaceAudio] Skipping ${screenAudioTrackIds.size} screen-audio senders`);
-  }
-
-  for (const [peerId, pc] of peers) {
-    const allAudioSenders = pc.getSenders().filter(s => s.track?.kind === "audio");
-    const sender = allAudioSenders.find(s => !screenAudioTrackIds.has(s.track!.id));
-    if (sender) {
-      console.log(`[replaceAudio] Replacing mic sender for ${peerId} (oldTrackId=${sender.track?.id.slice(0,8)}, ${allAudioSenders.length} total audio senders)`);
-      try {
-        await sender.replaceTrack(newTrack);
-      } catch (err) {
-        console.warn(`[replaceAudio] Failed to replace audio track for ${peerId}:`, err);
+  if (noiseSuppressor) {
+    // Suppressor is active — swap its input source. The processed output track
+    // identity stays the same, so no sender.replaceTrack() is needed for peers.
+    noiseSuppressor.replaceInput(newStream);
+    console.log("[replaceAudio] Swapped noise suppressor input (output track unchanged)");
+  } else {
+    // No suppressor — replace track on each peer connection directly
+    // Collect screen-audio track IDs so we skip them — only replace the mic sender
+    const screenAudioTrackIds = new Set<string>();
+    for (const senders of screenTrackSenders.values()) {
+      for (const s of senders) {
+        if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
       }
-    } else {
-      console.log(`[replaceAudio] No mic sender found for ${peerId}, adding new track (${allAudioSenders.length} audio senders, all screen-audio)`);
-      pc.addTrack(newTrack, newStream);
+    }
+    if (screenAudioTrackIds.size > 0) {
+      console.log(`[replaceAudio] Skipping ${screenAudioTrackIds.size} screen-audio senders`);
+    }
+
+    for (const [peerId, pc] of peers) {
+      const allAudioSenders = pc.getSenders().filter(s => s.track?.kind === "audio");
+      const sender = allAudioSenders.find(s => !screenAudioTrackIds.has(s.track!.id));
+      if (sender) {
+        console.log(`[replaceAudio] Replacing mic sender for ${peerId} (oldTrackId=${sender.track?.id.slice(0,8)}, ${allAudioSenders.length} total audio senders)`);
+        try {
+          await sender.replaceTrack(newTrack);
+        } catch (err) {
+          console.warn(`[replaceAudio] Failed to replace audio track for ${peerId}:`, err);
+        }
+      } else {
+        console.log(`[replaceAudio] No mic sender found for ${peerId}, adding new track (${allAudioSenders.length} audio senders, all screen-audio)`);
+        pc.addTrack(newTrack, newStream);
+      }
     }
   }
 
@@ -1815,9 +1862,10 @@ async function handleUserJoinedVoice(
     const pc = createPeerConnection(userId);
 
     // Add audio tracks only - screen track is added lazily on WatchStreamRequested
-    const localTracks = localStream!.getTracks();
+    const outStream = getPeerStream()!;
+    const localTracks = outStream.getTracks();
     console.log(`[join] Adding ${localTracks.length} local tracks for ${userId}: ${localTracks.map(t => `${t.kind}:${t.id.slice(0,8)} enabled=${t.enabled} readyState=${t.readyState}`).join(", ")}`);
-    localTracks.forEach((track) => pc.addTrack(track, localStream!));
+    localTracks.forEach((track) => pc.addTrack(track, outStream));
 
     // Add camera track if camera is on (eager - send track-info first)
     if (cameraStream) {
@@ -1931,6 +1979,9 @@ async function attemptVoiceRejoin(reason: string) {
     }
 
     localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+
+    // Initialize noise suppressor (creates processed peerStream)
+    await applySuppressor(localStream);
 
     // Apply mute state
     const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
@@ -2081,8 +2132,9 @@ function setupSignalRListeners() {
             // SDP state is likely corrupt — rebuild with a fresh connection
             // Accept the remote offer on a clean PC instead
             pc = createPeerConnection(fromUserId);
-            if (localStream) {
-              localStream.getTracks().forEach((track) => pc!.addTrack(track, localStream!));
+            const recoveryStream = getPeerStream();
+            if (recoveryStream) {
+              recoveryStream.getTracks().forEach((track) => pc!.addTrack(track, recoveryStream));
             }
             if (cameraStream) {
               const camTrack = cameraStream.getVideoTracks()[0];
@@ -2108,10 +2160,11 @@ function setupSignalRListeners() {
           // New connection — audio only, screen track added lazily
           console.log(`[offer] New connection from ${fromUserId} (hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream})`);
           pc = createPeerConnection(fromUserId);
-          if (localStream) {
-            const tracks = localStream.getTracks();
+          const offerStream = getPeerStream();
+          if (offerStream) {
+            const tracks = offerStream.getTracks();
             console.log(`[offer] Adding ${tracks.length} local tracks: ${tracks.map(t => `${t.kind}:${t.id.slice(0,8)} enabled=${t.enabled}`).join(", ")}`);
-            tracks.forEach((track) => pc!.addTrack(track, localStream!));
+            tracks.forEach((track) => pc!.addTrack(track, offerStream));
           }
           // Add camera track if camera is on (eager — send track-info before answer)
           if (cameraStream) {
@@ -2513,6 +2566,89 @@ export function useWebRTC() {
     };
   }, [buildAudioConstraintsResolved, currentChannelId]);
 
+  // Toggle RNNoise suppressor mid-call when noiseSuppression setting changes
+  useEffect(() => {
+    if (!currentChannelId || !localStream) return;
+    // Skip if we just joined — applySuppressor already ran
+    if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        if (noiseSuppression && !noiseSuppressor) {
+          // Enable: create suppressor, replace peer tracks with processed output
+          const suppressor = new NoiseSuppressor();
+          const ctx = ensureAudioContext();
+          const processed = await suppressor.initialize(localStream!, ctx);
+          if (cancelled) {
+            suppressor.destroy();
+            return;
+          }
+          if (processed) {
+            noiseSuppressor = suppressor;
+            peerStream = processed;
+            const processedTrack = processed.getAudioTracks()[0];
+            if (processedTrack) {
+              // Collect screen-audio track IDs to skip
+              const screenAudioTrackIds = new Set<string>();
+              for (const senders of screenTrackSenders.values()) {
+                for (const s of senders) {
+                  if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+                }
+              }
+              for (const [peerId, pc] of peers) {
+                const sender = pc.getSenders().find(
+                  s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
+                );
+                if (sender) {
+                  try {
+                    await sender.replaceTrack(processedTrack);
+                  } catch (err) {
+                    console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
+                  }
+                }
+              }
+            }
+            console.log("[noiseSuppression] RNNoise enabled mid-call");
+          }
+        } else if (!noiseSuppression && noiseSuppressor) {
+          // Disable: destroy suppressor, replace peer tracks with raw localStream
+          noiseSuppressor.destroy();
+          noiseSuppressor = null;
+          peerStream = localStream;
+          const rawTrack = localStream!.getAudioTracks()[0];
+          if (rawTrack) {
+            const screenAudioTrackIds = new Set<string>();
+            for (const senders of screenTrackSenders.values()) {
+              for (const s of senders) {
+                if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+              }
+            }
+            for (const [peerId, pc] of peers) {
+              const sender = pc.getSenders().find(
+                s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
+              );
+              if (sender) {
+                try {
+                  await sender.replaceTrack(rawTrack);
+                } catch (err) {
+                  console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
+                }
+              }
+            }
+          }
+          console.log("[noiseSuppression] RNNoise disabled mid-call");
+        }
+      } catch (err) {
+        console.error("[noiseSuppression] Failed to toggle RNNoise:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noiseSuppression, currentChannelId]);
+
   // Broadcast mute/deafen state to everyone in the server
   useEffect(() => {
     if (!currentChannelId) return;
@@ -2610,6 +2746,9 @@ export function useWebRTC() {
           useToastStore.getState().addToast("Could not access microphone. Check permissions.", "error");
           return;
         }
+
+        // Initialize noise suppressor (creates processed peerStream)
+        await applySuppressor(localStream);
 
         // Apply current mute state to the new stream immediately
         const voiceState = useVoiceStore.getState();

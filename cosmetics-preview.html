@@ -591,6 +591,203 @@
   }
 
   /* ============================================ */
+  /* NEW LEGENDARY — PER-LETTER ANIMATIONS        */
+  /* ============================================ */
+
+  /* Nether Rune — ancient glowing runes, each letter pulses independently */
+  .np-nether-rune {
+    font-family: 'Georgia', 'Times New Roman', serif;
+    font-weight: 900;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    font-size: 13px;
+  }
+  .np-nether-rune span {
+    display: inline-block;
+    color: #00ffc8;
+    text-shadow: 0 0 7px #00ffc8, 0 0 20px rgba(0, 255, 200, 0.4), 0 0 40px rgba(0, 120, 100, 0.2);
+    animation: rune-pulse 2.5s ease-in-out infinite;
+  }
+  .np-nether-rune span:nth-child(1)  { animation-delay: 0s; }
+  .np-nether-rune span:nth-child(2)  { animation-delay: 0.25s; }
+  .np-nether-rune span:nth-child(3)  { animation-delay: 0.5s; }
+  .np-nether-rune span:nth-child(4)  { animation-delay: 0.75s; }
+  .np-nether-rune span:nth-child(5)  { animation-delay: 1.0s; }
+  .np-nether-rune span:nth-child(6)  { animation-delay: 1.25s; }
+  .np-nether-rune span:nth-child(7)  { animation-delay: 0.15s; }
+  .np-nether-rune span:nth-child(8)  { animation-delay: 0.4s; }
+  .np-nether-rune span:nth-child(9)  { animation-delay: 0.65s; }
+  .np-nether-rune span:nth-child(10) { animation-delay: 0.9s; }
+  .np-nether-rune span:nth-child(11) { animation-delay: 1.15s; }
+  .np-nether-rune span:nth-child(12) { animation-delay: 0.35s; }
+
+  /* Shattered — violent glitch, per-letter jitter with chromatic aberration */
+  .np-shattered {
+    font-family: 'Courier New', 'Lucida Console', monospace;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+  }
+  .np-shattered span {
+    display: inline-block;
+    color: #e0e0e0;
+    text-shadow: -2px 0 #ff003c, 2px 0 #00fff7;
+    animation: shatter-jitter 0.12s steps(3) infinite;
+  }
+  .np-shattered span:nth-child(odd) {
+    animation-name: shatter-jitter-alt;
+    animation-duration: 0.18s;
+  }
+  .np-shattered span:nth-child(3n) {
+    color: #c0ffc0;
+    animation-duration: 0.1s;
+  }
+  .np-shattered span:nth-child(4n+1) {
+    animation-delay: 0.04s;
+    text-shadow: -3px 0 #ff003c, 2px 0 #00fff7;
+  }
+  .np-shattered span:nth-child(2) { animation-delay: 0.06s; }
+  .np-shattered span:nth-child(5) { animation-delay: 0.02s; }
+
+  /* Celestial Script — elegant italic gold, letters float in a wave */
+  .np-celestial {
+    font-family: 'Georgia', 'Palatino Linotype', 'Book Antiqua', serif;
+    font-weight: 700;
+    font-style: italic;
+    letter-spacing: 0.5px;
+  }
+  .np-celestial span {
+    display: inline-block;
+    color: #ffd700;
+    text-shadow: 0 0 6px rgba(255, 215, 0, 0.5), 0 0 15px rgba(255, 180, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.5);
+    animation: celestial-float 3s ease-in-out infinite;
+  }
+  .np-celestial span:nth-child(1)  { animation-delay: 0s; }
+  .np-celestial span:nth-child(2)  { animation-delay: 0.2s; }
+  .np-celestial span:nth-child(3)  { animation-delay: 0.4s; }
+  .np-celestial span:nth-child(4)  { animation-delay: 0.6s; }
+  .np-celestial span:nth-child(5)  { animation-delay: 0.8s; }
+  .np-celestial span:nth-child(6)  { animation-delay: 1.0s; }
+  .np-celestial span:nth-child(7)  { animation-delay: 1.2s; }
+  .np-celestial span:nth-child(8)  { animation-delay: 1.4s; }
+  .np-celestial span:nth-child(9)  { animation-delay: 1.6s; }
+  .np-celestial span:nth-child(10) { animation-delay: 1.8s; }
+  .np-celestial span:nth-child(11) { animation-delay: 2.0s; }
+  .np-celestial span:nth-child(12) { animation-delay: 2.2s; }
+
+  /* Inferno — per-letter heat gradient, white-hot to crimson with flicker */
+  .np-inferno {
+    font-weight: 900;
+    letter-spacing: 0.5px;
+  }
+  .np-inferno span {
+    display: inline-block;
+    animation: inferno-flicker 1.2s ease-in-out infinite alternate;
+  }
+  .np-inferno span:nth-child(5n+1) {
+    color: #fff8e7;
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.8), 0 0 20px rgba(255, 215, 0, 0.6), 0 -3px 8px rgba(255, 100, 0, 0.4);
+    animation-delay: 0s;
+  }
+  .np-inferno span:nth-child(5n+2) {
+    color: #ffd700;
+    text-shadow: 0 0 8px rgba(255, 200, 0, 0.7), 0 0 16px rgba(255, 140, 0, 0.5), 0 -3px 8px rgba(255, 69, 0, 0.3);
+    animation-delay: 0.15s;
+  }
+  .np-inferno span:nth-child(5n+3) {
+    color: #ff8c00;
+    text-shadow: 0 0 8px rgba(255, 140, 0, 0.7), 0 0 16px rgba(255, 69, 0, 0.4), 0 -3px 8px rgba(200, 0, 0, 0.3);
+    animation-delay: 0.3s;
+  }
+  .np-inferno span:nth-child(5n+4) {
+    color: #ff4500;
+    text-shadow: 0 0 8px rgba(255, 69, 0, 0.6), 0 0 16px rgba(200, 0, 0, 0.4);
+    animation-delay: 0.45s;
+  }
+  .np-inferno span:nth-child(5n+5) {
+    color: #dc143c;
+    text-shadow: 0 0 8px rgba(220, 20, 60, 0.6), 0 0 16px rgba(139, 0, 0, 0.3);
+    animation-delay: 0.6s;
+  }
+
+  /* Chromatic Wave — each letter cycles full spectrum with staggered offsets */
+  .np-chromatic-wave {
+    font-weight: 800;
+    letter-spacing: 0.3px;
+  }
+  .np-chromatic-wave span {
+    display: inline-block;
+    animation: chroma-cycle 3s linear infinite;
+  }
+  .np-chromatic-wave span:nth-child(1)  { animation-delay: 0s; }
+  .np-chromatic-wave span:nth-child(2)  { animation-delay: -0.3s; }
+  .np-chromatic-wave span:nth-child(3)  { animation-delay: -0.6s; }
+  .np-chromatic-wave span:nth-child(4)  { animation-delay: -0.9s; }
+  .np-chromatic-wave span:nth-child(5)  { animation-delay: -1.2s; }
+  .np-chromatic-wave span:nth-child(6)  { animation-delay: -1.5s; }
+  .np-chromatic-wave span:nth-child(7)  { animation-delay: -1.8s; }
+  .np-chromatic-wave span:nth-child(8)  { animation-delay: -2.1s; }
+  .np-chromatic-wave span:nth-child(9)  { animation-delay: -2.4s; }
+  .np-chromatic-wave span:nth-child(10) { animation-delay: -2.7s; }
+
+  /* --- Per-letter keyframes --- */
+
+  @keyframes rune-pulse {
+    0%, 100% {
+      opacity: 0.6;
+      text-shadow: 0 0 7px #00ffc8, 0 0 15px rgba(0,255,200,0.3);
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      text-shadow: 0 0 12px #00ffc8, 0 0 30px rgba(0,255,200,0.6), 0 0 60px rgba(0,255,200,0.15);
+      transform: scale(1.1);
+    }
+  }
+
+  @keyframes shatter-jitter {
+    0%   { transform: translate(0, 0) rotate(0deg); }
+    33%  { transform: translate(1.5px, -1.5px) rotate(1deg); }
+    66%  { transform: translate(-1px, 1px) rotate(-0.5deg); }
+    100% { transform: translate(0.5px, 0.5px) rotate(0deg); }
+  }
+
+  @keyframes shatter-jitter-alt {
+    0%   { transform: translate(0, 0) rotate(0deg); }
+    33%  { transform: translate(-2px, 1px) rotate(-1.5deg); }
+    66%  { transform: translate(1px, -0.5px) rotate(0.5deg); }
+    100% { transform: translate(-0.5px, -1px) rotate(0deg); }
+  }
+
+  @keyframes celestial-float {
+    0%, 100% {
+      transform: translateY(0);
+      text-shadow: 0 0 6px rgba(255,215,0,0.4), 0 0 15px rgba(255,180,0,0.2), 0 1px 2px rgba(0,0,0,0.5);
+    }
+    50% {
+      transform: translateY(-4px);
+      text-shadow: 0 0 10px rgba(255,215,0,0.9), 0 0 25px rgba(255,180,0,0.5), 0 0 45px rgba(255,215,0,0.2), 0 1px 2px rgba(0,0,0,0.5);
+    }
+  }
+
+  @keyframes inferno-flicker {
+    0%   { transform: translateY(0) scale(1); opacity: 1; }
+    25%  { transform: translateY(-1px) scale(1.03); opacity: 0.88; }
+    50%  { transform: translateY(0.5px) scale(0.98); opacity: 1; }
+    75%  { transform: translateY(-2px) scale(1.04); opacity: 0.82; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+  }
+
+  @keyframes chroma-cycle {
+    0%      { color: #ff0040; text-shadow: 0 0 8px rgba(255,0,64,0.6); }
+    16.67%  { color: #ff8800; text-shadow: 0 0 8px rgba(255,136,0,0.6); }
+    33.33%  { color: #eeff00; text-shadow: 0 0 8px rgba(238,255,0,0.6); }
+    50%     { color: #00ff88; text-shadow: 0 0 8px rgba(0,255,136,0.6); }
+    66.67%  { color: #0088ff; text-shadow: 0 0 8px rgba(0,136,255,0.6); }
+    83.33%  { color: #cc00ff; text-shadow: 0 0 8px rgba(204,0,255,0.6); }
+    100%    { color: #ff0040; text-shadow: 0 0 8px rgba(255,0,64,0.6); }
+  }
+
+  /* ============================================ */
   /* BATCH 2 — MESSAGE STYLES BY RARITY           */
   /* ============================================ */
 
@@ -1162,6 +1359,71 @@
         </div>
       </div>
       <div class="css-data">{"color":"#00ff41","textShadow":"-1px 0 #ff0000, 1px 0 #00ffff","fontWeight":"700","letterSpacing":"1px"}</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Nether Rune</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background:#0a2a2a; color:#00ffc8; font-family: Georgia, serif;">N</div>
+        <div class="member-text">
+          <span class="member-name np-nether-rune"><span>N</span><span>e</span><span>t</span><span>h</span><span>e</span><span>r</span><span>K</span><span>i</span><span>n</span><span>g</span></span>
+          <span class="member-status">Ancient power awakens</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter animation: serif uppercase, teal glow, staggered pulse with scale. Each letter pulses independently like glowing runes.</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Shattered</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background:#1a0a1a; color:#e0e0e0; text-shadow: -1px 0 #ff003c, 1px 0 #00fff7; font-family: 'Courier New', monospace;">$</div>
+        <div class="member-text">
+          <span class="member-name np-shattered"><span>S</span><span>h</span><span>4</span><span>t</span><span>t</span><span>3</span><span>r</span><span>3</span><span>d</span></span>
+          <span class="member-status">Reality is broken</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter animation: monospace, chromatic aberration (red/cyan split shadows), each letter jitters independently with random offsets and rotation.</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Celestial Script</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: linear-gradient(135deg, #1a1a3e, #2a1a4e); color: #ffd700;">&#x2726;</div>
+        <div class="member-text">
+          <span class="member-name np-celestial"><span>C</span><span>e</span><span>l</span><span>e</span><span>s</span><span>t</span><span>i</span><span>a</span><span>l</span><span>O</span><span>n</span><span>e</span></span>
+          <span class="member-status">Written in the stars</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter animation: italic serif, golden glow, letters float up and down in a staggered sine wave with intensifying sparkle at peak.</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Inferno</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: linear-gradient(180deg, #ff8c00, #8b0000); color: #fff8e7;">I</div>
+        <div class="member-text">
+          <span class="member-name np-inferno"><span>I</span><span>n</span><span>f</span><span>e</span><span>r</span><span>n</span><span>o</span><span>G</span><span>o</span><span>d</span></span>
+          <span class="member-status">Everything burns</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter animation: each letter is a different flame temperature (white-hot &rarr; gold &rarr; orange &rarr; red &rarr; crimson), per-letter flicker with upward heat drift.</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Chromatic Wave</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: conic-gradient(#ff0040, #ff8800, #eeff00, #00ff88, #0088ff, #cc00ff, #ff0040); color: white; font-weight: 900;">C</div>
+        <div class="member-text">
+          <span class="member-name np-chromatic-wave"><span>C</span><span>h</span><span>r</span><span>o</span><span>m</span><span>a</span><span>L</span><span>o</span><span>r</span><span>d</span></span>
+          <span class="member-status">Ride the spectrum</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter animation: each letter independently cycles through the full color spectrum with staggered delays, creating a flowing rainbow wave with matching glow.</div>
       <div class="css-hint">hover to see css</div>
     </div>
 
@@ -2113,6 +2375,71 @@
       <div class="css-hint">hover to see css</div>
     </div>
 
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Nether Rune (Nameplate)</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background:#0a2a2a; color:#00ffc8; font-family: Georgia, serif;">N</div>
+        <div class="member-text">
+          <span class="member-name np-nether-rune"><span>N</span><span>e</span><span>t</span><span>h</span><span>e</span><span>r</span><span>K</span><span>i</span><span>n</span><span>g</span></span>
+          <span class="member-status">Ancient power</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter: serif uppercase, teal glow rune pulse, each letter scales/glows independently</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Shattered (Nameplate)</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background:#1a0a1a; color:#e0e0e0; text-shadow: -1px 0 #ff003c, 1px 0 #00fff7; font-family: monospace;">$</div>
+        <div class="member-text">
+          <span class="member-name np-shattered"><span>S</span><span>h</span><span>4</span><span>t</span><span>t</span><span>3</span><span>r</span><span>3</span><span>d</span></span>
+          <span class="member-status">Reality broken</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter: monospace, chromatic aberration RGB split, violent per-letter jitter</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Celestial Script (Nameplate)</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: linear-gradient(135deg, #1a1a3e, #2a1a4e); color:#ffd700;">&#x2726;</div>
+        <div class="member-text">
+          <span class="member-name np-celestial"><span>C</span><span>e</span><span>l</span><span>e</span><span>s</span><span>t</span><span>i</span><span>a</span><span>l</span><span>O</span><span>n</span><span>e</span></span>
+          <span class="member-status">Written in stars</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter: italic serif, gold glow, letters float in staggered sine wave</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Inferno (Nameplate)</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: linear-gradient(180deg, #ff8c00, #8b0000); color:#fff8e7;">I</div>
+        <div class="member-text">
+          <span class="member-name np-inferno"><span>I</span><span>n</span><span>f</span><span>e</span><span>r</span><span>n</span><span>o</span><span>G</span><span>o</span><span>d</span></span>
+          <span class="member-status">Everything burns</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter: each letter different flame temperature (white-hot to crimson), per-letter flicker</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
+    <div class="card">
+      <div class="card-label"><span class="rarity-dot legendary"></span> <span class="rarity-legendary">Legendary</span> &mdash; Chromatic Wave (Nameplate)</div>
+      <div class="member-item">
+        <div class="member-avatar" style="background: conic-gradient(#ff0040, #ff8800, #eeff00, #00ff88, #0088ff, #cc00ff, #ff0040); color:white; font-weight:900;">C</div>
+        <div class="member-text">
+          <span class="member-name np-chromatic-wave"><span>C</span><span>h</span><span>r</span><span>o</span><span>m</span><span>a</span><span>L</span><span>o</span><span>r</span><span>d</span></span>
+          <span class="member-status">Ride the spectrum</span>
+        </div>
+      </div>
+      <div class="css-data">per-letter: each letter cycles full hue spectrum with staggered offsets, flowing rainbow wave</div>
+      <div class="css-hint">hover to see css</div>
+    </div>
+
   </div>
 </div>
 
@@ -2125,7 +2452,7 @@
 
 <div class="section">
   <div style="background: var(--bg-primary); border-radius: 8px; padding: 12px; width: 240px;">
-    <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 8px 4px; font-weight: 600;">Online &mdash; 10</div>
+    <div style="font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 8px 4px; font-weight: 600;">Online &mdash; 15</div>
 
     <div class="member-item">
       <div class="member-avatar" style="background:#f39c12">G</div>
@@ -2180,6 +2507,46 @@
       <div class="member-text">
         <span class="member-name np-glitch">Glitch_Error</span>
         <span class="member-status">system.fail</span>
+      </div>
+    </div>
+
+    <div class="member-item">
+      <div class="member-avatar" style="background:#0a2a2a; color:#00ffc8; font-family: Georgia, serif; font-size:12px;">N</div>
+      <div class="member-text">
+        <span class="member-name np-nether-rune"><span>N</span><span>e</span><span>t</span><span>h</span><span>e</span><span>r</span><span>K</span><span>i</span><span>n</span><span>g</span></span>
+        <span class="member-status">Ancient power</span>
+      </div>
+    </div>
+
+    <div class="member-item">
+      <div class="member-avatar" style="background:#1a0a1a; color:#e0e0e0; text-shadow: -1px 0 #ff003c, 1px 0 #00fff7; font-family: monospace;">$</div>
+      <div class="member-text">
+        <span class="member-name np-shattered"><span>S</span><span>h</span><span>4</span><span>t</span><span>t</span><span>3</span><span>r</span><span>3</span><span>d</span></span>
+        <span class="member-status">Glitched</span>
+      </div>
+    </div>
+
+    <div class="member-item">
+      <div class="member-avatar" style="background: linear-gradient(135deg, #1a1a3e, #2a1a4e); color:#ffd700;">&#x2726;</div>
+      <div class="member-text">
+        <span class="member-name np-celestial"><span>C</span><span>e</span><span>l</span><span>e</span><span>s</span><span>t</span><span>i</span><span>a</span><span>l</span><span>O</span><span>n</span><span>e</span></span>
+        <span class="member-status">Stargazing</span>
+      </div>
+    </div>
+
+    <div class="member-item">
+      <div class="member-avatar" style="background: linear-gradient(180deg, #ff8c00, #8b0000); color:#fff8e7;">I</div>
+      <div class="member-text">
+        <span class="member-name np-inferno"><span>I</span><span>n</span><span>f</span><span>e</span><span>r</span><span>n</span><span>o</span><span>G</span><span>o</span><span>d</span></span>
+        <span class="member-status">Burning</span>
+      </div>
+    </div>
+
+    <div class="member-item">
+      <div class="member-avatar" style="background: conic-gradient(#ff0040, #ff8800, #eeff00, #00ff88, #0088ff, #cc00ff, #ff0040); color:white;">C</div>
+      <div class="member-text">
+        <span class="member-name np-chromatic-wave"><span>C</span><span>h</span><span>r</span><span>o</span><span>m</span><span>a</span><span>L</span><span>o</span><span>r</span><span>d</span></span>
+        <span class="member-status">Full spectrum</span>
       </div>
     </div>
 

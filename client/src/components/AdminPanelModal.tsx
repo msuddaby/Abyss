@@ -26,7 +26,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [cosmeticItems, setCosmeticItems] = useState<CosmeticItem[]>([]);
   const [cosmeticsLoading, setCosmeticsLoading] = useState(false);
   const [selectedCosmetic, setSelectedCosmetic] = useState<CosmeticItem | null>(null);
-  const [cosmeticFormMode, setCosmeticFormMode] = useState<'list' | 'create' | 'edit' | 'presets'>('list');
+  const [cosmeticFormMode, setCosmeticFormMode] = useState<'list' | 'create' | 'edit'>('list');
   const [cosmeticForm, setCosmeticForm] = useState({ name: '', description: '', type: 0, rarity: 0, cssData: '{}' });
   const [cosmeticTypeFilter, setCosmeticTypeFilter] = useState<number>(-1);
   const [cosmeticSearch, setCosmeticSearch] = useState('');
@@ -280,7 +280,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
     if (cosmeticTypeFilter >= 0) items = items.filter((c) => c.type === cosmeticTypeFilter);
     const q = cosmeticSearch.trim().toLowerCase();
     if (q) items = items.filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
-    return items;
+    return [...items].sort((a, b) => b.rarity - a.rarity);
   }, [cosmeticItems, cosmeticTypeFilter, cosmeticSearch]);
 
   const assignUserResults = useMemo(() => {
@@ -290,97 +290,6 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       u.username.toLowerCase().includes(q) || u.displayName.toLowerCase().includes(q)
     ).slice(0, 8);
   }, [data, assignUserQuery]);
-
-  const COSMETIC_PRESETS = [
-    // Nameplates - Static Gradients
-    { name: 'Crimson Fire', desc: 'A fiery gradient nameplate', type: 0, rarity: 1, css: '{"background":"linear-gradient(90deg, #ff6b6b, #ff8e53)","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700"}' },
-    { name: 'Ocean Breeze', desc: 'Cool blue ocean gradient', type: 0, rarity: 1, css: '{"background":"linear-gradient(90deg, #36d1dc, #5b86e5)","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700"}' },
-    { name: 'Sakura', desc: 'Soft pink cherry blossom gradient', type: 0, rarity: 1, css: '{"background":"linear-gradient(90deg, #fbc2eb, #a6c1ee)","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700"}' },
-    { name: 'Volcanic', desc: 'Hot lava pink-red gradient', type: 0, rarity: 2, css: '{"background":"linear-gradient(90deg, #ff512f, #dd2476)","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700"}' },
-    // Nameplates - Glow Effects
-    { name: 'Emerald Glow', desc: 'Green glow emanating from text', type: 0, rarity: 2, css: '{"color":"#43b581","textShadow":"0 0 8px rgba(67,181,129,0.6), 0 0 16px rgba(67,181,129,0.3)","fontWeight":"700"}' },
-    { name: 'Neon Purple', desc: 'Purple neon glow effect', type: 0, rarity: 2, css: '{"color":"#b388ff","textShadow":"0 0 8px rgba(179,136,255,0.7), 0 0 20px rgba(179,136,255,0.4)","fontWeight":"700"}' },
-    { name: 'Shadow Lord', desc: 'Deep shadow effect on text', type: 0, rarity: 3, css: '{"color":"#c0c0c0","textShadow":"0 2px 4px rgba(0,0,0,0.8), 0 0 12px rgba(0,0,0,0.5)","fontWeight":"700","letterSpacing":"0.5px"}' },
-    { name: 'Midnight Pulse', desc: 'Pulsing blue glow', type: 0, rarity: 3, css: '{"color":"#7289da","textShadow":"0 0 6px rgba(114,137,218,0.5)","fontWeight":"700","animation":"nameplate-pulse 2s ease-in-out infinite"}' },
-    // Nameplates - Animated Shimmer
-    { name: 'Gold Shimmer', desc: 'Animated golden shimmer', type: 0, rarity: 3, css: '{"background":"linear-gradient(90deg, #f7971e, #ffd200, #f7971e)","backgroundSize":"200% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer 3s linear infinite"}' },
-    { name: 'Frost Bite', desc: 'Icy pastel shimmer', type: 0, rarity: 3, css: '{"background":"linear-gradient(90deg, #a8edea, #fed6e3, #a8edea)","backgroundSize":"200% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer 5s linear infinite"}' },
-    { name: 'Blood Moon', desc: 'Dark crimson shimmer', type: 0, rarity: 3, css: '{"background":"linear-gradient(90deg, #8b0000, #dc143c, #8b0000)","backgroundSize":"200% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer 4s linear infinite"}' },
-    { name: 'Arctic Aurora', desc: 'Cyan-green northern lights', type: 0, rarity: 3, css: '{"background":"linear-gradient(90deg, #00c9ff, #92fe9d, #00c9ff)","backgroundSize":"200% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer 4s linear infinite"}' },
-    // Nameplates - Legendary
-    { name: 'Rainbow Shift', desc: 'Full spectrum rainbow shimmer', type: 0, rarity: 4, css: '{"background":"linear-gradient(90deg, #ff6b6b, #ffa500, #ffd700, #43b581, #5b86e5, #b388ff, #ff6b6b)","backgroundSize":"300% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer-300 4s linear infinite"}' },
-    { name: 'Cyber Punk', desc: 'Neon cyberpunk color shift', type: 0, rarity: 4, css: '{"background":"linear-gradient(90deg, #f72585, #7209b7, #3a0ca3, #4cc9f0, #f72585)","backgroundSize":"300% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer-300 3s linear infinite"}' },
-    { name: 'Holographic', desc: 'Holographic multi-color effect', type: 0, rarity: 4, css: '{"background":"linear-gradient(135deg, #ff0080, #ff8c00, #40e0d0, #7b68ee, #ff0080)","backgroundSize":"400% auto","backgroundClip":"text","WebkitBackgroundClip":"text","WebkitTextFillColor":"transparent","fontWeight":"700","animation":"nameplate-shimmer-400 6s linear infinite","filter":"brightness(1.1)"}' },
-    { name: 'Static Glitch', desc: 'Glitchy terminal aesthetic', type: 0, rarity: 4, css: '{"color":"#00ff41","textShadow":"-1px 0 #ff0000, 1px 0 #00ffff","fontWeight":"700","letterSpacing":"1px"}' },
-    // Message Styles - Simple
-    { name: 'Royal Blue', desc: 'Clean blue accent border', type: 1, rarity: 0, css: '{"borderLeft":"3px solid #5865f2","background":"linear-gradient(90deg, rgba(88,101,242,0.1), transparent)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Crimson Edge', desc: 'Bold red border accent', type: 1, rarity: 0, css: '{"borderLeft":"3px solid #ed4245","background":"linear-gradient(90deg, rgba(237,66,69,0.08), transparent)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Emerald Accent', desc: 'Natural green border', type: 1, rarity: 0, css: '{"borderLeft":"3px solid #43b581","background":"linear-gradient(90deg, rgba(67,181,129,0.08), transparent)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Sunset Glow', desc: 'Warm golden accent', type: 1, rarity: 1, css: '{"borderLeft":"3px solid #faa61a","background":"linear-gradient(90deg, rgba(250,166,26,0.08), transparent)","borderRadius":"0 4px 4px 0"}' },
-    // Message Styles - Enhanced
-    { name: 'Neon Border', desc: 'Neon purple glow border', type: 1, rarity: 2, css: '{"borderLeft":"3px solid #b388ff","background":"linear-gradient(90deg, rgba(179,136,255,0.06), transparent)","boxShadow":"-4px 0 12px rgba(179,136,255,0.15)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Gradient Border', desc: 'Pink-purple gradient left border', type: 1, rarity: 2, css: '{"borderLeft":"3px solid #f72585","background":"linear-gradient(90deg, rgba(247,37,133,0.05), transparent)"}' },
-    { name: 'Cherry Blossom', desc: 'Soft pink pastel border', type: 1, rarity: 2, css: '{"borderLeft":"3px solid #fbc2eb","background":"linear-gradient(90deg, rgba(251,194,235,0.06), rgba(166,193,238,0.02), transparent)","borderRadius":"0 4px 4px 0"}' },
-    // Message Styles - Premium
-    { name: 'Golden Frame', desc: 'Full golden border frame', type: 1, rarity: 3, css: '{"border":"1px solid rgba(243,156,18,0.3)","borderLeft":"3px solid #f39c12","background":"linear-gradient(90deg, rgba(243,156,18,0.06), transparent)","borderRadius":"4px"}' },
-    { name: 'Frost Glass', desc: 'Frosted glass effect', type: 1, rarity: 3, css: '{"background":"rgba(168,237,234,0.04)","border":"1px solid rgba(168,237,234,0.12)","borderRadius":"8px"}' },
-    { name: 'Dark Aura', desc: 'Dark void-like depth', type: 1, rarity: 3, css: '{"background":"rgba(0,0,0,0.2)","borderLeft":"3px solid #2c2f33","boxShadow":"inset 0 0 20px rgba(0,0,0,0.3)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Glowing Ember', desc: 'Warm smoldering glow', type: 1, rarity: 3, css: '{"borderLeft":"3px solid #ff512f","background":"linear-gradient(90deg, rgba(255,81,47,0.08), rgba(221,36,118,0.04), transparent)","boxShadow":"-2px 0 8px rgba(255,81,47,0.12)","borderRadius":"0 4px 4px 0"}' },
-    { name: 'Double Border', desc: 'Symmetrical side borders', type: 1, rarity: 3, css: '{"borderLeft":"3px solid #5865f2","borderRight":"3px solid #5865f2","background":"linear-gradient(90deg, rgba(88,101,242,0.06), transparent, rgba(88,101,242,0.06))","borderRadius":"4px"}' },
-    // Message Styles - Legendary
-    { name: 'Rainbow Border', desc: 'Full rainbow spectrum border', type: 1, rarity: 4, css: '{"borderLeft":"4px solid transparent","borderImage":"linear-gradient(to bottom, #ff6b6b, #ffa500, #ffd700, #43b581, #5b86e5, #b388ff) 1","background":"linear-gradient(90deg, rgba(114,137,218,0.04), transparent)"}' },
-    { name: 'Holographic Frame', desc: 'Animated rainbow shimmer border', type: 1, rarity: 4, css: '{"background":"linear-gradient(var(--bg-primary), var(--bg-primary)) padding-box, linear-gradient(90deg, #ff6b6b, #ffa500, #ffd700, #43b581, #5b86e5, #b388ff, #ff6b6b) border-box","backgroundSize":"100% 100%, 300% auto","border":"2px solid transparent","borderLeft":"3px solid transparent","borderRadius":"4px","animation":"msg-holo-shimmer 4s linear infinite"}' },
-    { name: 'Terminal', desc: 'Retro hacker terminal look', type: 1, rarity: 4, css: '{"borderLeft":"3px solid #00ff41","background":"rgba(0,255,65,0.03)","borderRadius":"0 4px 4px 0","fontFamily":"\'Courier New\', Consolas, monospace","color":"#00ff41"}' },
-    { name: 'Pulsing Glow', desc: 'Gently pulsing border glow', type: 1, rarity: 3, css: '{"borderLeft":"3px solid #7289da","background":"linear-gradient(90deg, rgba(114,137,218,0.06), transparent)","borderRadius":"0 4px 4px 0","animation":"msg-glow 3s ease-in-out infinite"}' },
-  ];
-
-  const handleAddPreset = async (preset: typeof COSMETIC_PRESETS[0]) => {
-    setError(null);
-    try {
-      const res = await api.post('/cosmetics', {
-        name: preset.name,
-        description: preset.desc,
-        type: preset.type,
-        rarity: preset.rarity,
-        cssData: preset.css,
-      });
-      setCosmeticItems((prev) => [...prev, res.data]);
-    } catch (err: any) {
-      setError(err?.response?.data || 'Failed to create preset.');
-    }
-  };
-
-  const handleSyncAllPresets = async () => {
-    setError(null);
-    const existingByName = new Map(cosmeticItems.map((c) => [c.name, c]));
-    for (const preset of COSMETIC_PRESETS) {
-      const existing = existingByName.get(preset.name);
-      if (existing) {
-        // Update if anything differs
-        if (existing.cssData !== preset.css || existing.description !== preset.desc || existing.rarity !== preset.rarity) {
-          try {
-            const res = await api.put(`/cosmetics/${existing.id}`, {
-              description: preset.desc,
-              rarity: preset.rarity,
-              cssData: preset.css,
-            });
-            setCosmeticItems((prev) => prev.map((c) => c.id === existing.id ? res.data : c));
-          } catch { /* skip */ }
-        }
-      } else {
-        try {
-          const res = await api.post('/cosmetics', {
-            name: preset.name,
-            description: preset.desc,
-            type: preset.type,
-            rarity: preset.rarity,
-            cssData: preset.css,
-          });
-          setCosmeticItems((prev) => [...prev, res.data]);
-        } catch { /* skip */ }
-      }
-    }
-  };
 
   const renderCosmeticPreview = (cssData: string, type: number, name?: string) => {
     if (type === CosmeticType.Nameplate) {
@@ -557,9 +466,6 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                       <button className="btn-secondary" onClick={() => { setCosmeticFormMode('create'); setCosmeticForm({ name: '', description: '', type: 0, rarity: 0, cssData: '{}' }); }} style={{ padding: '6px 12px', fontSize: 13 }}>
                         + Create
                       </button>
-                      <button className="btn-secondary" onClick={() => setCosmeticFormMode('presets')} style={{ padding: '6px 12px', fontSize: 13 }}>
-                        Presets
-                      </button>
                     </div>
                     <div className="admin-cosmetics-grid">
                       {filteredCosmetics.map((c) => (
@@ -700,40 +606,6 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                           )}
                         </div>
                       )}
-                    </div>
-                  </>
-                )}
-
-                {cosmeticFormMode === 'presets' && (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                      <div className="admin-setting-title">Preset Cosmetics</div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn-secondary" onClick={handleSyncAllPresets} style={{ padding: '6px 12px', fontSize: 12 }}>Sync All Presets</button>
-                        <button className="btn-secondary" onClick={() => setCosmeticFormMode('list')} style={{ padding: '6px 12px', fontSize: 12 }}>Back</button>
-                      </div>
-                    </div>
-                    <div className="admin-setting-desc" style={{ marginBottom: 12 }}>Click a preset to add it as a cosmetic item. Already-added items are dimmed.</div>
-                    <div className="cosmetic-preset-grid">
-                      {COSMETIC_PRESETS.map((p) => {
-                        const exists = cosmeticItems.some((c) => c.name === p.name);
-                        return (
-                          <div
-                            key={p.name}
-                            className="cosmetic-preset-item"
-                            style={exists ? { opacity: 0.4 } : undefined}
-                            onClick={() => !exists && handleAddPreset(p)}
-                          >
-                            <div className="cosmetic-preset-preview">
-                              {renderCosmeticPreview(p.css, p.type, p.name)}
-                            </div>
-                            <div className="cosmetic-preset-label">{p.name}</div>
-                            <div className="cosmetic-preset-rarity" style={{ color: CosmeticRarityColors[p.rarity] }}>
-                              {CosmeticRarityNames[p.rarity]} &middot; {CosmeticTypeNames[p.type]}
-                            </div>
-                          </div>
-                        );
-                      })}
                     </div>
                   </>
                 )}

@@ -48,7 +48,22 @@ async function doRefresh(): Promise<string | null> {
     storage.setItem('refreshToken', newRefreshToken);
     if (user) storage.setItem('user', JSON.stringify(user));
     return token;
-  } catch {
+  } catch (err: any) {
+    const status = err?.response?.status;
+    if (status === 429) {
+      const retryAfter = Number(err.response?.headers?.['retry-after']) || 5;
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      try {
+        const res = await rawApi.post('/auth/refresh', { refreshToken: storage.getItem('refreshToken') });
+        const { token, refreshToken: newRefreshToken, user } = res.data;
+        storage.setItem('token', token);
+        storage.setItem('refreshToken', newRefreshToken);
+        if (user) storage.setItem('user', JSON.stringify(user));
+        return token;
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
@@ -102,7 +117,12 @@ export async function ensureFreshToken(): Promise<string | null> {
   if (!token) return null;
   const exp = getTokenExpiry(token);
   if (exp && Date.now() >= exp - 120_000) {
-    return await refreshAccessToken() ?? token;
+    const refreshed = await refreshAccessToken();
+    if (refreshed) return refreshed;
+    // Refresh failed — return the old token only if it hasn't actually expired yet.
+    // Sending an expired token just wastes a round-trip to get a 401.
+    if (exp && Date.now() < exp) return token;
+    return null;
   }
   return token;
 }
@@ -130,6 +150,16 @@ api.interceptors.response.use(
           original.headers = original.headers ?? {};
           original.headers.Authorization = `Bearer ${storedToken}`;
           return api(original);
+        }
+      }
+      // Only logout if the current access token is actually expired.
+      // If it's still valid, the 401 was for a different reason (permissions etc.)
+      // — don't nuke the session.
+      const currentToken = getStorage().getItem('token');
+      if (currentToken) {
+        const exp = getTokenExpiry(currentToken);
+        if (exp && Date.now() < exp) {
+          return Promise.reject(err);
         }
       }
       if (onUnauthorized) onUnauthorized();

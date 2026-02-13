@@ -214,11 +214,12 @@ else
 
 var app = builder.Build();
 
-// Auto-migrate database
+// Auto-migrate database and seed data
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+    await CosmeticSeeder.SeedAsync(db);
 }
 
 // Exception handler for production (prevents stack trace leaking)

@@ -598,9 +598,10 @@ export default function UserSettingsModal({
     }
   };
 
-  const filteredMyCosmetics = cosmeticTypeFilter >= 0
+  const filteredMyCosmetics = (cosmeticTypeFilter >= 0
     ? myCosmetics.filter((uc) => uc.item.type === cosmeticTypeFilter)
-    : myCosmetics;
+    : myCosmetics
+  ).toSorted((a, b) => b.item.rarity - a.item.rarity);
 
   const renderCosmeticPreview = (item: CosmeticItem) => {
     if (item.type === CosmeticType.Nameplate) {

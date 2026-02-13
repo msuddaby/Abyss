@@ -8,7 +8,7 @@ namespace Abyss.Api.Services;
 
 public class TokenService
 {
-    private const int DefaultAccessTokenMinutes = 15;
+    private const int DefaultAccessTokenMinutes = 120;
 
     public string CreateToken(AppUser user)
     {
