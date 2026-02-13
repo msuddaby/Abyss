@@ -68,7 +68,7 @@ function createWindow() {
       "default-src 'self'",
       process.env.NODE_ENV === 'development'
         ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-        : "script-src 'self'",
+        : "script-src 'self' 'wasm-unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
       "connect-src 'self' http: https: ws: wss:",
       "img-src 'self' data: blob: http: https:",
