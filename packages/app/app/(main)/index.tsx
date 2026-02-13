@@ -6,6 +6,7 @@ import MessageInput from '../../src/components/MessageInput';
 import TypingIndicator from '../../src/components/TypingIndicator';
 import VoiceView from '../../src/components/VoiceView';
 import EmojiPicker, { type EmojiSelection } from '../../src/components/EmojiPicker';
+import ConnectionStatusBanner from '../../src/components/ConnectionStatusBanner';
 import { useUiStore } from '../../src/stores/uiStore';
 import { colors, spacing, fontSize } from '../../src/theme/tokens';
 
@@ -43,6 +44,7 @@ export default function HomeScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        <ConnectionStatusBanner />
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={toggleLeftDrawer}>
             <Text style={styles.headerButtonText}>{'☰'}</Text>
@@ -78,6 +80,7 @@ export default function HomeScreen() {
     if (isVoice) {
       return (
         <View style={styles.container}>
+        <ConnectionStatusBanner />
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={toggleLeftDrawer}>
             <Text style={styles.headerButtonText}>{'☰'}</Text>
@@ -103,6 +106,7 @@ export default function HomeScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
+        <ConnectionStatusBanner />
         <View style={styles.header}>
           <Pressable style={styles.headerButton} onPress={toggleLeftDrawer}>
             <Text style={styles.headerButtonText}>{'☰'}</Text>

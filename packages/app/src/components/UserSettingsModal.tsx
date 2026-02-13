@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, TextInput, Pressable, Image, StyleSheet, type ViewStyle, type TextStyle, type ImageStyle } from 'react-native';
+import { View, Text, TextInput, Pressable, Image, Switch, StyleSheet, type ViewStyle, type TextStyle, type ImageStyle } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore, useVoiceStore, api, getApiBase } from '@abyss/shared';
 import Modal from './Modal';
@@ -20,6 +20,12 @@ export default function UserSettingsModal() {
 
   const voiceMode = useVoiceStore((s) => s.voiceMode);
   const setVoiceMode = useVoiceStore((s) => s.setVoiceMode);
+  const noiseSuppression = useVoiceStore((s) => s.noiseSuppression);
+  const setNoiseSuppression = useVoiceStore((s) => s.setNoiseSuppression);
+  const echoCancellation = useVoiceStore((s) => s.echoCancellation);
+  const setEchoCancellation = useVoiceStore((s) => s.setEchoCancellation);
+  const autoGainControl = useVoiceStore((s) => s.autoGainControl);
+  const setAutoGainControl = useVoiceStore((s) => s.setAutoGainControl);
 
   const currentAvatar = avatarUri
     || (user.avatarUrl ? (user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`) : null);
@@ -121,6 +127,36 @@ export default function UserSettingsModal() {
         >
           <Text style={[styles.typeBtnText, voiceMode === 'push-to-talk' && styles.typeBtnTextActive]}>Push to Talk</Text>
         </Pressable>
+      </View>
+
+      {/* Voice & Audio */}
+      <Text style={styles.label}>Voice & Audio</Text>
+      <View style={styles.settingRow}>
+        <Text style={styles.settingText}>Noise Suppression</Text>
+        <Switch
+          value={noiseSuppression}
+          onValueChange={setNoiseSuppression}
+          trackColor={{ false: colors.bgTertiary, true: colors.bgAccent }}
+          thumbColor={colors.headerPrimary}
+        />
+      </View>
+      <View style={styles.settingRow}>
+        <Text style={styles.settingText}>Echo Cancellation</Text>
+        <Switch
+          value={echoCancellation}
+          onValueChange={setEchoCancellation}
+          trackColor={{ false: colors.bgTertiary, true: colors.bgAccent }}
+          thumbColor={colors.headerPrimary}
+        />
+      </View>
+      <View style={styles.settingRow}>
+        <Text style={styles.settingText}>Auto Gain Control</Text>
+        <Switch
+          value={autoGainControl}
+          onValueChange={setAutoGainControl}
+          trackColor={{ false: colors.bgTertiary, true: colors.bgAccent }}
+          thumbColor={colors.headerPrimary}
+        />
       </View>
 
       {/* Actions */}
@@ -231,4 +267,15 @@ const styles = StyleSheet.create({
   btnDisabled: {
     opacity: 0.5,
   } as ViewStyle,
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.xs,
+  } as ViewStyle,
+  settingText: {
+    color: colors.textPrimary,
+    fontSize: fontSize.md,
+  } as TextStyle,
 });

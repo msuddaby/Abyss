@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
 using Abyss.Api.Hubs;
@@ -26,6 +27,13 @@ public class MediaProvidersController : ControllerBase
     private readonly MediaProviderFactory _providerFactory;
     private readonly ProviderConfigProtector _protector;
     private readonly WatchPartyService _watchPartyService;
+    private readonly IMemoryCache _thumbCache;
+    private static readonly MemoryCacheEntryOptions ThumbCacheOptions = new()
+    {
+        AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
+        SlidingExpiration = TimeSpan.FromHours(6),
+        Size = 1 // each entry = 1 unit
+    };
 
     public MediaProvidersController(
         AppDbContext db,
@@ -33,7 +41,8 @@ public class MediaProvidersController : ControllerBase
         IHubContext<ChatHub> hub,
         MediaProviderFactory providerFactory,
         ProviderConfigProtector protector,
-        WatchPartyService watchPartyService)
+        WatchPartyService watchPartyService,
+        IMemoryCache thumbCache)
     {
         _db = db;
         _perms = perms;
@@ -41,6 +50,7 @@ public class MediaProvidersController : ControllerBase
         _providerFactory = providerFactory;
         _protector = protector;
         _watchPartyService = watchPartyService;
+        _thumbCache = thumbCache;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -606,6 +616,14 @@ public class MediaProvidersController : ControllerBase
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
         if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
 
+        // Check server-side cache first
+        var cacheKey = $"thumb:{connectionId}:{path}";
+        if (_thumbCache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
+        {
+            Response.Headers["Cache-Control"] = "public, max-age=86400";
+            return File(cached.Data, cached.ContentType);
+        }
+
         var connection = await _db.MediaProviderConnections
             .FirstOrDefaultAsync(c => c.Id == connectionId && c.ServerId == serverId);
         if (connection == null) return NotFound();
@@ -622,21 +640,21 @@ public class MediaProvidersController : ControllerBase
         using var httpClient = new HttpClient();
         try
         {
-            var response = await httpClient.GetAsync(plexUrl, HttpCompletionOption.ResponseHeadersRead);
+            var response = await httpClient.GetAsync(plexUrl);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode);
 
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "image/jpeg";
-            Response.ContentType = contentType;
-            if (response.Content.Headers.ContentLength.HasValue)
-                Response.ContentLength = response.Content.Headers.ContentLength.Value;
+            var imageBytes = await response.Content.ReadAsByteArrayAsync();
 
-            // Cache thumbnails for 1 hour
-            Response.Headers["Cache-Control"] = "private, max-age=3600";
+            // Cache in memory (skip very large images > 2MB)
+            if (imageBytes.Length <= 2 * 1024 * 1024)
+            {
+                _thumbCache.Set(cacheKey, (imageBytes, contentType), ThumbCacheOptions);
+            }
 
-            await using var stream = await response.Content.ReadAsStreamAsync();
-            await stream.CopyToAsync(Response.Body);
-            return new EmptyResult();
+            Response.Headers["Cache-Control"] = "public, max-age=86400";
+            return File(imageBytes, contentType);
         }
         catch
         {

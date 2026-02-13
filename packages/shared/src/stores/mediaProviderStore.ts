@@ -21,6 +21,9 @@ interface MediaProviderState {
   libraryItems: MediaItem[];
   searchResults: MediaItem[];
   isLoading: boolean;
+  // Track what's currently loaded to avoid redundant fetches
+  _loadedConnectionId: string | null;
+  _loadedLibraryId: string | null;
 
   fetchConnections: (serverId: string) => Promise<void>;
   linkProvider: (serverId: string, data: { providerType: string; displayName: string; serverUrl: string; authToken: string }) => Promise<void>;
@@ -37,12 +40,14 @@ interface MediaProviderState {
   clearLibrary: () => void;
 }
 
-export const useMediaProviderStore = create<MediaProviderState>((set) => ({
+export const useMediaProviderStore = create<MediaProviderState>((set, get) => ({
   connections: [],
   libraries: [],
   libraryItems: [],
   searchResults: [],
   isLoading: false,
+  _loadedConnectionId: null,
+  _loadedLibraryId: null,
 
   fetchConnections: async (serverId) => {
     try {
@@ -75,10 +80,11 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
   },
 
   fetchLibraries: async (serverId, connectionId) => {
+    if (get()._loadedConnectionId === connectionId && get().libraries.length > 0) return;
     set({ isLoading: true });
     try {
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/libraries`);
-      set({ libraries: resolveProxyUrls(res.data), isLoading: false });
+      set({ libraries: resolveProxyUrls(res.data), isLoading: false, _loadedConnectionId: connectionId });
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to fetch libraries:', e);
@@ -86,10 +92,11 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
   },
 
   fetchLibraryItems: async (serverId, connectionId, libraryId) => {
+    if (get()._loadedLibraryId === libraryId && get().libraryItems.length > 0) return;
     set({ isLoading: true });
     try {
       const res = await api.get(`/servers/${serverId}/media-providers/${connectionId}/libraries/${libraryId}/items`);
-      set({ libraryItems: resolveProxyUrls(res.data), isLoading: false });
+      set({ libraryItems: resolveProxyUrls(res.data), isLoading: false, _loadedLibraryId: libraryId });
     } catch (e) {
       set({ isLoading: false });
       console.error('Failed to fetch library items:', e);
@@ -154,5 +161,5 @@ export const useMediaProviderStore = create<MediaProviderState>((set) => ({
   setConnections: (connections) => set({ connections }),
   addConnection: (connection) => set((s) => ({ connections: [...s.connections, connection] })),
   removeConnection: (connectionId) => set((s) => ({ connections: s.connections.filter((c) => c.id !== connectionId) })),
-  clearLibrary: () => set({ libraries: [], libraryItems: [], searchResults: [] }),
+  clearLibrary: () => set({ libraries: [], libraryItems: [], searchResults: [], _loadedConnectionId: null, _loadedLibraryId: null }),
 }));

@@ -1,8 +1,11 @@
 import { View, Text, Pressable, ScrollView, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
-import { useVoiceStore, useAuthStore, useServerStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
+import { useVoiceStore, useVoiceChatStore, useAuthStore, useServerStore, getApiBase, hasChannelPermission, Permission } from '@abyss/shared';
 import Avatar from './Avatar';
 import ScreenShareView from './ScreenShareView';
-import { useWebRTC } from '../hooks/useWebRTC';
+import VideoTile from './VideoTile';
+import Badge from './Badge';
+import { useWebRTC, getCameraVideoStream } from '../hooks/useWebRTC';
+import { useUiStore } from '../stores/uiStore';
 import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
 
 export default function VoiceView() {
@@ -20,12 +23,17 @@ export default function VoiceView() {
   const speakingUsers = useVoiceStore((s) => s.speakingUsers);
   const activeSharers = useVoiceStore((s) => s.activeSharers);
   const watchingUserId = useVoiceStore((s) => s.watchingUserId);
+  const isCameraOn = useVoiceStore((s) => s.isCameraOn);
+  const activeCameras = useVoiceStore((s) => s.activeCameras);
+  const cameraStreamVersion = useVoiceStore((s) => s.cameraStreamVersion);
+  const unreadCount = useVoiceChatStore((s) => s.unreadCount);
   const user = useAuthStore((s) => s.user);
   const members = useServerStore((s) => s.members);
   const activeChannel = useServerStore((s) => s.activeChannel);
   const voiceChannelUsers = useServerStore((s) => s.voiceChannelUsers);
   const voiceChannelSharers = useServerStore((s) => s.voiceChannelSharers);
-  const { joinVoice, leaveVoice } = useWebRTC();
+  const { joinVoice, leaveVoice, startCamera, stopCamera } = useWebRTC();
+  const openModal = useUiStore((s) => s.openModal);
 
   const isConnected = !!activeChannel && currentChannelId === activeChannel.id;
   const isWatching = isConnected && watchingUserId !== null;
@@ -50,6 +58,21 @@ export default function VoiceView() {
     return member.user.avatarUrl.startsWith('http') ? member.user.avatarUrl : `${getApiBase()}${member.user.avatarUrl}`;
   };
 
+  const handleParticipantLongPress = (userId: string, displayName: string) => {
+    if (userId === user?.id) return;
+    openModal('volumeControl', { userId, displayName });
+  };
+
+  // Get camera video tiles for connected users
+  const cameraEntries = isConnected
+    ? Array.from(activeCameras.entries()).map(([userId, displayName]) => ({
+        userId,
+        displayName,
+        stream: getCameraVideoStream(userId) ?? null,
+        avatarUri: getMemberAvatar(userId),
+      }))
+    : [];
+
   return (
     <View style={styles.container}>
       {isWatching ? (
@@ -57,6 +80,22 @@ export default function VoiceView() {
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
           {isConnected && activeSharers.size > 0 && <ScreenShareView />}
+
+          {/* Camera video tiles */}
+          {cameraEntries.length > 0 && (
+            <View style={styles.videoGrid}>
+              {cameraEntries.map((entry) => (
+                <VideoTile
+                  key={entry.userId}
+                  userId={entry.userId}
+                  displayName={entry.displayName}
+                  stream={entry.stream}
+                  avatarUri={entry.avatarUri}
+                />
+              ))}
+            </View>
+          )}
+
           {!isConnected && (
             <View style={styles.notConnectedRow}>
               <Text style={styles.notConnectedText}>Not connected</Text>
@@ -71,9 +110,14 @@ export default function VoiceView() {
               const isSharer = isConnected
                 ? activeSharers.has(userId)
                 : !!channelSharers?.has(userId);
+              const hasCamera = activeCameras.has(userId);
 
               return (
-                <View key={userId} style={styles.card}>
+                <Pressable
+                  key={userId}
+                  style={styles.card}
+                  onLongPress={() => handleParticipantLongPress(userId, state.displayName)}
+                >
                   <View style={[styles.avatarRing, isSpeaking && styles.avatarRingSpeaking]}>
                     <Avatar uri={getMemberAvatar(userId)} name={state.displayName} size={64} />
                   </View>
@@ -88,8 +132,13 @@ export default function VoiceView() {
                       <Text style={styles.liveBadgeText}>LIVE</Text>
                     </View>
                   )}
+                  {hasCamera && (
+                    <View style={styles.cameraBadge}>
+                      <Text style={styles.cameraBadgeText}>📹</Text>
+                    </View>
+                  )}
                   <Text style={styles.participantName} numberOfLines={1}>{state.displayName}</Text>
-                </View>
+                </Pressable>
               );
             })}
             {participantEntries.length === 0 && (
@@ -109,6 +158,40 @@ export default function VoiceView() {
             <Text style={styles.pttButtonText}>
               {isPttActive ? '🎤 Speaking...' : 'Hold to Talk'}
             </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* Secondary action bar: voice chat, soundboard, camera */}
+      {isConnected && (
+        <View style={styles.secondaryBar}>
+          <Pressable
+            style={styles.secondaryBtn}
+            onPress={() => openModal('voiceChat')}
+          >
+            <Text style={styles.secondaryBtnText}>💬</Text>
+            <Text style={styles.secondaryLabel}>Chat</Text>
+            {unreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Badge count={unreadCount} />
+              </View>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={styles.secondaryBtn}
+            onPress={() => openModal('soundboard')}
+          >
+            <Text style={styles.secondaryBtnText}>🎵</Text>
+            <Text style={styles.secondaryLabel}>Sounds</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.secondaryBtn, isCameraOn && styles.secondaryBtnActive]}
+            onPress={() => isCameraOn ? stopCamera() : startCamera()}
+          >
+            <Text style={styles.secondaryBtnText}>{isCameraOn ? '📹' : '📷'}</Text>
+            <Text style={styles.secondaryLabel}>{isCameraOn ? 'Stop Cam' : 'Camera'}</Text>
           </Pressable>
         </View>
       )}
@@ -168,6 +251,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.bgPrimary,
+  } as ViewStyle,
+  videoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    padding: spacing.sm,
+    gap: spacing.sm,
   } as ViewStyle,
   grid: {
     flexDirection: 'row',
@@ -244,6 +334,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.6,
   } as TextStyle,
+  cameraBadge: {
+    position: 'absolute',
+    top: 0,
+    left: 10,
+  } as ViewStyle,
+  cameraBadgeText: {
+    fontSize: 12,
+  } as TextStyle,
   pttContainer: {
     paddingHorizontal: spacing.xl,
     paddingBottom: spacing.md,
@@ -266,6 +364,41 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: '700',
   } as TextStyle,
+  secondaryBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.xl,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.bgTertiary,
+    backgroundColor: colors.bgSecondary,
+  } as ViewStyle,
+  secondaryBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    position: 'relative',
+  } as ViewStyle,
+  secondaryBtnActive: {
+    backgroundColor: colors.bgModifierActive,
+    borderRadius: borderRadius.md,
+  } as ViewStyle,
+  secondaryBtnText: {
+    fontSize: 18,
+  } as TextStyle,
+  secondaryLabel: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+  } as TextStyle,
+  unreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: 0,
+  } as ViewStyle,
   actionBar: {
     flexDirection: 'row',
     justifyContent: 'center',

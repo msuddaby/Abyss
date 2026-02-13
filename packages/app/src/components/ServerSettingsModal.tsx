@@ -6,9 +6,9 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import {
   useServerStore, useAuthStore, getApiBase, hasPermission, Permission,
-  getDisplayColor, getHighestRole, canActOn,
+  getDisplayColor, getHighestRole, canActOn, useMediaProviderStore,
 } from '@abyss/shared';
-import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
+import type { AuditLog, ServerRole, ServerMember, MediaProviderConnection } from '@abyss/shared';
 import Modal from './Modal';
 import Avatar from './Avatar';
 import { useUiStore } from '../stores/uiStore';
@@ -86,7 +86,20 @@ function formatTimestamp(dateStr: string) {
   return new Date(dateStr).toLocaleString();
 }
 
-type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'danger';
+type Tab = 'server' | 'members' | 'roles' | 'emojis' | 'bans' | 'audit' | 'media' | 'danger';
+
+const PROVIDER_TYPES = [
+  { value: 'Plex' as const, label: 'Plex' },
+  { value: 'YouTube' as const, label: 'YouTube' },
+];
+
+const PROVIDER_LABELS: Record<string, string> = {
+  Plex: 'Plex',
+  YouTube: 'YouTube',
+  Spotify: 'Spotify',
+  Twitch: 'Twitch',
+  SoundCloud: 'SoundCloud',
+};
 
 export default function ServerSettingsModal() {
   const closeModal = useUiStore((s) => s.closeModal);
@@ -147,12 +160,24 @@ export default function ServerSettingsModal() {
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
 
+  // Media providers
+  const connections = useMediaProviderStore((s) => s.connections);
+  const isProviderLoading = useMediaProviderStore((s) => s.isLoading);
+  const [mediaProviderType, setMediaProviderType] = useState<'Plex' | 'YouTube'>('Plex');
+  const [mediaDisplayName, setMediaDisplayName] = useState('');
+  const [mediaServerUrl, setMediaServerUrl] = useState('');
+  const [mediaAuthToken, setMediaAuthToken] = useState('');
+  const [linkError, setLinkError] = useState('');
+
   useEffect(() => {
     if (tab === 'audit' && canViewAuditLog) {
       useServerStore.getState().fetchAuditLogs(serverId).then(setLogs).catch(console.error);
     }
     if (tab === 'bans' && canBan) {
       useServerStore.getState().fetchBans(serverId);
+    }
+    if (tab === 'media' && canManageServer) {
+      useMediaProviderStore.getState().fetchConnections(serverId);
     }
   }, [tab, serverId]);
 
@@ -312,6 +337,48 @@ export default function ServerSettingsModal() {
     }
   };
 
+  // ─── Media provider handlers ───
+  const handleLinkProvider = async () => {
+    const name = mediaDisplayName.trim();
+    if (!name) {
+      setLinkError('Display name is required.');
+      return;
+    }
+    if (mediaProviderType === 'Plex' && !mediaServerUrl.trim()) {
+      setLinkError('Server URL is required for Plex.');
+      return;
+    }
+    if (mediaProviderType === 'Plex' && !mediaAuthToken.trim()) {
+      setLinkError('Auth token is required for Plex.');
+      return;
+    }
+    setLinkError('');
+    try {
+      await useMediaProviderStore.getState().linkProvider(serverId, {
+        providerType: mediaProviderType,
+        displayName: name,
+        serverUrl: mediaProviderType === 'Plex' ? mediaServerUrl.trim() : '',
+        authToken: mediaProviderType === 'Plex' ? mediaAuthToken.trim() : '',
+      });
+      // Refresh connections list after linking
+      await useMediaProviderStore.getState().fetchConnections(serverId);
+      setMediaDisplayName('');
+      setMediaServerUrl('');
+      setMediaAuthToken('');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: string } })?.response?.data;
+      setLinkError(typeof msg === 'string' ? msg : 'Failed to link provider');
+    }
+  };
+
+  const handleUnlinkProvider = async (connectionId: string) => {
+    try {
+      await useMediaProviderStore.getState().unlinkProvider(serverId, connectionId);
+    } catch {
+      // unlinkProvider already removes it optimistically from the store
+    }
+  };
+
   // ─── Tabs config ───
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
     { key: 'server', label: 'Server', visible: canManageServer },
@@ -320,6 +387,7 @@ export default function ServerSettingsModal() {
     { key: 'emojis', label: 'Emojis', visible: canManageEmojis },
     { key: 'bans', label: 'Bans', visible: canBan },
     { key: 'audit', label: 'Audit Log', visible: canViewAuditLog },
+    { key: 'media', label: 'Media', visible: canManageServer },
     { key: 'danger', label: 'Danger Zone', visible: isOwner },
   ];
 
@@ -658,6 +726,114 @@ export default function ServerSettingsModal() {
                 </Text>
                 <Text style={styles.auditTime}>{formatTimestamp(log.createdAt)}</Text>
               </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ─── Media Tab ─── */}
+      {tab === 'media' && canManageServer && (
+        <View>
+          <Text style={styles.editorTitle}>Link Provider</Text>
+
+          {/* Provider type picker */}
+          <Text style={styles.label}>Provider Type</Text>
+          <View style={styles.mediaProviderPicker}>
+            {PROVIDER_TYPES.map((pt) => (
+              <Pressable
+                key={pt.value}
+                style={[
+                  styles.mediaProviderOption,
+                  mediaProviderType === pt.value && styles.mediaProviderOptionActive,
+                ]}
+                onPress={() => {
+                  setMediaProviderType(pt.value);
+                  setLinkError('');
+                }}
+              >
+                <View style={[styles.checkbox, mediaProviderType === pt.value && styles.checkboxChecked]}>
+                  {mediaProviderType === pt.value && <Text style={styles.checkmark}>{'\u2713'}</Text>}
+                </View>
+                <Text style={[
+                  styles.mediaProviderOptionText,
+                  mediaProviderType === pt.value && styles.mediaProviderOptionTextActive,
+                ]}>
+                  {pt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Display name */}
+          <Text style={styles.label}>Display Name</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. My Plex Server"
+            placeholderTextColor={colors.textMuted}
+            value={mediaDisplayName}
+            onChangeText={(t) => { setMediaDisplayName(t); setLinkError(''); }}
+          />
+
+          {/* Plex-only fields */}
+          {mediaProviderType === 'Plex' && (
+            <>
+              <Text style={styles.label}>Server URL</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="http://192.168.1.100:32400"
+                placeholderTextColor={colors.textMuted}
+                value={mediaServerUrl}
+                onChangeText={(t) => { setMediaServerUrl(t); setLinkError(''); }}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Text style={styles.label}>Auth Token</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Plex auth token"
+                placeholderTextColor={colors.textMuted}
+                value={mediaAuthToken}
+                onChangeText={(t) => { setMediaAuthToken(t); setLinkError(''); }}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+              />
+            </>
+          )}
+
+          {linkError ? <Text style={styles.errorText}>{linkError}</Text> : null}
+
+          <View style={styles.actions}>
+            <Pressable
+              style={[styles.btnPrimary, (!mediaDisplayName.trim() || isProviderLoading) && styles.btnDisabled]}
+              onPress={handleLinkProvider}
+              disabled={!mediaDisplayName.trim() || isProviderLoading}
+            >
+              <Text style={styles.btnPrimaryText}>{isProviderLoading ? 'Linking...' : 'Link'}</Text>
+            </Pressable>
+          </View>
+
+          {/* Existing connections */}
+          <Text style={[styles.editorTitle, { marginTop: spacing.xl }]}>Linked Providers</Text>
+          {connections.length === 0 && (
+            <Text style={styles.emptyText}>No media providers linked yet.</Text>
+          )}
+          {connections.map((conn: MediaProviderConnection) => (
+            <View key={conn.id} style={styles.mediaConnectionItem}>
+              <View style={{ flex: 1 }}>
+                <View style={styles.mediaConnectionHeader}>
+                  <View style={[styles.mediaProviderBadge, { backgroundColor: conn.providerType === 'Plex' ? '#e5a00d' : '#ff0000' }]}>
+                    <Text style={styles.mediaProviderBadgeText}>{PROVIDER_LABELS[conn.providerType] ?? conn.providerType}</Text>
+                  </View>
+                  <Text style={styles.mediaConnectionName} numberOfLines={1}>{conn.displayName}</Text>
+                </View>
+                <Text style={styles.mediaConnectionMeta}>
+                  Linked {formatTimestamp(conn.linkedAt)}
+                </Text>
+              </View>
+              <Pressable style={styles.dangerSmBtn} onPress={() => handleUnlinkProvider(conn.id)}>
+                <Text style={styles.dangerSmBtnText}>Unlink</Text>
+              </Pressable>
             </View>
           ))}
         </View>
@@ -1191,6 +1367,70 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSize.xs,
     marginTop: 2,
+  } as TextStyle,
+
+  // Media providers
+  mediaProviderPicker: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  } as ViewStyle,
+  mediaProviderOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.bgTertiary,
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  } as ViewStyle,
+  mediaProviderOptionActive: {
+    borderColor: colors.bgAccent,
+  } as ViewStyle,
+  mediaProviderOptionText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
+  } as TextStyle,
+  mediaProviderOptionTextActive: {
+    color: colors.headerPrimary,
+  } as TextStyle,
+  mediaConnectionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.bgTertiary,
+    gap: spacing.sm,
+  } as ViewStyle,
+  mediaConnectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: 2,
+  } as ViewStyle,
+  mediaConnectionName: {
+    color: colors.headerPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
+    flex: 1,
+  } as TextStyle,
+  mediaConnectionMeta: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs,
+    marginTop: 2,
+  } as TextStyle,
+  mediaProviderBadge: {
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  } as ViewStyle,
+  mediaProviderBadgeText: {
+    color: '#fff',
+    fontSize: fontSize.xs,
+    fontWeight: '700',
   } as TextStyle,
 
   // Danger zone

@@ -122,6 +122,7 @@ builder.Services.AddDataProtection()
 builder.Services.AddSingleton<ProviderConfigProtector>();
 builder.Services.AddScoped<MediaProviderFactory>();
 builder.Services.AddSingleton<WatchPartyService>();
+builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached thumbnails
 builder.Services.AddHttpClient<PlexMediaProvider>();
 builder.Services.AddHttpClient<YouTubeMediaProvider>();
 

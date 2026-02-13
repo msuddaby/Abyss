@@ -3,10 +3,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Slot } from 'expo-router';
 import {
   useSignalRListeners, useServerStore, useDmStore, useMessageStore,
+  useFriendStore,
   ensureConnected, getConnection, refreshSignalRState, rejoinActiveChannel,
   stopConnection,
 } from '@abyss/shared';
 import { useEffect, useRef, useState } from 'react';
+import { initMobileAudio } from '../../src/utils/mobileAudio';
+
+// Install the expo-av Audio polyfill on globalThis before any hooks run.
+// This allows the shared playVoiceSound helper to work on React Native.
+initMobileAudio();
+
 import ServerSidebar from '../../src/components/ServerSidebar';
 import ChannelSidebar from '../../src/components/ChannelSidebar';
 import MemberList from '../../src/components/MemberList';
@@ -19,6 +26,15 @@ import ServerSettingsModal from '../../src/components/ServerSettingsModal';
 import UserProfileCard from '../../src/components/UserProfileCard';
 import SearchPanel from '../../src/components/SearchPanel';
 import PinnedMessagesModal from '../../src/components/PinnedMessagesModal';
+import ImagePreviewModal from '../../src/components/ImagePreviewModal';
+import ServerNotificationModal from '../../src/components/ServerNotificationModal';
+import ChannelNotificationModal from '../../src/components/ChannelNotificationModal';
+import VolumeControlSheet from '../../src/components/VolumeControlSheet';
+import FriendsList from '../../src/components/FriendsList';
+import VoiceChatPanel from '../../src/components/VoiceChatPanel';
+import SoundboardPanel from '../../src/components/SoundboardPanel';
+import WatchPartyViewer from '../../src/components/WatchPartyViewer';
+import AdminPanel from '../../src/components/AdminPanel';
 import { useUiStore } from '../../src/stores/uiStore';
 import { colors } from '../../src/theme/tokens';
 
@@ -34,6 +50,12 @@ export default function MainLayout() {
   const activeModal = useUiStore((s) => s.activeModal);
   const modalProps = useUiStore((s) => s.modalProps);
 
+  // Fetch friends on app init
+  useEffect(() => {
+    useFriendStore.getState().fetchFriends();
+    useFriendStore.getState().fetchRequests();
+  }, []);
+
   const modals = (
     <>
       {activeModal === 'createServer' && <CreateServerModal />}
@@ -47,6 +69,21 @@ export default function MainLayout() {
       {activeModal === 'pins' && modalProps.channelId && (
         <PinnedMessagesModal channelId={modalProps.channelId} />
       )}
+      {activeModal === 'imagePreview' && modalProps.imageUri && (
+        <ImagePreviewModal />
+      )}
+      {activeModal === 'serverNotifications' && <ServerNotificationModal />}
+      {activeModal === 'channelNotifications' && modalProps.channelId && (
+        <ChannelNotificationModal />
+      )}
+      {activeModal === 'volumeControl' && modalProps.userId && (
+        <VolumeControlSheet />
+      )}
+      {activeModal === 'friends' && <FriendsList />}
+      {activeModal === 'voiceChat' && <VoiceChatPanel />}
+      {activeModal === 'soundboard' && <SoundboardPanel />}
+      {activeModal === 'watchParty' && <WatchPartyViewer />}
+      {activeModal === 'admin' && <AdminPanel />}
     </>
   );
 

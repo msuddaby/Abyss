@@ -148,6 +148,10 @@ function cleanupAll() {
     localStream.getTracks().forEach((track: any) => track.stop());
     localStream = null;
   }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track: any) => track.stop());
+    cameraStream = null;
+  }
 }
 
 async function applyPendingCandidates(peerId: string) {
@@ -438,6 +442,73 @@ function setupSignalRListeners() {
   });
 }
 
+let cameraStream: MediaStream | null = null;
+
+export async function startCamera() {
+  const conn = getConnection();
+  const store = useVoiceStore.getState();
+  if (!store.currentChannelId || store.isCameraOn) return;
+
+  store.setCameraLoading(true);
+  try {
+    cameraStream = await mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: 640, height: 480 },
+    }) as MediaStream;
+
+    // Add camera track to all existing peer connections
+    const videoTrack = cameraStream.getVideoTracks()[0];
+    if (videoTrack) {
+      for (const [peerId, pc] of peers) {
+        // Signal track type before adding
+        await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'track-info', trackType: 'camera' }));
+        pc.addTrack(videoTrack, cameraStream!);
+        // Renegotiate
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await conn.invoke('SendSignal', peerId, JSON.stringify({ type: 'offer', sdp: offer.sdp }));
+      }
+    }
+
+    await conn.invoke('StartCamera');
+    store.setCameraOn(true);
+  } catch (err) {
+    console.error('[WebRTC] Failed to start camera:', err);
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t: any) => t.stop());
+      cameraStream = null;
+    }
+  } finally {
+    store.setCameraLoading(false);
+  }
+}
+
+export async function stopCamera() {
+  const conn = getConnection();
+  const store = useVoiceStore.getState();
+
+  if (cameraStream) {
+    const videoTrack = cameraStream.getVideoTracks()[0];
+    if (videoTrack) {
+      // Remove camera track from all peers
+      for (const [, pc] of peers) {
+        const senders = (pc as any).getSenders?.() ?? [];
+        for (const sender of senders) {
+          if (sender.track === videoTrack) {
+            try { pc.removeTrack(sender); } catch {}
+          }
+        }
+      }
+      videoTrack.stop();
+    }
+    cameraStream = null;
+  }
+
+  try {
+    await conn.invoke('StopCamera');
+  } catch {}
+  store.setCameraOn(false);
+}
+
 export function useWebRTC() {
   const currentChannelId = useVoiceStore((s) => s.currentChannelId);
   const isMuted = useVoiceStore((s) => s.isMuted);
@@ -588,5 +659,5 @@ export function useWebRTC() {
     useVoiceStore.getState().setFocusedUserId(null);
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
-  return { joinVoice, leaveVoice };
+  return { joinVoice, leaveVoice, startCamera, stopCamera };
 }

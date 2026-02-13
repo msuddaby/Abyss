@@ -32,7 +32,7 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
   const currentChannelId = useVoiceStore((s) => s.currentChannelId);
   const activeParty = useWatchPartyStore((s) => s.activeParty);
   const { connections, libraries, libraryItems, searchResults, isLoading,
-    fetchConnections, fetchLibraries, fetchLibraryItems, fetchItemChildren, searchItems, clearLibrary } = useMediaProviderStore();
+    fetchConnections, fetchLibraries, fetchLibraryItems, fetchItemChildren, searchItems } = useMediaProviderStore();
 
   const hasLibraryProviders = connections.filter((c) => c.providerType !== 'YouTube').length > 0;
   const [activeTab, setActiveTab] = useState<Tab>(hasLibraryProviders ? 'library' : 'youtube');
@@ -57,7 +57,6 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
 
   useEffect(() => {
     if (activeServer) fetchConnections(activeServer.id);
-    return () => clearLibrary();
   }, [activeServer]);
 
   // Update default tab when connections load

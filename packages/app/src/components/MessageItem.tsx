@@ -8,9 +8,12 @@ import {
   hasPermission, hasChannelPermission, Permission, getDisplayColor, canActOn, useDmStore,
   parseMentions, resolveMentionName, resolveCustomEmoji,
   groupReactions, formatTime, formatDate,
+  getNameplateStyle, getMessageStyle,
 } from '@abyss/shared';
 import type { Message } from '@abyss/shared';
 import Avatar from './Avatar';
+import { useUiStore } from '../stores/uiStore';
+import { cssToRNStyle, cssToRNTextStyle } from '../utils/cssToRNStyle';
 import { colors, spacing, fontSize, borderRadius } from '../theme/tokens';
 
 interface Props {
@@ -43,6 +46,7 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
   const isPinned = useMessageStore((s) => s.isPinned);
   const currentChannelId = useMessageStore((s) => s.currentChannelId);
   const isDmMode = useDmStore((s) => s.isDmMode);
+  const openModal = useUiStore((s) => s.openModal);
 
   const isOwn = currentUser?.id === message.authorId;
   const currentMember = members.find((m) => m.userId === currentUser?.id);
@@ -55,6 +59,12 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const authorDisplayName = authorMember?.user.displayName ?? message.author.displayName;
   const authorAvatarUrl = authorMember?.user.avatarUrl ?? message.author.avatarUrl;
+
+  // Cosmetics styles
+  const nameplateCSS = authorMember?.user ? getNameplateStyle(authorMember.user) : undefined;
+  const messageCSS = authorMember?.user ? getMessageStyle(authorMember.user) : undefined;
+  const nameplateRN = cssToRNTextStyle(nameplateCSS as Record<string, any> | undefined);
+  const messageRN = cssToRNStyle(messageCSS as Record<string, any> | undefined);
 
   const canKickPerm = currentMember ? hasPermission(currentMember, Permission.KickMembers) : false;
   const canBanPerm = currentMember ? hasPermission(currentMember, Permission.BanMembers) : false;
@@ -233,6 +243,7 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
         styles.wrapper,
         grouped && styles.wrapperGrouped,
         isMentioned && styles.rowMentioned,
+        messageRN,
       ]}
     >
       {/* Reply reference — above the message row */}
@@ -279,7 +290,7 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
       <View style={styles.body}>
         {!grouped && (
           <View style={styles.header}>
-            <Text style={[styles.author, authorColor ? { color: authorColor } : undefined]}>
+            <Text style={[styles.author, authorColor ? { color: authorColor } : undefined, nameplateRN]}>
               {authorDisplayName}
             </Text>
             <Text style={styles.time}>
@@ -326,12 +337,16 @@ export default function MessageItem({ message, grouped, onScrollToMessage, onPic
           <View style={styles.attachments}>
             {message.attachments.map((att) => (
               att.contentType.startsWith('image/') ? (
-                <Image
+                <Pressable
                   key={att.id}
-                  source={{ uri: `${getApiBase()}${att.filePath}` }}
-                  style={styles.attachmentImage}
-                  resizeMode="contain"
-                />
+                  onPress={() => openModal('imagePreview', { imageUri: `${getApiBase()}${att.filePath}` })}
+                >
+                  <Image
+                    source={{ uri: `${getApiBase()}${att.filePath}` }}
+                    style={styles.attachmentImage}
+                    resizeMode="contain"
+                  />
+                </Pressable>
               ) : (
                 <Text key={att.id} style={styles.attachmentFile}>{att.fileName}</Text>
               )

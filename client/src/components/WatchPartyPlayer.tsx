@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useWatchPartyStore, useMediaProviderStore, useServerStore, useVoiceStore, useAuthStore } from '@abyss/shared';
+import { useWatchPartyStore, useMediaProviderStore, useServerStore, useVoiceStore, useAuthStore, getStorage } from '@abyss/shared';
 import { getConnection } from '@abyss/shared';
 import { PlexPlayerAdapter } from '../services/playerAdapters/PlexPlayerAdapter';
 import { YouTubePlayerAdapter } from '../services/playerAdapters/YouTubePlayerAdapter';
@@ -50,7 +50,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
 
     // Use the shared playback URL from the server if available (avoids duplicate Plex transcode sessions)
     if (activeParty.playbackUrl) {
-      const token = localStorage.getItem('token');
+      const token = getStorage().getItem('token');
       const separator = activeParty.playbackUrl.includes('?') ? '&' : '?';
       const apiBase = import.meta.env.VITE_API_URL || '';
       setPlaybackUrl(`${apiBase}${activeParty.playbackUrl}${token ? `${separator}token=${token}` : ''}`);

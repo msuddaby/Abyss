@@ -8,15 +8,17 @@ interface ChannelItemProps {
   hasUnread: boolean;
   mentionCount: number;
   onPress: () => void;
+  onLongPress?: () => void;
 }
 
-export default function ChannelItem({ name, isActive, hasUnread, mentionCount, onPress }: ChannelItemProps) {
+export default function ChannelItem({ name, isActive, hasUnread, mentionCount, onPress, onLongPress }: ChannelItemProps) {
   return (
     <View style={styles.wrapper}>
       {hasUnread && <Badge dot style={styles.unreadDot} />}
       <Pressable
         style={[styles.item, isActive && styles.itemActive]}
         onPress={onPress}
+        onLongPress={onLongPress}
       >
         <Text style={styles.hash}>#</Text>
         <Text style={[styles.name, hasUnread && styles.nameUnread]} numberOfLines={1}>

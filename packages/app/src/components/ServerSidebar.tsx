@@ -83,6 +83,7 @@ export default function ServerSidebar() {
               <Pressable
                 style={[styles.icon, isActive && styles.iconActive]}
                 onPress={() => handleServerPress(server)}
+                onLongPress={() => openModal('serverNotifications')}
               >
                 <Avatar
                   uri={iconUri}

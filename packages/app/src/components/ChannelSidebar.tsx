@@ -1,11 +1,17 @@
-import { useEffect } from 'react';
-import { View, Text, Pressable, ScrollView, Alert, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, Pressable, ScrollView, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
 import {
   useServerStore, useMessageStore, useVoiceStore, useAuthStore,
-  useUnreadStore, useDmStore, usePresenceStore,
+  useUnreadStore, useDmStore, usePresenceStore, useFriendStore,
   getApiBase, hasPermission, Permission, canViewChannel,
 } from '@abyss/shared';
-import type { DmChannel } from '@abyss/shared';
+import type { Channel, DmChannel } from '@abyss/shared';
+import {
+  NestableDraggableFlatList,
+  NestableScrollContainer,
+  type RenderItemParams,
+} from 'react-native-draggable-flatlist';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ChannelItem from './ChannelItem';
 import VoiceChannelItem from './VoiceChannelItem';
 import VoiceControls from './VoiceControls';
@@ -39,6 +45,9 @@ export default function ChannelSidebar() {
   const closeLeftDrawer = useUiStore((s) => s.closeLeftDrawer);
   const openModal = useUiStore((s) => s.openModal);
 
+  const [editingText, setEditingText] = useState(false);
+  const [editingVoice, setEditingVoice] = useState(false);
+
   const currentMember = members.find((m) => m.userId === user?.id);
   const canManageChannels = currentMember ? hasPermission(currentMember, Permission.ManageChannels) : false;
   const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
@@ -61,6 +70,15 @@ export default function ChannelSidebar() {
     }
   }, [activeChannel]);
 
+  // Exit edit mode when server changes
+  useEffect(() => {
+    setEditingText(false);
+    setEditingVoice(false);
+  }, [activeServer?.id]);
+
+  const friendRequests = useFriendStore((s) => s.requests);
+  const incomingRequestCount = friendRequests.filter((r) => !r.isOutgoing).length;
+
   // ── DM Mode ──
   if (isDmMode) {
     const handleDmPress = async (dm: DmChannel) => {
@@ -77,10 +95,20 @@ export default function ChannelSidebar() {
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.serverName}>Direct Messages</Text>
-          <Pressable onPress={() => Alert.alert('Coming Soon', 'New DM will be available in a future update.')}>
-            <Text style={styles.headerBtn}>+</Text>
+          <Pressable onPress={() => openModal('friends')}>
+            <Text style={styles.headerBtn}>{'👥'}</Text>
           </Pressable>
         </View>
+        {/* Friends button */}
+        <Pressable
+          style={styles.friendsButton}
+          onPress={() => openModal('friends')}
+        >
+          <Text style={styles.friendsButtonText}>Friends</Text>
+          {incomingRequestCount > 0 && (
+            <Badge count={incomingRequestCount} />
+          )}
+        </Pressable>
         <ScrollView style={styles.channelList} showsVerticalScrollIndicator={false}>
           {dmChannels.length === 0 && (
             <Text style={styles.emptyText}>No conversations yet.</Text>
@@ -152,8 +180,65 @@ export default function ChannelSidebar() {
     await leaveVoice();
   };
 
+  const handleTextDragEnd = useCallback(({ data }: { data: Channel[] }) => {
+    const channelIds = data.map((c) => c.id);
+    useServerStore.getState().reorderChannels(activeServer.id, 'Text', channelIds);
+  }, [activeServer.id]);
+
+  const handleVoiceDragEnd = useCallback(({ data }: { data: Channel[] }) => {
+    const channelIds = data.map((c) => c.id);
+    useServerStore.getState().reorderChannels(activeServer.id, 'Voice', channelIds);
+  }, [activeServer.id]);
+
+  const renderDraggableTextChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
+    const unread = channelUnreads.get(channel.id);
+    const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
+    const mentionCount = unread?.mentionCount || 0;
+    return (
+      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
+        <Pressable onLongPress={drag} style={styles.dragHandle}>
+          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
+        </Pressable>
+        <View style={styles.draggableItemContent}>
+          <ChannelItem
+            name={channel.name}
+            isActive={activeChannel?.id === channel.id}
+            hasUnread={hasUnread}
+            mentionCount={mentionCount}
+            onPress={() => handleChannelPress(channel)}
+            onLongPress={() => openModal('channelNotifications', { channelId: channel.id, channelName: channel.name })}
+          />
+        </View>
+      </View>
+    );
+  }, [activeChannel?.id, channelUnreads]);
+
+  const renderDraggableVoiceChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
+    return (
+      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
+        <Pressable onLongPress={drag} style={styles.dragHandle}>
+          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
+        </Pressable>
+        <View style={styles.draggableItemContent}>
+          <VoiceChannelItem
+            channel={channel}
+            isActive={activeChannel?.id === channel.id}
+            isConnected={voiceChannelId === channel.id}
+            onSelect={() => handleChannelPress(channel)}
+            onJoin={() => handleVoiceJoin(channel.id)}
+            onLeave={handleVoiceLeave}
+          />
+        </View>
+      </View>
+    );
+  }, [activeChannel?.id, voiceChannelId]);
+
+  const keyExtractor = useCallback((item: Channel) => item.id, []);
+
+  const isEditing = editingText || editingVoice;
+
   return (
-    <View style={styles.container}>
+    <GestureHandlerRootView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.serverName} numberOfLines={1}>{activeServer.name}</Text>
         <View style={styles.headerActions}>
@@ -185,53 +270,177 @@ export default function ChannelSidebar() {
         )}
       </View>
 
-      <ScrollView style={styles.channelList} showsVerticalScrollIndicator={false}>
-        {textChannels.length > 0 && (
-          <View style={styles.category}>
-            <Text style={styles.categoryLabel}>TEXT CHANNELS</Text>
-            {textChannels.map((channel) => {
-              const unread = channelUnreads.get(channel.id);
-              const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
-              const mentionCount = unread?.mentionCount || 0;
-              return (
-                <ChannelItem
-                  key={channel.id}
-                  name={channel.name}
-                  isActive={activeChannel?.id === channel.id}
-                  hasUnread={hasUnread}
-                  mentionCount={mentionCount}
-                  onPress={() => handleChannelPress(channel)}
+      {isEditing ? (
+        <NestableScrollContainer style={styles.channelList} showsVerticalScrollIndicator={false}>
+          {textChannels.length > 0 && (
+            <View style={styles.category}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryLabel}>TEXT CHANNELS</Text>
+                {canManageChannels && (
+                  editingText ? (
+                    <Pressable
+                      style={styles.editToggle}
+                      onPress={() => setEditingText(false)}
+                    >
+                      <Text style={styles.editToggleDone}>Done</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={styles.editToggle}
+                      onPress={() => setEditingText(true)}
+                    >
+                      <Text style={styles.editToggleText}>Edit</Text>
+                    </Pressable>
+                  )
+                )}
+              </View>
+              {editingText ? (
+                <NestableDraggableFlatList
+                  data={textChannels}
+                  keyExtractor={keyExtractor}
+                  renderItem={renderDraggableTextChannel}
+                  onDragEnd={handleTextDragEnd}
                 />
-              );
-            })}
-          </View>
-        )}
-        {voiceChannels.length > 0 && (
-          <View style={styles.category}>
-            <Text style={styles.categoryLabel}>VOICE CHANNELS</Text>
-            {voiceChannels.map((channel) => (
-              <VoiceChannelItem
-                key={channel.id}
-                channel={channel}
-                isActive={activeChannel?.id === channel.id}
-                isConnected={voiceChannelId === channel.id}
-                onSelect={() => handleChannelPress(channel)}
-                onJoin={() => handleVoiceJoin(channel.id)}
-                onLeave={handleVoiceLeave}
-              />
-            ))}
-          </View>
-        )}
-      </ScrollView>
+              ) : (
+                <>
+                  {textChannels.map((channel) => {
+                    const unread = channelUnreads.get(channel.id);
+                    const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
+                    const mentionCount = unread?.mentionCount || 0;
+                    return (
+                      <ChannelItem
+                        key={channel.id}
+                        name={channel.name}
+                        isActive={activeChannel?.id === channel.id}
+                        hasUnread={hasUnread}
+                        mentionCount={mentionCount}
+                        onPress={() => handleChannelPress(channel)}
+                        onLongPress={() => openModal('channelNotifications', { channelId: channel.id, channelName: channel.name })}
+                      />
+                    );
+                  })}
+                </>
+              )}
+            </View>
+          )}
+          {voiceChannels.length > 0 && (
+            <View style={styles.category}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryLabel}>VOICE CHANNELS</Text>
+                {canManageChannels && (
+                  editingVoice ? (
+                    <Pressable
+                      style={styles.editToggle}
+                      onPress={() => setEditingVoice(false)}
+                    >
+                      <Text style={styles.editToggleDone}>Done</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={styles.editToggle}
+                      onPress={() => setEditingVoice(true)}
+                    >
+                      <Text style={styles.editToggleText}>Edit</Text>
+                    </Pressable>
+                  )
+                )}
+              </View>
+              {editingVoice ? (
+                <NestableDraggableFlatList
+                  data={voiceChannels}
+                  keyExtractor={keyExtractor}
+                  renderItem={renderDraggableVoiceChannel}
+                  onDragEnd={handleVoiceDragEnd}
+                />
+              ) : (
+                <>
+                  {voiceChannels.map((channel) => (
+                    <VoiceChannelItem
+                      key={channel.id}
+                      channel={channel}
+                      isActive={activeChannel?.id === channel.id}
+                      isConnected={voiceChannelId === channel.id}
+                      onSelect={() => handleChannelPress(channel)}
+                      onJoin={() => handleVoiceJoin(channel.id)}
+                      onLeave={handleVoiceLeave}
+                    />
+                  ))}
+                </>
+              )}
+            </View>
+          )}
+        </NestableScrollContainer>
+      ) : (
+        <ScrollView style={styles.channelList} showsVerticalScrollIndicator={false}>
+          {textChannels.length > 0 && (
+            <View style={styles.category}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryLabel}>TEXT CHANNELS</Text>
+                {canManageChannels && (
+                  <Pressable
+                    style={styles.editToggle}
+                    onPress={() => setEditingText(true)}
+                  >
+                    <Text style={styles.editToggleText}>Edit</Text>
+                  </Pressable>
+                )}
+              </View>
+              {textChannels.map((channel) => {
+                const unread = channelUnreads.get(channel.id);
+                const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
+                const mentionCount = unread?.mentionCount || 0;
+                return (
+                  <ChannelItem
+                    key={channel.id}
+                    name={channel.name}
+                    isActive={activeChannel?.id === channel.id}
+                    hasUnread={hasUnread}
+                    mentionCount={mentionCount}
+                    onPress={() => handleChannelPress(channel)}
+                    onLongPress={() => openModal('channelNotifications', { channelId: channel.id, channelName: channel.name })}
+                  />
+                );
+              })}
+            </View>
+          )}
+          {voiceChannels.length > 0 && (
+            <View style={styles.category}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryLabel}>VOICE CHANNELS</Text>
+                {canManageChannels && (
+                  <Pressable
+                    style={styles.editToggle}
+                    onPress={() => setEditingVoice(true)}
+                  >
+                    <Text style={styles.editToggleText}>Edit</Text>
+                  </Pressable>
+                )}
+              </View>
+              {voiceChannels.map((channel) => (
+                <VoiceChannelItem
+                  key={channel.id}
+                  channel={channel}
+                  isActive={activeChannel?.id === channel.id}
+                  isConnected={voiceChannelId === channel.id}
+                  onSelect={() => handleChannelPress(channel)}
+                  onJoin={() => handleVoiceJoin(channel.id)}
+                  onLeave={handleVoiceLeave}
+                />
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
 
       <VoiceControls />
       <UserBar />
-    </View>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
     width: 240,
     backgroundColor: colors.bgSecondary,
   } as ViewStyle,
@@ -281,14 +490,56 @@ const styles = StyleSheet.create({
   category: {
     paddingTop: spacing.lg,
   } as ViewStyle,
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.xs,
+  } as ViewStyle,
   categoryLabel: {
     color: colors.textMuted,
     fontSize: fontSize.xs,
     fontWeight: '700',
     letterSpacing: 0.5,
-    paddingHorizontal: spacing.lg,
-    marginBottom: spacing.xs,
   } as TextStyle,
+  editToggle: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  } as ViewStyle,
+  editToggleText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+  } as TextStyle,
+  editToggleDone: {
+    color: colors.brandColor,
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+  } as TextStyle,
+  draggableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  } as ViewStyle,
+  draggableRowActive: {
+    backgroundColor: colors.bgTertiary,
+    borderRadius: borderRadius.sm,
+    opacity: 0.9,
+  } as ViewStyle,
+  dragHandle: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+  } as ViewStyle,
+  dragHandleText: {
+    color: colors.textMuted,
+    fontSize: 20,
+    fontWeight: '700',
+  } as TextStyle,
+  draggableItemContent: {
+    flex: 1,
+  } as ViewStyle,
   dmItem: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -314,5 +565,21 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: fontSize.sm,
     padding: spacing.lg,
+  } as TextStyle,
+  friendsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.sm,
+    marginTop: spacing.xs,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.bgModifierHover,
+  } as ViewStyle,
+  friendsButtonText: {
+    color: colors.textPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
   } as TextStyle,
 });

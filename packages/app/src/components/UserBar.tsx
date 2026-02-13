@@ -6,6 +6,7 @@ import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
 
 export default function UserBar() {
   const user = useAuthStore((s) => s.user);
+  const isSysadmin = useAuthStore((s) => s.isSysadmin);
   const isMuted = useVoiceStore((s) => s.isMuted);
   const isDeafened = useVoiceStore((s) => s.isDeafened);
   const toggleMute = useVoiceStore((s) => s.toggleMute);
@@ -37,6 +38,14 @@ export default function UserBar() {
       >
         <Text style={styles.btnText}>{isDeafened ? '🔇' : '🎧'}</Text>
       </Pressable>
+      {isSysadmin && (
+        <Pressable
+          style={styles.btn}
+          onPress={() => openModal('admin')}
+        >
+          <Text style={styles.btnText}>{'🛡'}</Text>
+        </Pressable>
+      )}
       <Pressable
         style={styles.btn}
         onPress={() => openModal('userSettings')}
