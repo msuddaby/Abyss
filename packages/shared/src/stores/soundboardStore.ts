@@ -14,7 +14,7 @@ interface SoundboardState {
   removeClipLocal: (clipId: string) => void;
 }
 
-export const useSoundboardStore = create<SoundboardState>((set, get) => ({
+export const useSoundboardStore = create<SoundboardState>((set) => ({
   clips: [],
   loading: false,
 

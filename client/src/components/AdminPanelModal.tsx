@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, CosmeticRarity } from '@abyss/shared';
+import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from '@abyss/shared';
 import type { AdminOverview, AdminServer, AdminUser, AdminSettings, InviteCode, CosmeticItem, UserCosmetic as UserCosmeticT } from '@abyss/shared';
 
 type TabKey = 'overview' | 'servers' | 'users' | 'settings' | 'cosmetics';

@@ -10,20 +10,22 @@ export interface CosmeticItem {
   createdAt: string;
 }
 
-export enum CosmeticType {
-  Nameplate = 0,
-  MessageStyle = 1,
-  ProfileEffect = 2,
-  AvatarDecoration = 3,
-}
+export const CosmeticType = {
+  Nameplate: 0,
+  MessageStyle: 1,
+  ProfileEffect: 2,
+  AvatarDecoration: 3,
+} as const;
+export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 
-export enum CosmeticRarity {
-  Common = 0,
-  Uncommon = 1,
-  Rare = 2,
-  Epic = 3,
-  Legendary = 4,
-}
+export const CosmeticRarity = {
+  Common: 0,
+  Uncommon: 1,
+  Rare: 2,
+  Epic: 3,
+  Legendary: 4,
+} as const;
+export type CosmeticRarity = (typeof CosmeticRarity)[keyof typeof CosmeticRarity];
 
 export const CosmeticRarityNames: Record<number, string> = {
   0: 'Common',
