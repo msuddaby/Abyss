@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
+import { useMobileStore, isMobile } from '../stores/mobileStore';
+import { useLongPress } from '../hooks/useLongPress';
 import type { Channel, DmChannel, User } from '@abyss/shared';
 import { useWebRTC } from '../hooks/useWebRTC';
 import CreateChannelModal from './CreateChannelModal';
@@ -109,9 +111,27 @@ export default function ChannelSidebar() {
     );
   };
 
+  const longPressChannelRef = useRef<Channel | null>(null);
+  const channelLongPress = useLongPress(useCallback((x: number, y: number) => {
+    const channel = longPressChannelRef.current;
+    if (!channel) return;
+    openContextMenu(x, y,
+      { channel },
+      {
+        onChannelNotifSettings: () => setNotifChannel(channel),
+        ...(canManageChannels ? {
+          onEditChannel: () => setChannelToEdit(channel),
+          onChannelPermissions: () => setChannelToEditPermissions(channel),
+          onDeleteChannel: () => setChannelToDelete(channel),
+        } : {}),
+      }
+    );
+  }, [canManageChannels, openContextMenu]));
+
   // DM mode rendering
   if (isDmMode) {
     const handleDmClick = async (dm: DmChannel) => {
+      if (isMobile()) useMobileStore.getState().closeLeftDrawer();
       // Leave previous channel if any
       if (currentChannelId) {
         await leaveChannel(currentChannelId).catch(console.error);
@@ -274,6 +294,7 @@ export default function ChannelSidebar() {
   const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
 
   const handleChannelClick = (channel: Channel) => {
+    if (isMobile()) useMobileStore.getState().closeLeftDrawer();
     setActiveChannel(channel);
   };
 
@@ -408,12 +429,15 @@ export default function ChannelSidebar() {
                 <div
                   key={channel.id}
                   className={`channel-item-wrapper${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
-                  draggable={canManageChannels}
+                  draggable={canManageChannels && !isMobile()}
                   onDragStart={handleDragStart(channel, 'Text')}
                   onDragOver={handleDragOver(channel, 'Text')}
                   onDrop={handleDrop(channel, 'Text')}
                   onDragEnd={handleDragEnd}
                   onContextMenu={handleChannelContextMenu(channel)}
+                  onTouchStart={(e) => { longPressChannelRef.current = channel; channelLongPress.onTouchStart(e); }}
+                  onTouchMove={channelLongPress.onTouchMove}
+                  onTouchEnd={channelLongPress.onTouchEnd}
                 >
                   {hasUnread && <div className="channel-unread-dot" />}
                   <button
@@ -439,12 +463,15 @@ export default function ChannelSidebar() {
               <div
                 key={channel.id}
                 className={`channel-item-wrapper voice${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
-                draggable={canManageChannels}
+                draggable={canManageChannels && !isMobile()}
                 onDragStart={handleDragStart(channel, 'Voice')}
                 onDragOver={handleDragOver(channel, 'Voice')}
                 onDrop={handleDrop(channel, 'Voice')}
                 onDragEnd={handleDragEnd}
                 onContextMenu={handleChannelContextMenu(channel)}
+                onTouchStart={(e) => { longPressChannelRef.current = channel; channelLongPress.onTouchStart(e); }}
+                onTouchMove={channelLongPress.onTouchMove}
+                onTouchEnd={channelLongPress.onTouchEnd}
               >
                 <VoiceChannel
                   channel={channel}

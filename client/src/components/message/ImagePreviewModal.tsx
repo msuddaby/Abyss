@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { getApiBase } from "@abyss/shared";
 import type { Attachment } from "@abyss/shared";
 
@@ -19,7 +20,7 @@ export default function ImagePreviewModal({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="modal-overlay image-preview-overlay" onClick={onClose}>
       <div className="image-preview-modal" onClick={(e) => e.stopPropagation()}>
         <img
@@ -40,6 +41,7 @@ export default function ImagePreviewModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

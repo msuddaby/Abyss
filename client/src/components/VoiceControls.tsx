@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 import SoundboardPanel from './SoundboardPanel';
+import { isMobile } from '../stores/mobileStore';
 
 function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
   const parts = bind.split('+');
@@ -147,17 +148,19 @@ export default function VoiceControls() {
         </button>
       )}
       <div className="voice-controls-buttons">
-        <button
-          className={`vc-btn ${isPtt ? 'vc-active' : ''}`}
-          onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}
-          title={isPtt ? 'Switch to Voice Activity' : 'Switch to Push to Talk'}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-          </svg>
-          <span>{isPtt ? 'PTT' : 'VA'}</span>
-        </button>
+        {!isMobile() && (
+          <button
+            className={`vc-btn ${isPtt ? 'vc-active' : ''}`}
+            onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}
+            title={isPtt ? 'Switch to Voice Activity' : 'Switch to Push to Talk'}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+            <span>{isPtt ? 'PTT' : 'VA'}</span>
+          </button>
+        )}
         {canStream && (
           <button
             className={`vc-btn ${isCameraOn ? 'vc-active' : ''}${isCameraLoading ? ' loading' : ''}`}

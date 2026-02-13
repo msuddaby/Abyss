@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import {
   getApiBase,
   useAuthStore,
@@ -23,6 +23,7 @@ import MessageReactions from "./message/MessageReactions";
 import type { MessageReactionsHandle } from "./message/MessageReactions";
 import ImagePreviewModal from "./message/ImagePreviewModal";
 import { useContextMenuStore } from "../stores/contextMenuStore";
+import { useLongPress } from "../hooks/useLongPress";
 
 export default function MessageItem({
   message,
@@ -110,22 +111,31 @@ export default function MessageItem({
     }
   }, [editing]);
 
+  const openMessageMenu = useCallback(
+    (x: number, y: number) => {
+      openContextMenu(
+        x,
+        y,
+        { message, user: message.author, member: authorMember },
+        {
+          onEdit: () => {
+            setEditContent(message.content);
+            setEditing(true);
+          },
+          onOpenReactionPicker: () => reactionsRef.current?.openPicker(),
+          onViewProfile: () => setProfileCard({ x, y }),
+        },
+      );
+    },
+    [message, authorMember, openContextMenu],
+  );
+
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    openContextMenu(
-      e.clientX,
-      e.clientY,
-      { message, user: message.author, member: authorMember },
-      {
-        onEdit: () => {
-          setEditContent(message.content);
-          setEditing(true);
-        },
-        onOpenReactionPicker: () => reactionsRef.current?.openPicker(),
-        onViewProfile: () => setProfileCard({ x: e.clientX, y: e.clientY }),
-      },
-    );
+    openMessageMenu(e.clientX, e.clientY);
   };
+
+  const longPressHandlers = useLongPress(openMessageMenu);
 
   const handleAuthorClick = (e: React.MouseEvent) => {
     setProfileCard({ x: e.clientX, y: e.clientY });
@@ -240,6 +250,7 @@ export default function MessageItem({
       ref={messageRef}
       className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}`}
       onContextMenu={handleContextMenu}
+      {...longPressHandlers}
     >
       {message.replyTo && (
         <MessageReplyIndicator

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useVoiceStore, useVoiceChatStore, useAuthStore } from "@abyss/shared";
 import VoiceChatPanel from "./VoiceChatPanel";
 import VoiceChatToast from "./VoiceChatToast";
+import { useMobileStore, isMobile } from "../stores/mobileStore";
 
 function cleanContentForTts(content: string): string {
   let text = content;
@@ -61,7 +62,10 @@ export default function VoiceChatOverlay() {
   if (!currentChannelId) return null;
 
   const handleToggle = () => {
-    if (!isVoiceChatOpen) clearVoiceChatUnread();
+    if (!isVoiceChatOpen) {
+      clearVoiceChatUnread();
+      if (isMobile()) useMobileStore.getState().closeDrawers();
+    }
     toggleVoiceChat();
   };
 

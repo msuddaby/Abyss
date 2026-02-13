@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useServerStore } from '@abyss/shared';
 
 export default function CreateChannelModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
@@ -19,7 +20,7 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
     }
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Create Channel</h2>
@@ -68,6 +69,7 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

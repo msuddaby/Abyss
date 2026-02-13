@@ -640,7 +640,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
         attachmentIds.push(result.id);
       }
       await sendMessage(effectiveChannelId, content, attachmentIds, replyingTo?.id);
-      editorRef.current.innerHTML = '';
+      editorRef.current.focus();
+      document.execCommand('selectAll');
+      document.execCommand('delete');
       setIsEmpty(true);
       setContentLength(0);
       setFiles([]);
@@ -822,6 +824,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
         <button
           type="submit"
           className="send-btn"
+          onMouseDown={(e) => e.preventDefault()}
           disabled={!canSendMessages || sending || (isEmpty && files.length === 0) || contentLength > maxMessageLength}
         >
           Send

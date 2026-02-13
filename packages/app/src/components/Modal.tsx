@@ -49,6 +49,6 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   } as TextStyle,
   scroll: {
-    flexShrink: 1,
+    flex: 1,
   } as ViewStyle,
 });

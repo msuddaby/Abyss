@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNotificationSettingsStore, useServerStore, NotificationLevel, getNotificationLevelName } from '@abyss/shared';
 
 interface Props {
@@ -40,7 +41,7 @@ export default function ServerNotificationModal({ serverId, onClose }: Props) {
     onClose();
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal user-settings-modal notification-settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="us-content" style={{ flex: 1 }}>
@@ -120,6 +121,7 @@ export default function ServerNotificationModal({ serverId, onClose }: Props) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -38,6 +38,7 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
   const prevMessageCountRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const isLoadingNewerRef = useRef(false);
+  const scrollOffsetRef = useRef(0);
 
   const displayMessages = useMemo(() => {
     // Reverse so newest is first in data; inverted list flips it back visually
@@ -139,7 +140,8 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
     if (newCount > prevCount) {
       const lastMessage = messages[newCount - 1];
       const isOwnMessage = !!currentUserId && lastMessage?.authorId === currentUserId;
-      if (isOwnMessage) {
+      const isNearBottom = scrollOffsetRef.current < 150;
+      if (isOwnMessage || isNearBottom) {
         setTimeout(() => {
           flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
         }, 0);
@@ -148,8 +150,9 @@ export default function MessageList({ onPickReactionEmoji }: Props) {
   }, [messages, currentUserId, highlightedMessageId]);
 
   const handleScroll = useCallback((e: any) => {
-    if (!hasNewer || loading || isLoadingNewerRef.current) return;
     const offsetY = e.nativeEvent?.contentOffset?.y ?? 0;
+    scrollOffsetRef.current = offsetY;
+    if (!hasNewer || loading || isLoadingNewerRef.current) return;
     if (offsetY < 80) {
       isLoadingNewerRef.current = true;
       loadNewer().finally(() => {

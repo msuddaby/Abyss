@@ -1,5 +1,6 @@
 // This module MUST be imported before anything that uses @abyss/shared stores/services.
 // It initializes the storage adapter and API base URL.
+import { Capacitor } from '@capacitor/core';
 import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, hydrateVoiceStore } from '@abyss/shared';
 import { setupNotificationClickListener } from '@abyss/shared/services/electronNotifications';
 
@@ -40,8 +41,12 @@ setStorage({
 
 hydrateVoiceStore();
 
-setApiBase(import.meta.env.VITE_API_URL || 'http://localhost:5000');
+// Empty VITE_API_URL = use relative paths (Vite proxy handles /api and /hubs in dev).
+// Set VITE_API_URL to a full URL for production or non-proxied setups.
+setApiBase(import.meta.env.VITE_API_URL || '');
 setOnUnauthorized(() => useAuthStore.getState().logout());
 
 // Listen for OS notification clicks to navigate to the relevant channel
-setupNotificationClickListener();
+if (!Capacitor.isNativePlatform()) {
+  setupNotificationClickListener();
+}

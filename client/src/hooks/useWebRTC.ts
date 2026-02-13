@@ -13,7 +13,12 @@ import {
   useToastStore,
   useWatchPartyStore,
 } from "@abyss/shared";
-import { NoiseSuppressor } from "../audio/NoiseSuppressor";
+// Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
+type NoiseSuppressorType = import("../audio/NoiseSuppressor").NoiseSuppressor;
+async function createNoiseSuppressor(): Promise<NoiseSuppressorType> {
+  const { NoiseSuppressor } = await import("../audio/NoiseSuppressor");
+  return new NoiseSuppressor();
+}
 
 const STUN_URL =
   import.meta.env.VITE_STUN_URL || "stun:stun.l.google.com:19302";
@@ -64,7 +69,7 @@ let currentOutputDeviceId: string = "default";
 const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
 
 // Noise suppression state
-let noiseSuppressor: NoiseSuppressor | null = null;
+let noiseSuppressor: NoiseSuppressorType | null = null;
 let peerStream: MediaStream | null = null; // processed stream sent to peers (or localStream if suppressor inactive)
 
 // Camera state
@@ -262,7 +267,7 @@ async function applySuppressor(rawStream: MediaStream): Promise<void> {
     peerStream = rawStream;
     return;
   }
-  const suppressor = new NoiseSuppressor();
+  const suppressor = await createNoiseSuppressor();
   const ctx = ensureAudioContext();
   const processed = await suppressor.initialize(rawStream, ctx);
   if (processed) {
@@ -2577,7 +2582,7 @@ export function useWebRTC() {
       try {
         if (noiseSuppression && !noiseSuppressor) {
           // Enable: create suppressor, replace peer tracks with processed output
-          const suppressor = new NoiseSuppressor();
+          const suppressor = await createNoiseSuppressor();
           const ctx = ensureAudioContext();
           const processed = await suppressor.initialize(localStream!, ctx);
           if (cancelled) {

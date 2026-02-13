@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { api, getApiBase, useAuthStore, useDmStore, useMessageStore, useServerStore, hasPermission, Permission } from '@abyss/shared';
 import type { Message, PinnedMessage } from '@abyss/shared';
 
@@ -44,7 +45,7 @@ export default function PinnedMessagesModal({ channelId, onClose }: { channelId:
     }
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal pinned-messages-modal" onClick={(e) => e.stopPropagation()}>
         <div className="pinned-header">
@@ -94,6 +95,7 @@ export default function PinnedMessagesModal({ channelId, onClose }: { channelId:
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

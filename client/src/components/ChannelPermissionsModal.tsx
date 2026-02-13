@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, Permission } from '@abyss/shared';
 import type { ServerRole } from '@abyss/shared';
 import { useServerStore } from '@abyss/shared';
+import { isMobile } from '../stores/mobileStore';
 
 type OverrideEntry = { allow: number; deny: number };
 
@@ -49,6 +51,7 @@ export default function ChannelPermissionsModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mobileShowContent, setMobileShowContent] = useState(false);
 
   const sortedRoles = useMemo<ServerRole[]>(() => {
     return [...roles].sort((a, b) => (b.position - a.position));
@@ -141,9 +144,18 @@ export default function ChannelPermissionsModal({
   const selectedRole = sortedRoles.find((r) => r.id === selectedRoleId);
   const hasOverrides = selectedRoleId ? ((current.allow !== 0) || (current.deny !== 0)) : false;
 
-  return (
+  const handleRoleSelect = (roleId: string) => {
+    setSelectedRoleId(roleId);
+    if (isMobile()) setMobileShowContent(true);
+  };
+
+  const handleMobileBack = () => {
+    setMobileShowContent(false);
+  };
+
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal permissions-modal" onClick={(e) => e.stopPropagation()}>
+      <div className={`modal permissions-modal${mobileShowContent ? ' perms-mobile-content' : ''}`} onClick={(e) => e.stopPropagation()}>
         <h2>Channel Permissions</h2>
         <div className="permissions-channel-name">#{channelName}</div>
         {error && <div className="auth-error">{error}</div>}
@@ -157,7 +169,7 @@ export default function ChannelPermissionsModal({
                 <button
                   key={r.id}
                   className={`permissions-role-item${isSelected ? ' active' : ''}`}
-                  onClick={() => setSelectedRoleId(r.id)}
+                  onClick={() => handleRoleSelect(r.id)}
                 >
                   <span className="permissions-role-dot" style={{ background: r.isDefault ? 'var(--text-muted)' : r.color }} />
                   <span className="permissions-role-name">{r.isDefault ? '@everyone' : r.name}</span>
@@ -170,6 +182,11 @@ export default function ChannelPermissionsModal({
           <div className="permissions-content">
             {selectedRole && (
               <div className="permissions-content-header">
+                <button className="permissions-back" onClick={handleMobileBack}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+                  </svg>
+                </button>
                 <span className="permissions-editing-role" style={{ color: selectedRole.isDefault ? 'var(--text-secondary)' : selectedRole.color }}>
                   {selectedRole.isDefault ? '@everyone' : selectedRole.name}
                 </span>
@@ -228,6 +245,7 @@ export default function ChannelPermissionsModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from '@abyss/shared';
 import type { AdminOverview, AdminServer, AdminUser, AdminSettings, InviteCode, CosmeticItem, UserCosmetic as UserCosmeticT } from '@abyss/shared';
+import SettingsModal from './SettingsModal';
+import type { SettingsTab } from './SettingsModal';
 
 type TabKey = 'overview' | 'servers' | 'users' | 'settings' | 'cosmetics';
 
@@ -309,7 +312,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   };
 
   if (!isSysadmin) {
-    return (
+    return createPortal(
       <div className="modal-overlay" onClick={onClose}>
         <div className="modal user-settings-modal" onClick={(e) => e.stopPropagation()}>
           <div className="us-content" style={{ flex: 1 }}>
@@ -322,41 +325,30 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
+  const settingsTabs: SettingsTab[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'servers', label: 'Servers' },
+    { id: 'users', label: 'Users' },
+    { id: 'cosmetics', label: 'Cosmetics' },
+    { id: 'settings', label: 'Settings', separatorBefore: true },
+  ];
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal user-settings-modal admin-panel-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="us-sidebar">
-          <div className="us-sidebar-header">Admin</div>
-          <button className={`us-nav-item ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
-          <button className={`us-nav-item ${tab === 'servers' ? 'active' : ''}`} onClick={() => setTab('servers')}>Servers</button>
-          <button className={`us-nav-item ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>Users</button>
-          <button className={`us-nav-item ${tab === 'cosmetics' ? 'active' : ''}`} onClick={() => setTab('cosmetics')}>Cosmetics</button>
-          <div className="us-nav-separator" />
-          <button className={`us-nav-item ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>Settings</button>
-        </div>
-
-        <div className="us-content">
-          <div className="us-content-header">
-            <h2>
-              {tab === 'overview' && 'Overview'}
-              {tab === 'servers' && 'Servers'}
-              {tab === 'users' && 'Users'}
-              {tab === 'cosmetics' && 'Cosmetics'}
-              {tab === 'settings' && 'Settings'}
-            </h2>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button className="btn-secondary" onClick={load} disabled={loading} style={{ padding: '6px 12px', fontSize: 13 }}>Refresh</button>
-              <button className="us-close" onClick={onClose}>&times;</button>
-            </div>
-          </div>
-
+    <SettingsModal
+      title="Admin"
+      tabs={settingsTabs}
+      activeTab={tab}
+      onTabChange={(id) => setTab(id as TabKey)}
+      onClose={onClose}
+      className="admin-panel-modal"
+      headerExtra={<button className="btn-secondary" onClick={load} disabled={loading} style={{ padding: '6px 12px', fontSize: 13 }}>Refresh</button>}
+    >
           {error && <div className="admin-error">{error}</div>}
-
-          <div className="us-content-body">
             {loading && !data && (
               <div className="admin-loading">Loading admin data...</div>
             )}
@@ -764,9 +756,6 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
             )}
-          </div>
-        </div>
-      </div>
-    </div>
+    </SettingsModal>
   );
 }

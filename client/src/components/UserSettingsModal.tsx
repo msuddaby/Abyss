@@ -3,8 +3,11 @@ import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, 
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
+import SettingsModal from "./SettingsModal";
+import { isMobile } from "../stores/mobileStore";
+import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
 
-type SettingsTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "account";
+type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -16,7 +19,17 @@ export default function UserSettingsModal({
   const updateAvatar = useAuthStore((s) => s.updateAvatar);
   const logout = useAuthStore((s) => s.logout);
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
+
+  const settingsTabs: SettingsTabDef[] = [
+    { id: "profile", label: "Profile" },
+    { id: "voice", label: "Voice & Audio" },
+    { id: "video", label: "Video" },
+    { id: "keybinds", label: "Keybinds" },
+    { id: "cosmetics", label: "Cosmetics" },
+    { id: "account", label: "Account", separatorBefore: true },
+  ];
+
   const [displayName, setDisplayName] = useState(user.displayName);
   const [bio, setBio] = useState(user.bio || "");
   const [status, setStatus] = useState(user.status);
@@ -629,68 +642,13 @@ export default function UserSettingsModal({
       : null);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal user-settings-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="us-sidebar">
-          <div className="us-sidebar-header">Settings</div>
-          <button
-            className={`us-nav-item ${activeTab === "profile" ? "active" : ""}`}
-            onClick={() => setActiveTab("profile")}
-          >
-            Profile
-          </button>
-          <button
-            className={`us-nav-item ${activeTab === "voice" ? "active" : ""}`}
-            onClick={() => setActiveTab("voice")}
-          >
-            Voice & Audio
-          </button>
-          <button
-            className={`us-nav-item ${activeTab === "video" ? "active" : ""}`}
-            onClick={() => setActiveTab("video")}
-          >
-            Video
-          </button>
-          <button
-            className={`us-nav-item ${activeTab === "keybinds" ? "active" : ""}`}
-            onClick={() => setActiveTab("keybinds")}
-          >
-            Keybinds
-          </button>
-          <button
-            className={`us-nav-item ${activeTab === "cosmetics" ? "active" : ""}`}
-            onClick={() => setActiveTab("cosmetics")}
-          >
-            Cosmetics
-          </button>
-          <div className="us-nav-separator" />
-          <button
-            className={`us-nav-item ${activeTab === "account" ? "active" : ""}`}
-            onClick={() => setActiveTab("account")}
-          >
-            Account
-          </button>
-        </div>
-
-        <div className="us-content">
-          <div className="us-content-header">
-            <h2>
-              {activeTab === "profile" && "Profile"}
-              {activeTab === "voice" && "Voice & Audio"}
-              {activeTab === "video" && "Video"}
-              {activeTab === "keybinds" && "Keybinds"}
-              {activeTab === "cosmetics" && "Cosmetics"}
-              {activeTab === "account" && "Account"}
-            </h2>
-            <button className="us-close" onClick={onClose}>
-              &times;
-            </button>
-          </div>
-
-          <div className="us-content-body">
+    <SettingsModal
+      title="Settings"
+      tabs={settingsTabs}
+      activeTab={activeTab}
+      onTabChange={(id) => setActiveTab(id as ActiveTab)}
+      onClose={onClose}
+    >
             {activeTab === "profile" && (
               <>
                 <div className="us-card">
@@ -763,42 +721,44 @@ export default function UserSettingsModal({
 
             {activeTab === "voice" && (
               <>
-                <div className="us-card">
-                  <div className="us-card-title">Voice Mode</div>
-                  <div className="channel-type-select">
-                    <button
-                      type="button"
-                      className={`type-option ${voiceMode === "voice-activity" ? "active" : ""}`}
-                      onClick={() => setVoiceMode("voice-activity")}
-                    >
-                      Voice Activity
-                    </button>
-                    <button
-                      type="button"
-                      className={`type-option ${voiceMode === "push-to-talk" ? "active" : ""}`}
-                      onClick={() => setVoiceMode("push-to-talk")}
-                    >
-                      Push to Talk
-                    </button>
-                  </div>
-
-                  {voiceMode === "push-to-talk" && (
-                    <label style={{ marginTop: 12 }}>
-                      PTT Key
+                {!isMobile() && (
+                  <div className="us-card">
+                    <div className="us-card-title">Voice Mode</div>
+                    <div className="channel-type-select">
                       <button
                         type="button"
-                        className={`ptt-key-capture ${capturingKey ? "recording" : ""}`}
-                        onClick={() => setCapturingKey(true)}
+                        className={`type-option ${voiceMode === "voice-activity" ? "active" : ""}`}
+                        onClick={() => setVoiceMode("voice-activity")}
                       >
-                        {capturingKey
-                          ? "Press any key or mouse button..."
-                          : pttKey.startsWith("Mouse")
-                            ? `Mouse Button ${pttKey.slice(5)}`
-                            : pttKey}
+                        Voice Activity
                       </button>
-                    </label>
-                  )}
-                </div>
+                      <button
+                        type="button"
+                        className={`type-option ${voiceMode === "push-to-talk" ? "active" : ""}`}
+                        onClick={() => setVoiceMode("push-to-talk")}
+                      >
+                        Push to Talk
+                      </button>
+                    </div>
+
+                    {voiceMode === "push-to-talk" && (
+                      <label style={{ marginTop: 12 }}>
+                        PTT Key
+                        <button
+                          type="button"
+                          className={`ptt-key-capture ${capturingKey ? "recording" : ""}`}
+                          onClick={() => setCapturingKey(true)}
+                        >
+                          {capturingKey
+                            ? "Press any key or mouse button..."
+                            : pttKey.startsWith("Mouse")
+                              ? `Mouse Button ${pttKey.slice(5)}`
+                              : pttKey}
+                        </button>
+                      </label>
+                    )}
+                  </div>
+                )}
 
                 <div className="us-card">
                   <div className="us-card-title">Audio Processing</div>
@@ -1193,9 +1153,6 @@ export default function UserSettingsModal({
                 </button>
               </div>
             )}
-          </div>
-        </div>
-      </div>
-    </div>
+    </SettingsModal>
   );
 }

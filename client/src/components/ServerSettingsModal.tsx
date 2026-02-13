@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 import AudioTrimmer from './AudioTrimmer';
+import SettingsModal from './SettingsModal';
+import type { SettingsTab } from './SettingsModal';
 
 const ACTION_LABELS: Record<string, string> = {
   MessageDeleted: 'Deleted a message',
@@ -336,65 +338,27 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
 
   const showEditor = creating || editingRole != null;
 
-  const TAB_LABELS: Record<Tab, string> = {
-    server: 'Server',
-    members: 'Members',
-    roles: 'Roles',
-    emojis: 'Emojis',
-    soundboard: 'Soundboard',
-    media: 'Media',
-    bans: 'Bans',
-    audit: 'Audit Log',
-    danger: 'Danger Zone',
-  };
+  const settingsTabs: SettingsTab[] = [
+    { id: 'server', label: 'Server', visible: canManageServer },
+    { id: 'members', label: 'Members', visible: canManageAnyMembers },
+    { id: 'roles', label: 'Roles', visible: canManageRoles },
+    { id: 'emojis', label: 'Emojis', visible: canManageEmojis },
+    { id: 'soundboard', label: 'Soundboard', visible: canManageSoundboard },
+    { id: 'media', label: 'Media', visible: canManageServer },
+    { id: 'bans', label: 'Bans', visible: canBan, separatorBefore: true },
+    { id: 'audit', label: 'Audit Log', visible: canViewAuditLog },
+    { id: 'danger', label: 'Danger Zone', visible: isOwner, separatorBefore: true },
+  ];
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal user-settings-modal server-settings-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="us-sidebar">
-          <div className="us-sidebar-header">{activeServer?.name ?? 'Server'}</div>
-          {canManageServer && (
-            <button className={`us-nav-item ${tab === 'server' ? 'active' : ''}`} onClick={() => setTab('server')}>Server</button>
-          )}
-          {canManageAnyMembers && (
-            <button className={`us-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
-          )}
-          {canManageRoles && (
-            <button className={`us-nav-item ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
-          )}
-          {canManageEmojis && (
-            <button className={`us-nav-item ${tab === 'emojis' ? 'active' : ''}`} onClick={() => setTab('emojis')}>Emojis</button>
-          )}
-          {canManageSoundboard && (
-            <button className={`us-nav-item ${tab === 'soundboard' ? 'active' : ''}`} onClick={() => setTab('soundboard')}>Soundboard</button>
-          )}
-          {canManageServer && (
-            <button className={`us-nav-item ${tab === 'media' ? 'active' : ''}`} onClick={() => setTab('media')}>Media</button>
-          )}
-          {canBan && (
-            <>
-              <div className="us-nav-separator" />
-              <button className={`us-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
-            </>
-          )}
-          {canViewAuditLog && (
-            <button className={`us-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
-          )}
-          {isOwner && (
-            <>
-              <div className="us-nav-separator" />
-              <button className={`us-nav-item ${tab === 'danger' ? 'active' : ''}`} onClick={() => setTab('danger')}>Danger Zone</button>
-            </>
-          )}
-        </div>
-
-        <div className="us-content">
-          <div className="us-content-header">
-            <h2>{TAB_LABELS[tab]}</h2>
-            <button className="us-close" onClick={onClose}>&times;</button>
-          </div>
-
-          <div className="us-content-body">
+    <SettingsModal
+      title={activeServer?.name ?? 'Server'}
+      tabs={settingsTabs}
+      activeTab={tab}
+      onTabChange={(id) => setTab(id as Tab)}
+      onClose={onClose}
+      className="server-settings-modal"
+    >
             {tab === 'server' && canManageServer && (
               <>
                 <div className="us-card">
@@ -1099,9 +1063,6 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                 </button>
               </div>
             )}
-          </div>
-        </div>
-      </div>
-    </div>
+    </SettingsModal>
   );
 }

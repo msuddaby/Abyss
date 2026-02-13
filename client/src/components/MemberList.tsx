@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor, getNameplateStyle } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
@@ -148,7 +149,7 @@ export default function MemberList() {
           onClose={() => setProfileCard(null)}
         />
       )}
-      {showRoleAssign && roleAssignTarget && (
+      {showRoleAssign && roleAssignTarget && createPortal(
         <div className="modal-overlay" onClick={() => setShowRoleAssign(false)}>
           <div className="modal role-assign-modal" onClick={(e) => e.stopPropagation()}>
             <h2>Manage Roles</h2>
@@ -194,7 +195,8 @@ export default function MemberList() {
               <button onClick={handleSaveRoles}>Save</button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

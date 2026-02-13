@@ -6,7 +6,8 @@ import {
   Pressable,
   FlatList,
   Modal,
-  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   type ViewStyle,
   type TextStyle,
@@ -21,8 +22,6 @@ import type { Message } from '@abyss/shared';
 import Avatar from './Avatar';
 import { useUiStore } from '../stores/uiStore';
 import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
-
-const SCREEN_HEIGHT = Dimensions.get('window').height;
 
 export default function VoiceChatPanel() {
   const messages = useVoiceChatStore((s) => s.messages);
@@ -120,7 +119,11 @@ export default function VoiceChatPanel() {
 
   return (
     <Modal transparent animationType="slide" onRequestClose={handleClose}>
-      <Pressable style={styles.overlay} onPress={handleClose}>
+      <KeyboardAvoidingView
+        style={styles.kavContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.overlay} onPress={handleClose} />
         <Pressable style={styles.panel} onPress={() => {}}>
           {/* Header */}
           <View style={styles.header}>
@@ -140,10 +143,12 @@ export default function VoiceChatPanel() {
             renderItem={renderMessage}
             keyExtractor={(item) => item.id}
             inverted
+            style={styles.list}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             onEndReached={handleLoadMore}
             onEndReachedThreshold={0.3}
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
@@ -173,19 +178,21 @@ export default function VoiceChatPanel() {
             </Pressable>
           </View>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  kavContainer: {
     flex: 1,
+  } as ViewStyle,
+  overlay: {
+    flex: 4,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
   } as ViewStyle,
   panel: {
-    height: SCREEN_HEIGHT * 0.6,
+    flex: 6,
     backgroundColor: colors.bgPrimary,
     borderTopLeftRadius: borderRadius.lg,
     borderTopRightRadius: borderRadius.lg,
@@ -222,6 +229,9 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.xl,
   } as TextStyle,
+  list: {
+    flex: 1,
+  } as ViewStyle,
   listContent: {
     padding: spacing.md,
     gap: spacing.sm,

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export default function EditChannelModal({
   initialName,
@@ -56,7 +57,7 @@ export default function EditChannelModal({
     }
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Edit {channelType} Channel</h2>
@@ -97,6 +98,7 @@ export default function EditChannelModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

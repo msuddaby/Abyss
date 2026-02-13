@@ -79,6 +79,84 @@ export default function ChannelSidebar() {
   const friendRequests = useFriendStore((s) => s.requests);
   const incomingRequestCount = friendRequests.filter((r) => !r.isOutgoing).length;
 
+  // All hooks must be above early returns to satisfy Rules of Hooks
+  const visibleChannels = activeServer ? channels.filter((c) => canViewChannel(c)) : [];
+  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
+  const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
+
+  const handleChannelPress = useCallback((channel: typeof channels[0]) => {
+    setActiveChannel(channel);
+    closeLeftDrawer();
+  }, [setActiveChannel, closeLeftDrawer]);
+
+  const handleVoiceJoin = useCallback(async (channelId: string) => {
+    await joinVoice(channelId);
+    const voiceChannel = channels.find((c) => c.id === channelId);
+    if (voiceChannel) setActiveChannel(voiceChannel);
+    closeLeftDrawer();
+  }, [channels, joinVoice, setActiveChannel, closeLeftDrawer]);
+
+  const handleVoiceLeave = useCallback(async () => {
+    await leaveVoice();
+  }, [leaveVoice]);
+
+  const handleTextDragEnd = useCallback(({ data }: { data: Channel[] }) => {
+    const channelIds = data.map((c) => c.id);
+    useServerStore.getState().reorderChannels(activeServer?.id ?? '', 'Text', channelIds);
+  }, [activeServer?.id]);
+
+  const handleVoiceDragEnd = useCallback(({ data }: { data: Channel[] }) => {
+    const channelIds = data.map((c) => c.id);
+    useServerStore.getState().reorderChannels(activeServer?.id ?? '', 'Voice', channelIds);
+  }, [activeServer?.id]);
+
+  const renderDraggableTextChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
+    const unread = channelUnreads.get(channel.id);
+    const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
+    const mentionCount = unread?.mentionCount || 0;
+    return (
+      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
+        <Pressable onLongPress={drag} style={styles.dragHandle}>
+          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
+        </Pressable>
+        <View style={styles.draggableItemContent}>
+          <ChannelItem
+            name={channel.name}
+            isActive={activeChannel?.id === channel.id}
+            hasUnread={hasUnread}
+            mentionCount={mentionCount}
+            onPress={() => handleChannelPress(channel)}
+            onLongPress={() => openModal('channelNotifications', { channelId: channel.id, channelName: channel.name })}
+          />
+        </View>
+      </View>
+    );
+  }, [activeChannel?.id, channelUnreads, handleChannelPress, openModal]);
+
+  const renderDraggableVoiceChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
+    return (
+      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
+        <Pressable onLongPress={drag} style={styles.dragHandle}>
+          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
+        </Pressable>
+        <View style={styles.draggableItemContent}>
+          <VoiceChannelItem
+            channel={channel}
+            isActive={activeChannel?.id === channel.id}
+            isConnected={voiceChannelId === channel.id}
+            onSelect={() => handleChannelPress(channel)}
+            onJoin={() => handleVoiceJoin(channel.id)}
+            onLeave={handleVoiceLeave}
+          />
+        </View>
+      </View>
+    );
+  }, [activeChannel?.id, voiceChannelId, handleChannelPress, handleVoiceJoin, handleVoiceLeave]);
+
+  const keyExtractor = useCallback((item: Channel) => item.id, []);
+
+  const isEditing = editingText || editingVoice;
+
   // ── DM Mode ──
   if (isDmMode) {
     const handleDmPress = async (dm: DmChannel) => {
@@ -158,84 +236,6 @@ export default function ChannelSidebar() {
       </View>
     );
   }
-
-  // ── Server Mode ──
-  const visibleChannels = channels.filter((c) => canViewChannel(c));
-  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
-  const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
-
-  const handleChannelPress = (channel: typeof channels[0]) => {
-    setActiveChannel(channel);
-    closeLeftDrawer();
-  };
-
-  const handleVoiceJoin = async (channelId: string) => {
-    await joinVoice(channelId);
-    const voiceChannel = channels.find((c) => c.id === channelId);
-    if (voiceChannel) setActiveChannel(voiceChannel);
-    closeLeftDrawer();
-  };
-
-  const handleVoiceLeave = async () => {
-    await leaveVoice();
-  };
-
-  const handleTextDragEnd = useCallback(({ data }: { data: Channel[] }) => {
-    const channelIds = data.map((c) => c.id);
-    useServerStore.getState().reorderChannels(activeServer.id, 'Text', channelIds);
-  }, [activeServer.id]);
-
-  const handleVoiceDragEnd = useCallback(({ data }: { data: Channel[] }) => {
-    const channelIds = data.map((c) => c.id);
-    useServerStore.getState().reorderChannels(activeServer.id, 'Voice', channelIds);
-  }, [activeServer.id]);
-
-  const renderDraggableTextChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
-    const unread = channelUnreads.get(channel.id);
-    const hasUnread = !!(unread?.hasUnread && activeChannel?.id !== channel.id);
-    const mentionCount = unread?.mentionCount || 0;
-    return (
-      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
-        <Pressable onLongPress={drag} style={styles.dragHandle}>
-          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
-        </Pressable>
-        <View style={styles.draggableItemContent}>
-          <ChannelItem
-            name={channel.name}
-            isActive={activeChannel?.id === channel.id}
-            hasUnread={hasUnread}
-            mentionCount={mentionCount}
-            onPress={() => handleChannelPress(channel)}
-            onLongPress={() => openModal('channelNotifications', { channelId: channel.id, channelName: channel.name })}
-          />
-        </View>
-      </View>
-    );
-  }, [activeChannel?.id, channelUnreads]);
-
-  const renderDraggableVoiceChannel = useCallback(({ item: channel, drag, isActive: isDragging }: RenderItemParams<Channel>) => {
-    return (
-      <View style={[styles.draggableRow, isDragging && styles.draggableRowActive]}>
-        <Pressable onLongPress={drag} style={styles.dragHandle}>
-          <Text style={styles.dragHandleText}>{'\u2261'}</Text>
-        </Pressable>
-        <View style={styles.draggableItemContent}>
-          <VoiceChannelItem
-            channel={channel}
-            isActive={activeChannel?.id === channel.id}
-            isConnected={voiceChannelId === channel.id}
-            onSelect={() => handleChannelPress(channel)}
-            onJoin={() => handleVoiceJoin(channel.id)}
-            onLeave={handleVoiceLeave}
-          />
-        </View>
-      </View>
-    );
-  }, [activeChannel?.id, voiceChannelId]);
-
-  const keyExtractor = useCallback((item: Channel) => item.id, []);
-
-  const isEditing = editingText || editingVoice;
 
   return (
     <GestureHandlerRootView style={styles.container}>

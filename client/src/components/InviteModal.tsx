@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '@abyss/shared';
 
 export default function InviteModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
@@ -16,7 +17,7 @@ export default function InviteModal({ serverId, onClose }: { serverId: string; o
     setTimeout(() => setCopied(false), 2000);
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Invite People</h2>
@@ -35,6 +36,7 @@ export default function InviteModal({ serverId, onClose }: { serverId: string; o
           <button className="btn-secondary" onClick={onClose}>Close</button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

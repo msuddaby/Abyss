@@ -14,6 +14,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let pingInFlight = false;
 let reconnectCallbacks: (() => void)[] = [];
+let suspended = false;
 
 export function onReconnected(cb: () => void): () => void {
   reconnectCallbacks.push(cb);
@@ -58,13 +59,16 @@ export function getConnection(): signalR.HubConnection {
   connection.onclose(() => {
     reconnectingSince = null;
     setStatus("disconnected");
-    scheduleReconnect("closed");
+    if (!suspended) {
+      scheduleReconnect("closed");
+    }
   });
 
   return connection;
 }
 
 export function startConnection(): Promise<signalR.HubConnection> {
+  suspended = false;
   const conn = getConnection();
   if (conn.state === signalR.HubConnectionState.Connected) {
     return Promise.resolve(conn);
@@ -99,6 +103,21 @@ export async function stopConnection(): Promise<void> {
   if (connection) {
     await connection.stop();
     connection = null;
+  }
+  setStatus("disconnected");
+}
+
+export async function suspendConnection(): Promise<void> {
+  startPromise = null;
+  stopHealthMonitor();
+  clearReconnectTimer();
+  suspended = true;
+  if (connection) {
+    try {
+      await connection.stop();
+    } catch {
+      // ignore
+    }
   }
   setStatus("disconnected");
 }

@@ -1400,6 +1400,10 @@
   position: relative;
 }
 
+.message-item.long-press-active {
+  background: var(--bg-modifier-hover);
+}
+
 .message-item.system-message {
   padding: 6px 16px;
   color: var(--text-muted);
@@ -2750,11 +2754,16 @@
   overflow-y: auto;
 }
 
+.permissions-back {
+  display: none;
+}
+
 .permissions-content-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 8px;
 }
 
 .permissions-editing-role {
@@ -3425,6 +3434,14 @@
   color: var(--text-primary);
 }
 
+.us-back {
+  display: none;
+}
+
+.us-sidebar-close {
+  display: none;
+}
+
 .us-content-body {
   flex: 1;
   overflow-y: auto;
@@ -3828,6 +3845,15 @@
 }
 
 /* User Profile Card */
+.profile-card-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1001;
+}
+
 .user-profile-card {
   position: fixed;
   width: 280px;
@@ -3983,6 +4009,9 @@
   position: relative;
   display: flex;
   align-items: center;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .channel-item-wrapper .channel-item {
@@ -6025,6 +6054,57 @@
   padding: 12px 16px;
   border-top: 1px solid var(--bg-tertiary);
   background: var(--bg-secondary);
+}
+
+.vcv-mobile-bar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .vcv-mobile-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+  }
+  .vcv-mobile-btn {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    border: none;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+  }
+  .vcv-mobile-btn.active {
+    background: var(--bg-accent);
+  }
+  .vcv-mobile-btn.disconnect {
+    background: #ed4245;
+    color: #fff;
+  }
+  .vcv-mobile-btn-slash {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 28px;
+    height: 2px;
+    background: #ed4245;
+    transform: translate(-50%, -50%) rotate(-45deg);
+    border-radius: 1px;
+    pointer-events: none;
+  }
+  .vcv-mobile-btn.active .vcv-mobile-btn-slash {
+    background: #fff;
+  }
 }
 
 .vcv-connect-btn {
@@ -8497,4 +8577,368 @@
 .cosmetic-preset-rarity {
   font-size: 10px;
   font-weight: 600;
+}
+
+/* ===== Mobile Drawer Defaults (no-op on desktop) ===== */
+.mobile-hamburger { display: none; }
+.mobile-drawer-overlay { display: none; }
+.left-drawer { display: contents; }
+.right-drawer { display: contents; }
+.context-menu-overlay { display: none; }
+
+/* ===== Mobile Responsive ===== */
+@media (max-width: 768px) {
+  /* --- Drawer Layout --- */
+  .left-drawer {
+    display: flex;
+    position: fixed;
+    top: env(safe-area-inset-top);
+    left: 0;
+    bottom: 0;
+    width: 312px;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    background: var(--bg-secondary);
+  }
+  .left-drawer.open {
+    transform: translateX(0);
+  }
+  .left-drawer .server-sidebar {
+    height: 100%;
+  }
+  .left-drawer .channel-sidebar {
+    height: 100%;
+    flex: 1;
+  }
+
+  .right-drawer {
+    display: flex;
+    position: fixed;
+    top: env(safe-area-inset-top);
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 200;
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+    background: var(--bg-secondary);
+  }
+  .right-drawer.open {
+    transform: translateX(0);
+  }
+  .right-drawer .member-list,
+  .right-drawer .search-panel {
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+  }
+
+  .mobile-drawer-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 199;
+  }
+
+  /* --- Hamburger Button --- */
+  .mobile-hamburger {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    color: var(--text-secondary);
+    padding: 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .mobile-hamburger:hover {
+    color: var(--text-primary);
+    background: var(--bg-modifier-hover);
+  }
+  .no-channel .mobile-hamburger {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+  }
+
+  /* --- Main Layout: use 100% to respect #root safe-area padding --- */
+  .main-layout {
+    height: 100%;
+  }
+
+  /* --- Content Area --- */
+  .content-area {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* --- Channel Header --- */
+  .channel-header {
+    padding: 0 8px;
+  }
+  .channel-header .channel-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .channel-header-actions button {
+    min-width: 36px;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* --- Message Input --- */
+  .message-input {
+    font-size: 16px; /* prevents iOS auto-zoom */
+  }
+  .message-input-container {
+    padding: 0 8px 8px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* --- Long Press on Messages --- */
+  .message-item {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .message-item .message-actions {
+    display: none !important;
+  }
+
+  /* --- Context Menu → Bottom Sheet --- */
+  .context-menu-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1001;
+  }
+  .context-menu {
+    position: fixed;
+    top: auto !important;
+    left: 0 !important;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 60vh;
+    overflow-y: auto;
+    border-radius: 12px 12px 0 0;
+    padding: 8px 0;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    min-width: unset;
+  }
+  .context-menu-item {
+    padding: 14px 16px;
+    font-size: 16px;
+  }
+  .context-menu-volume {
+    padding: 12px 16px;
+  }
+
+  /* --- Voice Chat Overlay --- */
+  .voice-chat-floating-panel {
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border-radius: 0;
+  }
+  .voice-chat-floating-panel .voice-chat-header {
+    padding-top: env(safe-area-inset-top);
+    height: calc(48px + env(safe-area-inset-top));
+  }
+  .voice-chat-fab {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+    right: 16px;
+  }
+
+  /* --- User Profile Card → Bottom Sheet --- */
+  .profile-card-overlay {
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: flex-end;
+  }
+  .user-profile-card {
+    position: static;
+    top: auto !important;
+    left: auto !important;
+    width: 100%;
+    border-radius: 12px 12px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* --- Modals --- */
+  .modal-overlay {
+    background: var(--bg-primary);
+  }
+  .modal {
+    max-width: 100%;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    max-height: 100%;
+    padding-top: calc(16px + env(safe-area-inset-top));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+  /* --- User Settings Modal: full-screen drill-down --- */
+  .user-settings-modal {
+    flex-direction: column;
+    max-width: 100%;
+    max-height: calc(100vh - env(safe-area-inset-top));
+    height: calc(100vh - env(safe-area-inset-top));
+    border-radius: 0;
+    padding-bottom: 0;
+  }
+
+  /* Nav list: full page by default */
+  .user-settings-modal .us-sidebar {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    padding: 0;
+    gap: 0;
+    overflow-y: auto;
+  }
+  .user-settings-modal .us-sidebar-header {
+    font-size: 18px;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--header-primary);
+    padding: 16px 16px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .us-sidebar-close {
+    display: none;
+  }
+  .user-settings-modal .us-sidebar-close {
+    display: block;
+    font-size: 24px;
+  }
+  .user-settings-modal .us-nav-item {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 0;
+  }
+  .user-settings-modal .us-nav-item.active {
+    background: var(--bg-modifier-hover);
+  }
+  .user-settings-modal .us-nav-separator {
+    margin: 4px 16px;
+  }
+
+  /* Content: hidden by default on mobile */
+  .user-settings-modal .us-content {
+    display: none;
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* When a tab is drilled into, hide nav, show content */
+  .user-settings-modal.us-mobile-content .us-sidebar {
+    display: none;
+  }
+  .user-settings-modal.us-mobile-content .us-content {
+    display: flex;
+  }
+
+  .user-settings-modal .us-content-header {
+    padding: 12px 16px 0;
+  }
+  .user-settings-modal .us-content-body {
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  /* Back button: only visible on mobile */
+  .us-back {
+    display: none;
+  }
+  .user-settings-modal .us-back {
+    display: flex;
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    margin-right: 8px;
+  }
+
+  /* --- Channel Permissions Modal: full-screen drill-down --- */
+  .permissions-modal {
+    max-width: 100%;
+    max-height: calc(100vh - env(safe-area-inset-top));
+    height: calc(100vh - env(safe-area-inset-top));
+    border-radius: 0;
+    padding-bottom: 0;
+  }
+  .permissions-modal .permissions-layout {
+    flex-direction: column;
+    max-height: none;
+    flex: 1;
+    min-height: 0;
+  }
+  .permissions-modal .permissions-role-sidebar {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+    border-radius: 0;
+    overflow-y: auto;
+  }
+  .permissions-modal .permissions-content {
+    display: none;
+    flex: 1;
+    min-height: 0;
+  }
+  .permissions-modal.perms-mobile-content .permissions-role-sidebar {
+    display: none;
+  }
+  .permissions-modal.perms-mobile-content .permissions-content {
+    display: flex;
+  }
+  .permissions-modal .permissions-back {
+    display: flex;
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    margin-right: 8px;
+    flex-shrink: 0;
+  }
+  .permissions-modal .permissions-role-item {
+    padding: 14px 16px;
+    font-size: 16px;
+    border-radius: 0;
+  }
+
+  /* --- Safe Areas --- */
+  .user-bar {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .voice-controls {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* --- Touch Targets --- */
+  .channel-item {
+    min-height: 38px;
+  }
+
+  /* --- Scrollbar: hide on mobile --- */
+  ::-webkit-scrollbar {
+    width: 0;
+  }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 
 export default function ScreenSharePicker() {
   const [sources, setSources] = useState<ScreenShareSource[] | null>(null);
@@ -33,7 +34,7 @@ export default function ScreenSharePicker() {
   const screens = sources.filter((s) => s.isScreen);
   const windows = sources.filter((s) => !s.isScreen);
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={handleOverlayClick}>
       <div className="screen-share-picker-modal">
         <div className="screen-share-picker-header">
@@ -96,6 +97,7 @@ export default function ScreenSharePicker() {
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

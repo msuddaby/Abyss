@@ -231,7 +231,7 @@ export function useSignalRListeners() {
         // Self: always hear own join sound (just joined this channel)
         // Others: only if in the same voice channel and not deafened
         if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
-          playVoiceSound(joinSoundUrl, `${import.meta.env.BASE_URL}sounds/voice-join.mp3`);
+          playVoiceSound(joinSoundUrl, '/sounds/voice-join.mp3');
         }
       });
 
@@ -241,7 +241,7 @@ export function useSignalRListeners() {
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
         if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
-          playVoiceSound(leaveSoundUrl, `${import.meta.env.BASE_URL}sounds/voice-leave.mp3`);
+          playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.mp3');
         }
       });
 

@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Capacitor - built web assets synced into native projects
+ios/App/App/public
+android/app/src/main/assets/public
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

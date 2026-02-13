@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useServerStore } from '@abyss/shared';
 
 export default function JoinServerModal({ onClose }: { onClose: () => void }) {
@@ -16,7 +17,7 @@ export default function JoinServerModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  return (
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Join a Server</h2>
@@ -32,6 +33,7 @@ export default function JoinServerModal({ onClose }: { onClose: () => void }) {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

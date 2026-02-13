@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api, getApiBase, useServerStore, useAuthStore, useFriendStore, useDmStore, useMessageStore, useToastStore, getNameplateStyle } from '@abyss/shared';
 import type { User } from '@abyss/shared';
 
@@ -25,16 +26,6 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
       useFriendStore.getState().getFriendStatus(userId).then(setFriendStatus).catch(console.error);
     }
   }, [userId, currentUser?.id]);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest('.user-profile-card')) {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
 
   if (!user) return null;
 
@@ -101,54 +92,57 @@ export default function UserProfileCard({ userId, position, onClose }: Props) {
 
   const friendBtnDisabled = actionLoading || (friendStatus?.status === 'pending' && friendStatus.isOutgoing);
 
-  return (
-    <div className="user-profile-card" style={style}>
-      <div className="profile-card-banner" />
-      <div className="profile-card-avatar">
-        {avatarUrl ? (
-          <img src={avatarUrl} alt={user.displayName} />
-        ) : (
-          <span>{user.displayName.charAt(0).toUpperCase()}</span>
-        )}
-      </div>
-      <div className="profile-card-body">
-        <div className="profile-card-name" style={getNameplateStyle(user)}>{user.displayName}</div>
-        <div className="profile-card-status">{user.status || ''}</div>
-        <div className="profile-card-username">@{user.username}</div>
-        {nonDefaultRoles.length > 0 && (
-          <div className="profile-card-roles">
-            {nonDefaultRoles.map((role) => (
-              <span key={role.id} className="role-pill">
-                <span className="role-pill-dot" style={{ background: role.color }} />
-                {role.name}
+  return createPortal(
+    <div className="profile-card-overlay" onMouseDown={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }}>
+      <div className="user-profile-card" style={style} onMouseDown={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
+        <div className="profile-card-banner" />
+        <div className="profile-card-avatar">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={user.displayName} />
+          ) : (
+            <span>{user.displayName.charAt(0).toUpperCase()}</span>
+          )}
+        </div>
+        <div className="profile-card-body">
+          <div className="profile-card-name" style={getNameplateStyle(user)}>{user.displayName}</div>
+          <div className="profile-card-status">{user.status || ''}</div>
+          <div className="profile-card-username">@{user.username}</div>
+          {nonDefaultRoles.length > 0 && (
+            <div className="profile-card-roles">
+              {nonDefaultRoles.map((role) => (
+                <span key={role.id} className="role-pill">
+                  <span className="role-pill-dot" style={{ background: role.color }} />
+                  {role.name}
+                </span>
+              ))}
+            </div>
+          )}
+          {member?.isOwner && (
+            <div className="profile-card-roles">
+              <span className="role-pill">
+                <span className="role-pill-dot" style={{ background: '#faa61a' }} />
+                Owner
               </span>
-            ))}
-          </div>
-        )}
-        {member?.isOwner && (
-          <div className="profile-card-roles">
-            <span className="role-pill">
-              <span className="role-pill-dot" style={{ background: '#faa61a' }} />
-              Owner
-            </span>
-          </div>
-        )}
-        {user.bio && <div className="profile-card-bio">{user.bio}</div>}
-        {!isSelf && (
-          <div className="profile-card-actions">
-            <button className="profile-card-btn primary" onClick={handleMessage}>Message</button>
-            {friendStatus && (
-              <button
-                className={`profile-card-btn${friendStatus.status === 'accepted' ? ' danger' : ' secondary'}`}
-                onClick={handleFriendAction}
-                disabled={!!friendBtnDisabled}
-              >
-                {friendBtnLabel}
-              </button>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+          {user.bio && <div className="profile-card-bio">{user.bio}</div>}
+          {!isSelf && (
+            <div className="profile-card-actions">
+              <button className="profile-card-btn primary" onClick={handleMessage}>Message</button>
+              {friendStatus && (
+                <button
+                  className={`profile-card-btn${friendStatus.status === 'accepted' ? ' danger' : ' secondary'}`}
+                  onClick={handleFriendAction}
+                  disabled={!!friendBtnDisabled}
+                >
+                  {friendBtnLabel}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

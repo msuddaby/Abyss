@@ -1,5 +1,6 @@
 import { useRef, useLayoutEffect, useEffect } from 'react';
 import { useAuthStore, useServerStore, useDmStore, useVoiceStore, useVoiceChatStore } from '@abyss/shared';
+import { isMobile } from '../../stores/mobileStore';
 import { useContextMenuStore } from '../../stores/contextMenuStore';
 import { GROUP_ORDER } from './types';
 import type { MenuItem, ProviderContext, MenuGroup } from './types';
@@ -31,10 +32,17 @@ export default function ContextMenu() {
   const ttsUsers = useVoiceChatStore((s) => s.ttsUsers);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const openedAtRef = useRef(0);
+
+  // Track when the menu opens to ignore lingering touches from long-press
+  useEffect(() => {
+    if (isOpen) openedAtRef.current = Date.now();
+  }, [isOpen]);
 
   // Viewport clamping — mutate DOM directly to avoid setState-in-effect
+  // Skip on mobile: CSS positions it as a bottom sheet
   useLayoutEffect(() => {
-    if (!isOpen || !menuRef.current) return;
+    if (!isOpen || !menuRef.current || isMobile()) return;
     const el = menuRef.current;
     const rect = el.getBoundingClientRect();
     const margin = 8;
@@ -51,7 +59,11 @@ export default function ContextMenu() {
   // Click outside dismissal
   useEffect(() => {
     if (!isOpen) return;
-    const handle = () => close();
+    const handle = () => {
+      // Ignore synthetic mousedown from long-press touchend
+      if (Date.now() - openedAtRef.current < 500) return;
+      close();
+    };
     // setTimeout(0) so the triggering right-click doesn't immediately close
     const timer = setTimeout(() => {
       document.addEventListener('mousedown', handle);
@@ -122,53 +134,62 @@ export default function ContextMenu() {
   const volumeValue = volumeUserId ? (userVolumes.get(volumeUserId) ?? 100) : 100;
 
   return (
-    <div
-      ref={menuRef}
-      className="context-menu"
-      style={{ left: position.x, top: position.y }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      {renderGroups.map((rg, gi) => (
-        <div key={rg.group}>
-          {gi > 0 && <div className="context-menu-separator" />}
-          {rg.items.map((item) => {
-            if (item.id === 'voice-volume' && volumeUserId) {
-              return (
-                <div
-                  key={item.id}
-                  className="context-menu-volume"
-                  onClick={(e) => e.stopPropagation()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                >
-                  <div className="context-menu-volume-header">
-                    <span>User Volume</span>
-                    <span>{volumeValue}%</span>
+    <>
+      <div className="context-menu-overlay" onMouseDown={() => {
+        if (Date.now() - openedAtRef.current < 400) return;
+        close();
+      }} onTouchEnd={(e) => {
+        if (Date.now() - openedAtRef.current < 400) e.preventDefault();
+      }} />
+      <div
+        ref={menuRef}
+        className="context-menu"
+        style={isMobile() ? undefined : { left: position.x, top: position.y }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {renderGroups.map((rg, gi) => (
+          <div key={rg.group}>
+            {gi > 0 && <div className="context-menu-separator" />}
+            {rg.items.map((item) => {
+              if (item.id === 'voice-volume' && volumeUserId) {
+                return (
+                  <div
+                    key={item.id}
+                    className="context-menu-volume"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="context-menu-volume-header">
+                      <span>User Volume</span>
+                      <span>{volumeValue}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={200}
+                      value={volumeValue}
+                      onChange={(e) => setUserVolume(volumeUserId, Number(e.target.value))}
+                    />
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={200}
-                    value={volumeValue}
-                    onChange={(e) => setUserVolume(volumeUserId, Number(e.target.value))}
-                  />
-                </div>
+                );
+              }
+              return (
+                <button
+                  key={item.id}
+                  className={`context-menu-item${item.danger ? ' danger' : ''}`}
+                  onClick={() => {
+                    if (Date.now() - openedAtRef.current < 400) return;
+                    item.action();
+                    if (!item.keepOpen) close();
+                  }}
+                >
+                  {item.label}
+                </button>
               );
-            }
-            return (
-              <button
-                key={item.id}
-                className={`context-menu-item${item.danger ? ' danger' : ''}`}
-                onClick={() => {
-                  item.action();
-                  if (!item.keepOpen) close();
-                }}
-              >
-                {item.label}
-              </button>
-            );
-          })}
-        </div>
-      ))}
-    </div>
+            })}
+          </div>
+        ))}
+      </div>
+    </>
   );
 }

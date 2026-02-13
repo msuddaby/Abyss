@@ -134,7 +134,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("api", opt =>
     {
         opt.Window = TimeSpan.FromMinutes(1);
-        opt.PermitLimit = 100;
+        opt.PermitLimit = 200;
         opt.QueueLimit = 0;
     });
 

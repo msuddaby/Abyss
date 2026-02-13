@@ -5,7 +5,7 @@ import {
   useSignalRListeners, useServerStore, useDmStore, useMessageStore,
   useFriendStore,
   ensureConnected, getConnection, refreshSignalRState, rejoinActiveChannel,
-  stopConnection,
+  suspendConnection,
 } from '@abyss/shared';
 import { useEffect, useRef, useState } from 'react';
 import { initMobileAudio } from '../../src/utils/mobileAudio';
@@ -124,7 +124,7 @@ export default function MainLayout() {
       }
 
       if (nextState === 'background' || nextState === 'inactive') {
-        stopConnection().catch(() => {});
+        suspendConnection().catch(() => {});
       }
     });
 

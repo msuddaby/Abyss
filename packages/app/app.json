@@ -62,7 +62,9 @@
           "cameraPermission": false,
           "microphonePermission": "Abyss needs microphone access for voice channels"
         }
-      ]
+      ],
+      "expo-audio",
+      "expo-video"
     ],
     "platforms": [
       "ios",

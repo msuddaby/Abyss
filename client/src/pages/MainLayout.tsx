@@ -15,6 +15,7 @@ import ContextMenu from '../components/contextMenu/ContextMenu';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
+import { useMobileStore, isMobile } from '../stores/mobileStore';
 
 export default function MainLayout() {
   const activeChannel = useServerStore((s) => s.activeChannel);
@@ -30,6 +31,11 @@ export default function MainLayout() {
   const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
   const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
+  const leftDrawerOpen = useMobileStore((s) => s.leftDrawerOpen);
+  const rightDrawerOpen = useMobileStore((s) => s.rightDrawerOpen);
+  const openLeftDrawer = useMobileStore((s) => s.openLeftDrawer);
+  const openRightDrawer = useMobileStore((s) => s.openRightDrawer);
+  const closeDrawers = useMobileStore((s) => s.closeDrawers);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -37,6 +43,10 @@ export default function MainLayout() {
   });
 
   const toggleMemberList = () => {
+    if (isMobile()) {
+      openRightDrawer();
+      return;
+    }
     setMemberListVisible((prev) => {
       localStorage.setItem('memberListVisible', String(!prev));
       return !prev;
@@ -61,10 +71,20 @@ export default function MainLayout() {
       ? 'Reconnecting to live updates...'
       : 'Live updates offline. Retrying...';
 
+  const hamburgerButton = (
+    <button className="mobile-hamburger" onClick={openLeftDrawer} aria-label="Open menu">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" />
+      </svg>
+    </button>
+  );
+
   return (
     <div className="main-layout">
-      <ServerSidebar />
-      <ChannelSidebar />
+      <div className={`left-drawer${leftDrawerOpen ? ' open' : ''}`}>
+        <ServerSidebar />
+        <ChannelSidebar />
+      </div>
       <div className="content-area">
         {showSignalRBanner && (
           <div className={`signalr-status-banner ${signalRStatus}`}>
@@ -75,6 +95,7 @@ export default function MainLayout() {
         {isDmMode && activeDmChannel ? (
           <>
             <div className="channel-header">
+              {hamburgerButton}
               <span className="channel-dm-icon">@</span>
               <span className="channel-name">{activeDmChannel.otherUser.displayName}</span>
               <div className="channel-header-actions">
@@ -101,12 +122,21 @@ export default function MainLayout() {
           activeChannel.type === 'Text' ? (
             <>
               <div className="channel-header">
+                {hamburgerButton}
                 <span className="channel-hash">#</span>
                 <span className="channel-name">{activeChannel.name}</span>
                 <div className="channel-header-actions">
                   <button
                     className={`search-header-btn${searchIsOpen ? ' active' : ''}`}
-                    onClick={() => searchIsOpen ? closeSearch() : openSearch()}
+                    onClick={() => {
+                      if (searchIsOpen) {
+                        closeSearch();
+                        if (isMobile()) closeDrawers();
+                      } else {
+                        openSearch();
+                        if (isMobile()) openRightDrawer();
+                      }
+                    }}
                     title="Search messages"
                   >
                     🔍?
@@ -119,7 +149,7 @@ export default function MainLayout() {
                     📌
                   </button>
                   <button
-                    className={`member-list-toggle-btn${memberListVisible ? ' active' : ''}`}
+                    className={`member-list-toggle-btn${memberListVisible && !isMobile() ? ' active' : ''}`}
                     onClick={toggleMemberList}
                     title="Toggle member list"
                   >
@@ -140,11 +170,12 @@ export default function MainLayout() {
           ) : (
             <div className="voice-channel-view">
               <div className="channel-header">
+                {hamburgerButton}
                 <span className="channel-voice-icon">🔊</span>
                 <span className="channel-name">{activeChannel.name}</span>
                 <div className="channel-header-actions">
                   <button
-                    className={`member-list-toggle-btn${memberListVisible ? ' active' : ''}`}
+                    className={`member-list-toggle-btn${memberListVisible && !isMobile() ? ' active' : ''}`}
                     onClick={toggleMemberList}
                     title="Toggle member list"
                   >
@@ -157,6 +188,7 @@ export default function MainLayout() {
           )
         ) : (
           <div className="no-channel">
+            {hamburgerButton}
             <h2>Welcome to Abyss</h2>
             <p>Select a channel to start chatting</p>
           </div>
@@ -165,7 +197,12 @@ export default function MainLayout() {
           <WatchPartyPlayer mini={activeChannel?.id !== voiceChannelId || activeChannel?.type !== 'Voice'} />
         )}
       </div>
-      {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : memberListVisible ? <MemberList /> : null)}
+      <div className={`right-drawer${rightDrawerOpen ? ' open' : ''}`}>
+        {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : <MemberList />)}
+      </div>
+      {(leftDrawerOpen || rightDrawerOpen) && (
+        <div className="mobile-drawer-overlay" onClick={() => { closeDrawers(); if (searchIsOpen) closeSearch(); }} />
+      )}
       <VoiceChatOverlay />
       <ContextMenu />
       {isBrowsingLibrary && <MediaLibraryBrowser onClose={() => setIsBrowsingLibrary(false)} />}
