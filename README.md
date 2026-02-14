@@ -84,6 +84,12 @@ cp .env.example .env
 
 Key differences from dev: `POSTGRES_HOST=db` (Docker service name), `POSTGRES_PORT=5432`, strong passwords, HTTPS origins.
 
+The desktop app uses a custom `app://abyss` origin, so production `CORS_ORIGINS` must include it alongside your web origin:
+
+```
+CORS_ORIGINS=https://your-domain.com,app://abyss
+```
+
 ## Development
 
 ### Prerequisites

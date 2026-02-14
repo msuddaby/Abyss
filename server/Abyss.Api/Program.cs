@@ -207,8 +207,8 @@ else
         {
             policy.WithOrigins(allowedOrigins)
                 .AllowCredentials()
-                .WithMethods("GET", "POST", "PUT", "PATCH", "DELETE")
-                .WithHeaders("content-type", "authorization", "x-requested-with");
+                .AllowAnyMethod()
+                .AllowAnyHeader();
         });
     });
 }
