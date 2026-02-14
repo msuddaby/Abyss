@@ -2532,13 +2532,13 @@ export function useWebRTC() {
     });
   }, [isDeafened]);
 
-  // Sync per-user volume from store to GainNodes
+  // Sync per-user volume from store to audio elements & GainNodes
   useEffect(() => {
     let prevVolumes = useVoiceStore.getState().userVolumes;
     const unsub = useVoiceStore.subscribe((state) => {
       if (state.userVolumes !== prevVolumes) {
         prevVolumes = state.userVolumes;
-        for (const [peerId] of gainNodes) {
+        for (const [peerId] of audioElements) {
           const vol = state.userVolumes.get(peerId) ?? 100;
           applyUserVolume(peerId, vol);
         }

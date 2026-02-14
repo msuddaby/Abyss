@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 // ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
+  cspNonce: ipcRenderer.sendSync('get-csp-nonce') as string,
 
   // PTT key management
   registerPttKey: (key: string) => {

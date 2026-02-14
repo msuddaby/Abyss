@@ -20,6 +20,8 @@ function ensureYouTubeAPI(): Promise<void> {
 
     const script = document.createElement('script');
     script.src = 'https://www.youtube.com/iframe_api';
+    const nonce = window.electron?.cspNonce;
+    if (nonce) script.nonce = nonce;
     document.head.appendChild(script);
   });
 }

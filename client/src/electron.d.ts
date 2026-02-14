@@ -34,6 +34,7 @@ interface ScreenShareSource {
 interface Window {
   electron?: {
     platform: string;
+    cspNonce: string;
 
     // PTT key management
     registerPttKey: (key: string) => void;

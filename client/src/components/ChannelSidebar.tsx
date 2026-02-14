@@ -66,17 +66,23 @@ export default function ChannelSidebar() {
 
   // When activeChannel changes (including restore from localStorage), join + fetch messages
   useEffect(() => {
-    if (activeChannel && activeChannel.type === 'Text' && currentChannelId !== activeChannel.id) {
-      const switchChannel = async () => {
-        if (currentChannelId) {
-          await leaveChannel(currentChannelId);
-        }
-        // Join SignalR group BEFORE fetching messages so any message sent
-        // during/after the fetch is caught by the group subscription
-        await joinChannel(activeChannel.id);
+    if (activeChannel && activeChannel.type === 'Text') {
+      if (currentChannelId !== activeChannel.id) {
+        const switchChannel = async () => {
+          if (currentChannelId) {
+            await leaveChannel(currentChannelId);
+          }
+          // Join SignalR group BEFORE fetching messages so any message sent
+          // during/after the fetch is caught by the group subscription
+          await joinChannel(activeChannel.id);
+          fetchMessages(activeChannel.id);
+        };
+        switchChannel().catch(console.error);
+      } else {
+        // Returning to the same text channel (e.g., after viewing a voice channel).
+        // MessageList was unmounted so messages received while away were lost — refetch.
         fetchMessages(activeChannel.id);
-      };
-      switchChannel().catch(console.error);
+      }
     }
   }, [activeChannel]);
 

@@ -267,11 +267,13 @@ export class UpdateManager {
       throw new Error('No update downloaded to install');
     }
 
-    // Destroy all windows first to bypass the close-to-tray handler
-    // (which calls event.preventDefault() and hides instead of closing)
-    BrowserWindow.getAllWindows().forEach(w => w.destroy());
-
+    // quitAndInstall spawns the new process synchronously, then calls
+    // app.quit(). On Linux the old process often fails to terminate
+    // (tray icon / open handles keep the event loop alive), leaving a
+    // frozen ghost window. Force-exit immediately after the new process
+    // is spawned to guarantee the old one dies.
     autoUpdater.quitAndInstall(false, true);
+    app.exit(0);
   }
 
   /**

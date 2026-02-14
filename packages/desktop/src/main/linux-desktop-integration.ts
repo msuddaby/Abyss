@@ -26,10 +26,24 @@ export function installDesktopEntry(): void {
       fs.copyFileSync(iconSource, iconDest);
     }
 
+    // Create/update a stable symlink so the .desktop Exec path doesn't break
+    // when electron-updater renames the AppImage on each version bump
+    // (e.g. Abyss-1.2.2.AppImage → Abyss-1.2.4.AppImage).
+    const stablePath = path.join(path.dirname(appImagePath), 'Abyss.AppImage');
+    let execPath = appImagePath;
+
+    if (path.resolve(appImagePath) !== path.resolve(stablePath)) {
+      try {
+        fs.unlinkSync(stablePath);
+      } catch { /* doesn't exist yet */ }
+      fs.symlinkSync(appImagePath, stablePath);
+      execPath = stablePath;
+    }
+
     const desktopEntry = `[Desktop Entry]
 Name=Abyss
 Comment=Voice and text chat
-Exec="${appImagePath}" %U
+Exec="${execPath}" %U
 Icon=abyss-desktop
 Terminal=false
 Type=Application
@@ -42,7 +56,7 @@ X-AppImage-Version=${app.getVersion()}
     const desktopFilePath = path.join(applicationsDir, 'abyss-desktop.desktop');
     fs.writeFileSync(desktopFilePath, desktopEntry, { mode: 0o755 });
 
-    log.info(`Desktop entry installed: ${desktopFilePath} -> ${appImagePath}`);
+    log.info(`Desktop entry installed: ${desktopFilePath} -> ${execPath} (actual: ${appImagePath})`);
   } catch (error) {
     log.error('Failed to install desktop entry:', error);
   }
