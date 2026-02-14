@@ -77,7 +77,7 @@ function createWindow() {
     const csp = [
       "default-src 'self'",
       process.env.NODE_ENV === 'development'
-        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com"
         : "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com",
       "style-src 'self' 'unsafe-inline'",
       "connect-src 'self' http: https: ws: wss:",

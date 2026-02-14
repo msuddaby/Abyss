@@ -32,6 +32,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [isPiP, setIsPiP] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('wp-volume');
@@ -77,6 +78,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
 
     // Destroy previous adapter
     adapterRef.current?.destroy();
+    setPlayerError(null);
 
     const adapter = isYouTube ? new YouTubePlayerAdapter() : new PlexPlayerAdapter();
     adapter.initialize(containerRef.current, playbackUrl);
@@ -89,6 +91,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
 
     adapter.onPlaying(() => setIsPlaying(true));
     adapter.onPause(() => setIsPlaying(false));
+    adapter.onError((message) => setPlayerError(message));
 
     adapter.onEnded(() => {
       if (isHost) handleNextInQueue();
@@ -277,7 +280,15 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
             onClick={mini ? handleGoToChannel : undefined}
           >
             {isPiP && <div className="wp-pip-indicator">Picture-in-Picture</div>}
-            {!mini && !isPlaying && playbackUrl && !isPiP && (
+            {playerError && !mini && (
+              <div className="wp-error-overlay">
+                <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                </svg>
+                <span className="wp-error-message">{playerError}</span>
+              </div>
+            )}
+            {!mini && !isPlaying && playbackUrl && !isPiP && !playerError && (
               <div className="wp-pause-overlay">
                 <svg className="wp-pause-icon" viewBox="0 0 24 24" fill="currentColor" width="64" height="64">
                   <rect x="6" y="4" width="4" height="16" rx="1" />

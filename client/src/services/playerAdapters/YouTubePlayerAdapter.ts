@@ -36,6 +36,7 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   private playingCb: (() => void) | null = null;
   private pauseCb: (() => void) | null = null;
   private seekedCb: (() => void) | null = null;
+  private errorCb: ((message: string) => void) | null = null;
   private lastState: number = -1;
 
   initialize(container: HTMLElement, videoId: string): void {
@@ -72,10 +73,15 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
           },
           onError: (event) => {
             const code = event.data;
-            if (code === 101 || code === 150) {
+            if (code === 101 || code === 150 || code === 153) {
               console.warn('YouTube: video embedding disabled by owner (error', code, ')');
+              this.errorCb?.('This video cannot be embedded — the owner has disabled external playback.');
+            } else if (code === 100) {
+              console.warn('YouTube: video not found (error', code, ')');
+              this.errorCb?.('Video not found — it may have been removed.');
             } else {
               console.error('YouTube player error:', code);
+              this.errorCb?.(`YouTube playback error (code ${code}).`);
             }
           },
         },
@@ -166,6 +172,7 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   onPlaying(cb: () => void): void { this.playingCb = cb; }
   onPause(cb: () => void): void { this.pauseCb = cb; }
   onSeeked(cb: () => void): void { this.seekedCb = cb; }
+  onError(cb: (message: string) => void): void { this.errorCb = cb; }
 
   getVideoElement(): HTMLVideoElement | null {
     // Cross-origin iframe — no direct video element access

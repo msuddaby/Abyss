@@ -6875,6 +6875,30 @@
   object-fit: contain;
 }
 
+.wp-error-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 3;
+  color: var(--text-secondary);
+}
+
+.wp-error-overlay svg {
+  opacity: 0.6;
+}
+
+.wp-error-message {
+  font-size: 14px;
+  max-width: 300px;
+  text-align: center;
+  line-height: 1.4;
+}
+
 .wp-pause-overlay {
   position: absolute;
   inset: 0;

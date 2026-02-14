@@ -12,6 +12,7 @@ export interface PlayerAdapter {
   onPlaying(cb: () => void): void;
   onPause(cb: () => void): void;
   onSeeked(cb: () => void): void;
+  onError(cb: (message: string) => void): void;
   getVideoElement(): HTMLVideoElement | null;
   destroy(): void;
 }
