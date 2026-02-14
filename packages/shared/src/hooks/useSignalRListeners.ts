@@ -600,9 +600,45 @@ export function useSignalRListeners() {
         }).catch(console.error);
         c.invoke('GetServerVoiceSharers', activeServer.id).then((data: Record<string, string[]>) => {
           useServerStore.getState().setVoiceChannelSharers(data);
+
+          // Also reconcile voiceStore.activeSharers for the current voice channel
+          const vs = useVoiceStore.getState();
+          const channelId = vs.currentChannelId;
+          if (channelId) {
+            const serverSharerIds = new Set(data[channelId] ?? []);
+            const localSharerIds = new Set(vs.activeSharers.keys());
+            const drifted =
+              serverSharerIds.size !== localSharerIds.size ||
+              [...serverSharerIds].some((id) => !localSharerIds.has(id));
+            if (drifted) {
+              const reconciled = new Map<string, string>();
+              for (const uid of serverSharerIds) {
+                reconciled.set(uid, vs.participants.get(uid) ?? uid);
+              }
+              vs.setActiveSharers(reconciled);
+            }
+          }
         }).catch(console.error);
         c.invoke('GetServerVoiceCameras', activeServer.id).then((data: Record<string, string[]>) => {
           useServerStore.getState().setVoiceChannelCameras(data);
+
+          // Reconcile voiceStore.activeCameras for the current voice channel
+          const vs = useVoiceStore.getState();
+          const channelId = vs.currentChannelId;
+          if (channelId) {
+            const serverCamIds = new Set(data[channelId] ?? []);
+            const localCamIds = new Set(vs.activeCameras.keys());
+            const drifted =
+              serverCamIds.size !== localCamIds.size ||
+              [...serverCamIds].some((id) => !localCamIds.has(id));
+            if (drifted) {
+              const reconciled = new Map<string, string>();
+              for (const uid of serverCamIds) {
+                reconciled.set(uid, vs.participants.get(uid) ?? uid);
+              }
+              vs.setActiveCameras(reconciled);
+            }
+          }
         }).catch(console.error);
       }
     }, 30_000);

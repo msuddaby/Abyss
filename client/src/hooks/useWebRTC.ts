@@ -54,6 +54,94 @@ let rejoinInProgress = false;
 // any async work enqueued before cleanup can detect the session ended and bail.
 let voiceSessionId = 0;
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Module-level PTT listener management.
+// Uses a Zustand subscription so the lifecycle is independent of which React
+// components happen to mount/unmount `useWebRTC()`.
+// ──────────────────────────────────────────────────────────────────────────────
+let pttCleanup: (() => void) | null = null;
+
+function teardownPttListeners() {
+  if (pttCleanup) {
+    pttCleanup();
+    pttCleanup = null;
+  }
+}
+
+function setupPttListeners(pttKey: string) {
+  teardownPttListeners();
+  const { setPttActive } = useVoiceStore.getState();
+  const isElectronEnv = typeof window !== "undefined" && window.electron;
+
+  if (isElectronEnv) {
+    window.electron!.registerPttKey(pttKey);
+    const unsubPress = window.electron!.onGlobalPttPress(() => setPttActive(true));
+    const unsubRelease = window.electron!.onGlobalPttRelease(() => setPttActive(false));
+    pttCleanup = () => {
+      unsubPress();
+      unsubRelease();
+      window.electron!.unregisterPttKey();
+      setPttActive(false);
+    };
+  } else {
+    const isMouseBind = pttKey.startsWith("Mouse");
+    const mouseButton = isMouseBind ? parseInt(pttKey.slice(5), 10) : -1;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (!isMouseBind && e.key === pttKey) setPttActive(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!isMouseBind && e.key === pttKey) setPttActive(false);
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      if (isMouseBind && e.button === mouseButton) setPttActive(true);
+    };
+    const onMouseUp = (e: MouseEvent) => {
+      if (isMouseBind && e.button === mouseButton) setPttActive(false);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mouseup", onMouseUp);
+    pttCleanup = () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mouseup", onMouseUp);
+      setPttActive(false);
+    };
+  }
+}
+
+// Subscribe to the store slices that determine whether PTT listeners should be
+// active and which key to bind. The subscription fires synchronously whenever
+// any of the relevant values change.
+{
+  let prevChannelId = useVoiceStore.getState().currentChannelId;
+  let prevMode = useVoiceStore.getState().voiceMode;
+  let prevKey = useVoiceStore.getState().pttKey;
+
+  const syncPtt = () => {
+    const shouldBeActive = !!prevChannelId && prevMode === "push-to-talk";
+    if (shouldBeActive) {
+      setupPttListeners(prevKey);
+    } else {
+      teardownPttListeners();
+    }
+  };
+
+  useVoiceStore.subscribe((state) => {
+    const { currentChannelId, voiceMode, pttKey } = state;
+    if (currentChannelId === prevChannelId && voiceMode === prevMode && pttKey === prevKey) return;
+    prevChannelId = currentChannelId;
+    prevMode = voiceMode;
+    prevKey = pttKey;
+    syncPtt();
+  });
+}
+
 // All state is module-level so it's shared across hook instances
 const peers: Map<string, RTCPeerConnection> = new Map();
 let localStream: MediaStream | null = null;
@@ -162,25 +250,56 @@ function stopStatsCollection() {
 const iceReconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 /**
- * Fix DTLS role in answer SDP for renegotiation on existing connections.
+ * Determine the established local DTLS role from a peer connection.
+ * Returns "active" | "passive" | null (null if no established session).
+ */
+function getEstablishedDtlsRole(pc: RTCPeerConnection): string | null {
+  const prevLocal = pc.currentLocalDescription;
+  if (!prevLocal) return null;
+
+  const localSetupMatch = prevLocal.sdp.match(/a=setup:(\w+)/);
+  if (!localSetupMatch) return null;
+
+  const role = localSetupMatch[1];
+  // actpass means we were the offerer — actual role was determined by the remote answer.
+  // Check currentRemoteDescription to find out what role we ended up with.
+  if (role === "actpass") {
+    const prevRemote = pc.currentRemoteDescription;
+    if (!prevRemote) return null;
+    const remoteSetupMatch = prevRemote.sdp.match(/a=setup:(\w+)/);
+    if (!remoteSetupMatch) return null;
+    // Remote chose active → we are passive (server). Remote chose passive → we are active (client).
+    return remoteSetupMatch[1] === "active" ? "passive" : "active";
+  }
+  return role; // "active" or "passive"
+}
+
+/**
+ * Fix DTLS role in a remote answer SDP for renegotiation on existing connections.
  * Chrome throws "Failed to set SSL role for the transport" when the answer's
  * a=setup: line conflicts with the established DTLS transport role — this
  * happens when offer direction flips (the original answerer becomes the offerer).
  */
 function fixDtlsRoleInAnswerSdp(pc: RTCPeerConnection, answerSdp: string): string {
-  const prevLocal = pc.currentLocalDescription;
-  if (!prevLocal) return answerSdp;
+  const ourRole = getEstablishedDtlsRole(pc);
+  if (!ourRole) return answerSdp;
 
-  const localSetupMatch = prevLocal.sdp.match(/a=setup:(\w+)/);
-  if (!localSetupMatch) return answerSdp;
-
-  const ourPrevRole = localSetupMatch[1];
-  // actpass or passive in our prev local → we were the DTLS server
-  // active → we were the DTLS client
-  const weAreServer = ourPrevRole === "actpass" || ourPrevRole === "passive";
-  const requiredRemoteRole = weAreServer ? "active" : "passive";
-
+  // Remote's role must be the opposite of ours
+  const requiredRemoteRole = ourRole === "passive" ? "active" : "passive";
   return answerSdp.replace(/a=setup:\w+/g, `a=setup:${requiredRemoteRole}`);
+}
+
+/**
+ * Fix DTLS role in a locally-created answer SDP before setLocalDescription.
+ * createAnswer() defaults to a=setup:passive, but if our established DTLS role
+ * is "active" (we were originally the offerer/client), setLocalDescription will
+ * fail with "Failed to set SSL role for the transport".
+ */
+function fixDtlsRoleInLocalAnswerSdp(pc: RTCPeerConnection, answerSdp: string): string {
+  const ourRole = getEstablishedDtlsRole(pc);
+  if (!ourRole) return answerSdp;
+
+  return answerSdp.replace(/a=setup:\w+/g, `a=setup:${ourRole}`);
 }
 
 // Signaling queue — serializes WebRTC signaling operations per peer to prevent races
@@ -2125,6 +2244,7 @@ function setupSignalRListeners() {
             );
             await applyPendingCandidates(fromUserId);
             const answer = await pc.createAnswer();
+            answer.sdp = fixDtlsRoleInLocalAnswerSdp(pc, answer.sdp!);
             await pc.setLocalDescription(answer);
             console.log(`Sending renegotiation answer to ${fromUserId}`);
             await conn.invoke(
@@ -2375,85 +2495,15 @@ export function useWebRTC() {
   const isDeafened = useVoiceStore((s) => s.isDeafened);
   const voiceMode = useVoiceStore((s) => s.voiceMode);
   const isPttActive = useVoiceStore((s) => s.isPttActive);
-  const pttKey = useVoiceStore((s) => s.pttKey);
   const inputDeviceId = useVoiceStore((s) => s.inputDeviceId);
   const outputDeviceId = useVoiceStore((s) => s.outputDeviceId);
   const noiseSuppression = useVoiceStore((s) => s.noiseSuppression);
   const echoCancellation = useVoiceStore((s) => s.echoCancellation);
   const autoGainControl = useVoiceStore((s) => s.autoGainControl);
-  const setPttActive = useVoiceStore((s) => s.setPttActive);
   const setCurrentChannel = useVoiceStore((s) => s.setCurrentChannel);
   const setParticipants = useVoiceStore((s) => s.setParticipants);
 
-  // PTT key/mouse listeners
-  useEffect(() => {
-    if (!currentChannelId || voiceMode !== "push-to-talk") {
-      setPttActive(false);
-      return;
-    }
-
-    const isElectron = typeof window !== 'undefined' && window.electron;
-
-    // Use global shortcuts in Electron, window-level listeners in browser
-    if (isElectron) {
-      // Register global PTT key with Electron
-      window.electron!.registerPttKey(pttKey);
-
-      // Listen for global PTT events
-      const unsubPress = window.electron!.onGlobalPttPress(() => {
-        setPttActive(true);
-      });
-
-      const unsubRelease = window.electron!.onGlobalPttRelease(() => {
-        setPttActive(false);
-      });
-
-      return () => {
-        unsubPress();
-        unsubRelease();
-        window.electron!.unregisterPttKey();
-        setPttActive(false);
-      };
-    } else {
-      // Browser: use window-level event listeners (original implementation)
-      const isMouseBind = pttKey.startsWith("Mouse");
-      const mouseButton = isMouseBind ? parseInt(pttKey.slice(5), 10) : -1;
-
-      const onKeyDown = (e: KeyboardEvent) => {
-        if (e.repeat) return;
-        if (!isMouseBind && e.key === pttKey) {
-          setPttActive(true);
-        }
-      };
-      const onKeyUp = (e: KeyboardEvent) => {
-        if (!isMouseBind && e.key === pttKey) {
-          setPttActive(false);
-        }
-      };
-      const onMouseDown = (e: MouseEvent) => {
-        if (isMouseBind && e.button === mouseButton) {
-          setPttActive(true);
-        }
-      };
-      const onMouseUp = (e: MouseEvent) => {
-        if (isMouseBind && e.button === mouseButton) {
-          setPttActive(false);
-        }
-      };
-
-      window.addEventListener("keydown", onKeyDown);
-      window.addEventListener("keyup", onKeyUp);
-      window.addEventListener("mousedown", onMouseDown);
-      window.addEventListener("mouseup", onMouseUp);
-      return () => {
-        window.removeEventListener("keydown", onKeyDown);
-        window.removeEventListener("keyup", onKeyUp);
-        window.removeEventListener("mousedown", onMouseDown);
-        window.removeEventListener("mouseup", onMouseUp);
-        setPttActive(false);
-      };
-    }
-  }, [currentChannelId, voiceMode, pttKey, setPttActive]);
+  // PTT listeners are now module-level (see setupPttListeners / useVoiceStore.subscribe above).
 
   // Mute/unmute local tracks (accounts for PTT mode)
   useEffect(() => {
