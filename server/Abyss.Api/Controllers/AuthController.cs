@@ -119,18 +119,42 @@ public class AuthController : ControllerBase
             .Include(rt => rt.User)
             .FirstOrDefaultAsync(rt => rt.TokenHash == tokenHash);
 
-        if (storedToken == null || !storedToken.IsActive || storedToken.User == null)
+        if (storedToken == null || storedToken.User == null)
             return Unauthorized("Invalid refresh token");
 
-        var newRefresh = CreateRefreshToken(storedToken.User, out var newRefreshToken);
-        storedToken.RevokedAt = DateTime.UtcNow;
-        storedToken.ReplacedByTokenId = newRefresh.Id;
+        if (!storedToken.IsActive)
+        {
+            // Grace period: if this token was revoked by rotation (not logout) within
+            // the last 30 seconds, the client likely never received the response.
+            // Follow the replacement chain and issue a new token pair.
+            if (storedToken.RevokedAt.HasValue
+                && storedToken.ReplacedByTokenId.HasValue
+                && (DateTime.UtcNow - storedToken.RevokedAt.Value).TotalSeconds <= 30)
+            {
+                var currentToken = await FollowReplacementChainAsync(storedToken.ReplacedByTokenId.Value);
+                if (currentToken != null)
+                    currentToken.RevokedAt = DateTime.UtcNow;
 
-        _db.RefreshTokens.Add(newRefresh);
+                var newRefresh = CreateRefreshToken(storedToken.User, out var newRefreshToken);
+                _db.RefreshTokens.Add(newRefresh);
+                await _db.SaveChangesAsync();
+
+                var accessToken = _tokenService.CreateToken(storedToken.User);
+                return Ok(new AuthResponse(accessToken, newRefreshToken, ToUserDto(storedToken.User)));
+            }
+
+            return Unauthorized("Invalid refresh token");
+        }
+
+        var newRotatedRefresh = CreateRefreshToken(storedToken.User, out var newRotatedRefreshToken);
+        storedToken.RevokedAt = DateTime.UtcNow;
+        storedToken.ReplacedByTokenId = newRotatedRefresh.Id;
+
+        _db.RefreshTokens.Add(newRotatedRefresh);
         await _db.SaveChangesAsync();
 
-        var accessToken = _tokenService.CreateToken(storedToken.User);
-        return Ok(new AuthResponse(accessToken, newRefreshToken, ToUserDto(storedToken.User)));
+        var newAccessToken = _tokenService.CreateToken(storedToken.User);
+        return Ok(new AuthResponse(newAccessToken, newRotatedRefreshToken, ToUserDto(storedToken.User)));
     }
 
     [HttpPost("logout")]
@@ -219,6 +243,16 @@ public class AuthController : ControllerBase
         var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == InviteOnlyKey);
         if (row == null) return false;
         return bool.TryParse(row.Value, out var value) && value;
+    }
+
+    /// Follows the ReplacedByTokenId chain to find the latest token in the sequence.
+    private async Task<RefreshToken?> FollowReplacementChainAsync(Guid tokenId)
+    {
+        var token = await _db.RefreshTokens.FindAsync(tokenId);
+        const int maxDepth = 10;
+        for (var i = 0; i < maxDepth && token?.ReplacedByTokenId != null; i++)
+            token = await _db.RefreshTokens.FindAsync(token.ReplacedByTokenId);
+        return token;
     }
 
     private async Task<AuthResponse> CreateAuthResponseAsync(AppUser user)

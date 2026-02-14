@@ -90,7 +90,15 @@ export async function refreshAccessToken(): Promise<string | null> {
     }
 
     // Same token, retry once more (covers transient network blips).
-    return await doRefresh();
+    const retryToken = await doRefresh();
+    if (retryToken) return retryToken;
+
+    // Refresh has definitively failed. Clear tokens and trigger logout now,
+    // so parallel requests don't each independently discover the failure.
+    storage.removeItem('token');
+    storage.removeItem('refreshToken');
+    if (onUnauthorized) onUnauthorized();
+    return null;
   })();
   try {
     return await refreshPromise;

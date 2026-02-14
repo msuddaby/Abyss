@@ -78,8 +78,8 @@ function setupScreenShareHandler(win: BrowserWindow) {
 
 function createWindow() {
   // Serve production app files via custom 'app://' protocol so the renderer
-  // gets a real origin (app://abyss) instead of file://. This fixes YouTube
-  // embedding and gives us a proper secure context.
+  // gets a real origin (app://abyss) instead of file://. This gives us a
+  // proper secure context and avoids null-origin CORS issues.
   if (process.env.NODE_ENV !== 'development') {
     const clientDir = app.isPackaged
       ? path.join(process.resourcesPath, 'dist')
@@ -102,6 +102,20 @@ function createWindow() {
       return net.fetch(`file://${filePath}`);
     });
   }
+
+  // YouTube rejects embeds from non-HTTP(S) origins and also blocks self-referral
+  // (Referer containing "youtube"). From app://, the browser sends no Referer at
+  // all, so we always set a valid non-YouTube HTTPS Referer.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://*.youtube.com/*', 'https://*.youtube-nocookie.com/*'] },
+    (details, callback) => {
+      const ref = details.requestHeaders['Referer'];
+      if (!ref || !ref.startsWith('https://') || ref.includes('youtube')) {
+        details.requestHeaders['Referer'] = 'https://abyss-player.app/';
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    }
+  );
 
   // Set Content Security Policy (only for our own pages, not third-party iframes)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -126,7 +140,7 @@ function createWindow() {
       "media-src 'self' blob: mediastream: http: https:",
       "font-src 'self' data:",
       "worker-src 'self' blob:",
-      "frame-src 'self' https://www.youtube.com",
+      "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com",
     ].join('; ');
 
     callback({

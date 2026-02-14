@@ -30,7 +30,7 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   private pendingActions: (() => void)[] = [];
   private pollId: ReturnType<typeof setInterval> | null = null;
   private container: HTMLElement | null = null;
-  private playerDiv: HTMLDivElement | null = null;
+  private iframe: HTMLIFrameElement | null = null;
   private endedCb: (() => void) | null = null;
   private timeUpdateCb: ((timeMs: number) => void) | null = null;
   private playingCb: (() => void) | null = null;
@@ -42,25 +42,38 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   initialize(container: HTMLElement, videoId: string): void {
     this.container = container;
 
-    this.playerDiv = document.createElement('div');
-    this.playerDiv.className = 'wp-yt-player';
-    container.appendChild(this.playerDiv);
+    // Build the iframe ourselves instead of letting YT.Player auto-generate it.
+    // The IFrame API auto-appends origin=window.location.origin to the embed URL,
+    // which YouTube rejects in non-HTTP contexts (Electron app://, file://).
+    // By creating the iframe manually without the origin param, YouTube falls back
+    // to '*' for postMessage targeting (still works) and has no non-HTTP origin
+    // to reject.
+    const params = new URLSearchParams({
+      enablejsapi: '1',
+      autoplay: '1',
+      controls: '0',
+      modestbranding: '1',
+      rel: '0',
+      playsinline: '1',
+      disablekb: '1',
+    });
 
+    this.iframe = document.createElement('iframe');
+    this.iframe.id = `yt-player-${Date.now()}`;
+    this.iframe.className = 'wp-yt-player';
+    this.iframe.width = '100%';
+    this.iframe.height = '100%';
+    this.iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    this.iframe.allowFullscreen = true;
+    this.iframe.setAttribute('frameborder', '0');
+    this.iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?${params}`;
+    container.appendChild(this.iframe);
+
+    // Attach the YT API to the existing iframe (doesn't recreate or modify src)
     ensureYouTubeAPI().then(() => {
-      if (!this.playerDiv) return;
+      if (!this.iframe?.isConnected) return;
 
-      this.player = new YT.Player(this.playerDiv, {
-        videoId,
-        width: '100%',
-        height: '100%',
-        playerVars: {
-          autoplay: 1,
-          controls: 0,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          disablekb: 1,
-        },
+      this.player = new YT.Player(this.iframe.id, {
         events: {
           onReady: () => {
             this.ready = true;
@@ -192,12 +205,10 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
     this.player = null;
     this.ready = false;
     this.pendingActions = [];
-    // The YT.Player replaces our div with an iframe, so clean up the container
-    if (this.container) {
-      const iframe = this.container.querySelector('iframe');
-      iframe?.remove();
+    if (this.iframe) {
+      this.iframe.remove();
     }
-    this.playerDiv = null;
+    this.iframe = null;
     this.container = null;
   }
 }
