@@ -1,5 +1,4 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from 'electron';
-import { randomBytes } from 'crypto';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
@@ -8,13 +7,6 @@ import { setupAppMenu } from './app-menu';
 import { UpdateManager } from './update-manager';
 import { installDesktopEntry } from './linux-desktop-integration';
 import Store from 'electron-store';
-
-// Per-session nonce for CSP inline script allowlisting (used by YouTube IFrame API)
-const cspNonce = randomBytes(16).toString('base64');
-
-ipcMain.on('get-csp-nonce', (event) => {
-  event.returnValue = cspNonce;
-});
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling
 if (require('electron-squirrel-startup')) {
@@ -71,13 +63,22 @@ function setupScreenShareHandler(win: BrowserWindow) {
 }
 
 function createWindow() {
-  // Set Content Security Policy
+  // Set Content Security Policy (only for our own pages, not third-party iframes)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const isOwnPage =
+      details.url.startsWith('file://') ||
+      details.url.startsWith('http://localhost');
+
+    if (!isOwnPage) {
+      callback({ responseHeaders: details.responseHeaders });
+      return;
+    }
+
     const csp = [
       "default-src 'self'",
       process.env.NODE_ENV === 'development'
         ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-        : `script-src 'self' 'wasm-unsafe-eval' 'nonce-${cspNonce}' https://www.youtube.com`,
+        : "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com",
       "style-src 'self' 'unsafe-inline'",
       "connect-src 'self' http: https: ws: wss:",
       "img-src 'self' data: blob: http: https:",
