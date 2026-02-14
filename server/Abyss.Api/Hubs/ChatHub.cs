@@ -1367,12 +1367,21 @@ public class ChatHub : Hub
         return await _notifications.GetDmUnreads(UserId);
     }
 
-    // Watch party: host sends playback commands (play/pause/seek) to all viewers
+    // Watch party: host or moderator sends playback commands (play/pause/seek) to all viewers
     public async Task NotifyPlaybackCommand(string channelId, string command, double timeMs)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
         var party = _watchPartyService.GetParty(channelGuid);
-        if (party == null || party.HostUserId != UserId) return;
+        if (party == null) return;
+
+        // Must be host, have ModerateWatchTogether, or have ManageChannels
+        if (party.HostUserId != UserId
+            && !await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.ModerateWatchTogether))
+        {
+            var channel = await _db.Channels.FindAsync(channelGuid);
+            if (channel?.ServerId == null || !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
+                return;
+        }
 
         var isPlaying = command != "pause";
         _watchPartyService.UpdatePlaybackState(channelGuid, timeMs, isPlaying);
@@ -1400,6 +1409,28 @@ public class ChatHub : Hub
         _watchPartyService.UpdatePlaybackState(channelGuid, timeMs, isPlaying);
 
         await Clients.OthersInGroup($"voice:{channelId}").SendAsync("SyncPosition", timeMs, isPlaying);
+    }
+
+    // Watch party: host voluntarily transfers host role to another user
+    public async Task TransferWatchPartyHost(string channelId, string newHostUserId)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        var party = _watchPartyService.GetParty(channelGuid);
+        if (party == null || party.HostUserId != UserId) return;
+
+        // Verify new host is in the voice channel
+        if (!_voiceState.IsUserInChannel(channelGuid, newHostUserId)) return;
+
+        _watchPartyService.TransferHost(channelGuid, newHostUserId);
+
+        var dbEntity = await _db.WatchParties.FirstOrDefaultAsync(w => w.ChannelId == channelGuid);
+        if (dbEntity != null)
+        {
+            dbEntity.HostUserId = newHostUserId;
+            await _db.SaveChangesAsync();
+        }
+
+        await Clients.Group($"voice:{channelId}").SendAsync("WatchPartyHostChanged", newHostUserId);
     }
 
     // Get active watch parties for a server (for sidebar WATCH badges)

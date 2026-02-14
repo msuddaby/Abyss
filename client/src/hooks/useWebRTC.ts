@@ -13,6 +13,7 @@ import {
   useToastStore,
   useWatchPartyStore,
 } from "@abyss/shared";
+import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
 type NoiseSuppressorType = import("../audio/NoiseSuppressor").NoiseSuppressor;
 async function createNoiseSuppressor(): Promise<NoiseSuppressorType> {
@@ -53,6 +54,31 @@ let rejoinInProgress = false;
 // Monotonically-increasing session ID — incremented on cleanupAll() so that
 // any async work enqueued before cleanup can detect the session ended and bail.
 let voiceSessionId = 0;
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Video quality presets
+// ──────────────────────────────────────────────────────────────────────────────
+const CAMERA_QUALITY_CONSTRAINTS: Record<CameraQuality, { width: number; height: number; frameRate: number; maxBitrate: number }> = {
+  low:    { width: 640,  height: 360, frameRate: 15, maxBitrate: 400_000 },
+  medium: { width: 640,  height: 480, frameRate: 30, maxBitrate: 800_000 },
+  high:   { width: 1280, height: 720, frameRate: 30, maxBitrate: 1_500_000 },
+};
+
+const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, { frameRate: number; maxBitrate: number }> = {
+  'quality':     { frameRate: 5,  maxBitrate: 1_500_000 },
+  'balanced':    { frameRate: 15, maxBitrate: 2_500_000 },
+  'motion':      { frameRate: 30, maxBitrate: 4_000_000 },
+  'high-motion': { frameRate: 60, maxBitrate: 6_000_000 },
+};
+
+async function applyBitrateToSender(sender: RTCRtpSender, maxBitrate: number) {
+  const params = sender.getParameters();
+  if (!params.encodings || params.encodings.length === 0) {
+    params.encodings = [{}];
+  }
+  params.encodings[0].maxBitrate = maxBitrate;
+  await sender.setParameters(params);
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Module-level PTT listener management.
@@ -1675,6 +1701,7 @@ async function startScreenShareInternal() {
   voiceState.setScreenShareLoading(true);
   try {
     const isLinuxElectron = window.electron?.platform === 'linux';
+    const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
 
     if (isLinuxElectron) {
       // On Linux Electron, use getUserMedia with chromeMediaSource to avoid the
@@ -1685,12 +1712,13 @@ async function startScreenShareInternal() {
           mandatory: {
             chromeMediaSource: 'desktop',
           },
+          frameRate: { ideal: screenPreset.frameRate },
         } as any,
         audio: false,
       });
     } else {
       screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
+        video: { frameRate: { ideal: screenPreset.frameRate } },
         audio: true,
       });
     }
@@ -1787,9 +1815,11 @@ async function startCameraInternal() {
 
   voiceState.setCameraLoading(true);
   try {
+    const camPreset = CAMERA_QUALITY_CONSTRAINTS[voiceState.cameraQuality];
     const videoConstraints: MediaTrackConstraints = {
-      width: { ideal: 640 },
-      height: { ideal: 480 },
+      width: { ideal: camPreset.width },
+      height: { ideal: camPreset.height },
+      frameRate: { ideal: camPreset.frameRate },
     };
     if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
       videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
@@ -1888,6 +1918,10 @@ async function addCameraTrackToPeer(
     const sender = pc.addTrack(videoTrack, cameraStream);
     cameraTrackSenders.set(peerId, sender);
 
+    // Apply bitrate limit
+    const camPreset = CAMERA_QUALITY_CONSTRAINTS[useVoiceStore.getState().cameraQuality];
+    await applyBitrateToSender(sender, camPreset.maxBitrate);
+
     // Renegotiate
     if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
       const offer = await pc.createOffer();
@@ -1935,6 +1969,14 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
     if (senders.length === 0) return;
     screenTrackSenders.set(viewerUserId, senders);
+
+    // Apply bitrate limit to video senders
+    const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[useVoiceStore.getState().screenShareQuality];
+    for (const sender of senders) {
+      if (sender.track?.kind === "video") {
+        await applyBitrateToSender(sender, screenPreset.maxBitrate);
+      }
+    }
 
     // Only renegotiate if signaling state is stable and ICE isn't failed
     if (
@@ -2765,6 +2807,84 @@ export function useWebRTC() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noiseSuppression, currentChannelId]);
+
+  // React to camera quality changes mid-stream (re-acquire camera + replaceTrack + bitrate)
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let prevQuality = useVoiceStore.getState().cameraQuality;
+    const unsub = useVoiceStore.subscribe((state) => {
+      if (state.cameraQuality === prevQuality) return;
+      prevQuality = state.cameraQuality;
+      if (!cameraStream) return;
+      const preset = CAMERA_QUALITY_CONSTRAINTS[state.cameraQuality];
+      (async () => {
+        try {
+          const voiceState = useVoiceStore.getState();
+          const videoConstraints: MediaTrackConstraints = {
+            width: { ideal: preset.width },
+            height: { ideal: preset.height },
+            frameRate: { ideal: preset.frameRate },
+          };
+          if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
+            videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
+          }
+          const newStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+          const newTrack = newStream.getVideoTracks()[0];
+          // Stop old tracks
+          cameraStream?.getTracks().forEach((t) => t.stop());
+          cameraStream = newStream;
+          newTrack.onended = () => { stopCameraInternal(); };
+          // Replace track on all peers and apply bitrate
+          for (const [peerId, sender] of cameraTrackSenders) {
+            try {
+              await sender.replaceTrack(newTrack);
+              await applyBitrateToSender(sender, preset.maxBitrate);
+            } catch (err) {
+              console.warn(`[cameraQuality] Failed to replace track for ${peerId}:`, err);
+            }
+          }
+          useVoiceStore.getState().bumpCameraStreamVersion();
+          console.log(`[cameraQuality] Switched to ${state.cameraQuality} (${preset.width}x${preset.height}@${preset.frameRate}fps)`);
+        } catch (err) {
+          console.error("[cameraQuality] Failed to change camera quality:", err);
+        }
+      })();
+    });
+    return unsub;
+  }, [currentChannelId]);
+
+  // React to screen share quality changes mid-stream (applyConstraints + bitrate, no re-prompt)
+  useEffect(() => {
+    if (!currentChannelId) return;
+    let prevQuality = useVoiceStore.getState().screenShareQuality;
+    const unsub = useVoiceStore.subscribe((state) => {
+      if (state.screenShareQuality === prevQuality) return;
+      prevQuality = state.screenShareQuality;
+      if (!screenStream) return;
+      const preset = SCREEN_SHARE_QUALITY_CONSTRAINTS[state.screenShareQuality];
+      (async () => {
+        try {
+          // Apply frameRate constraint to the existing video track
+          const videoTrack = screenStream?.getVideoTracks()[0];
+          if (videoTrack) {
+            await videoTrack.applyConstraints({ frameRate: { ideal: preset.frameRate } });
+          }
+          // Apply bitrate to all screen share video senders
+          for (const [, senders] of screenTrackSenders) {
+            for (const sender of senders) {
+              if (sender.track?.kind === "video") {
+                await applyBitrateToSender(sender, preset.maxBitrate);
+              }
+            }
+          }
+          console.log(`[screenShareQuality] Switched to ${state.screenShareQuality} (${preset.frameRate}fps, ${preset.maxBitrate / 1000}kbps)`);
+        } catch (err) {
+          console.error("[screenShareQuality] Failed to change screen share quality:", err);
+        }
+      })();
+    });
+    return unsub;
+  }, [currentChannelId]);
 
   // Broadcast mute/deafen state to everyone in the server
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
+import { getConnection } from '../services/signalr.js';
 import type { WatchParty, QueueItem } from '../types/index.js';
 
 interface WatchPartyState {
@@ -19,6 +20,7 @@ interface WatchPartyState {
   addToQueue: (channelId: string, data: { providerItemId: string; title: string; thumbnail?: string; durationMs?: number }) => Promise<void>;
   removeFromQueue: (channelId: string, index: number) => Promise<void>;
   reorderQueue: (channelId: string, newOrder: number[]) => Promise<void>;
+  transferHost: (channelId: string, newHostUserId: string) => Promise<void>;
 
   setIsBrowsingLibrary: (val: boolean) => void;
 }
@@ -101,6 +103,16 @@ export const useWatchPartyStore = create<WatchPartyState>((set, get) => ({
       await api.post(`/channels/${channelId}/watch-party/queue/reorder`, { newOrder });
     } catch (e) {
       console.error('Failed to reorder queue:', e);
+      throw e;
+    }
+  },
+
+  transferHost: async (channelId, newHostUserId) => {
+    try {
+      const conn = getConnection();
+      await conn.invoke('TransferWatchPartyHost', channelId, newHostUserId);
+    } catch (e) {
+      console.error('Failed to transfer host:', e);
       throw e;
     }
   },

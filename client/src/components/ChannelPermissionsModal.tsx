@@ -32,6 +32,13 @@ const CHANNEL_PERM_SECTIONS = [
       { key: 'Stream', label: 'Stream', desc: 'Share screen in this channel', value: Permission.Stream },
     ],
   },
+  {
+    section: 'Watch Together',
+    perms: [
+      { key: 'AddToWatchTogether', label: 'Add to Queue', desc: 'Add items to the Watch Together queue', value: Permission.AddToWatchTogether },
+      { key: 'ModerateWatchTogether', label: 'Moderate Watch Together', desc: 'Pause, stop, skip, and reorder queue', value: Permission.ModerateWatchTogether },
+    ],
+  },
 ];
 
 export default function ChannelPermissionsModal({

@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 export type MarkdownEnv = {
   membersById: Record<string, string>;
   emojisById: Record<string, { name: string; imageUrl: string }>;
+  emojisByName: Record<string, { id: string; name: string; imageUrl: string }>;
   apiBase: string;
 };
 
@@ -97,6 +98,43 @@ markdown.inline.ruler.after(
   },
 );
 
+// Match :emojiName: shortcodes (not already inside <:name:id> format)
+markdown.inline.ruler.after(
+  "mentions",
+  "emoji_shortcode",
+  (state: StateInline, silent: boolean) => {
+    const start = state.pos;
+    const src = state.src;
+    if (src.charAt(start) !== ":") return false;
+    // Don't match if preceded by < (that's the <:name:id> format handled above)
+    if (start > 0 && src.charAt(start - 1) === "<") return false;
+    const match = src.slice(start).match(/^:([a-zA-Z0-9_]{2,32}):/);
+    if (!match) return false;
+    if (!silent) {
+      const token = state.push("emoji_shortcode", "", 0);
+      token.meta = { name: match[1] };
+    }
+    state.pos += match[0].length;
+    return true;
+  },
+);
+
+markdown.renderer.rules.emoji_shortcode = ((
+  tokens,
+  idx,
+  _options,
+  env: MarkdownEnv,
+) => {
+  const name = tokens[idx].meta.name as string;
+  const emoji = env.emojisByName[name.toLowerCase()];
+  if (!emoji) {
+    return markdown.utils.escapeHtml(`:${name}:`);
+  }
+  const src = `${env.apiBase}${emoji.imageUrl}`;
+  const safeName = markdown.utils.escapeHtml(emoji.name);
+  return `<span class="emoji-tooltip-wrap"><img class="custom-emoji" src="${src}" alt=":${safeName}:" /><span class="emoji-tooltip"><img src="${src}" alt=":${safeName}:" /><span>:${safeName}:</span></span></span>`;
+}) as RenderRule;
+
 markdown.renderer.rules.mention_user = ((
   tokens,
   idx,
@@ -132,7 +170,7 @@ markdown.renderer.rules.custom_emoji = ((
   }
   const src = `${env.apiBase}${emoji.imageUrl}`;
   const safeName = markdown.utils.escapeHtml(emoji.name);
-  return `<img class="custom-emoji" src="${src}" alt=":${safeName}:" title=":${safeName}:" />`;
+  return `<span class="emoji-tooltip-wrap"><img class="custom-emoji" src="${src}" alt=":${safeName}:" /><span class="emoji-tooltip"><img src="${src}" alt=":${safeName}:" /><span>:${safeName}:</span></span></span>`;
 }) as RenderRule;
 
 markdown.renderer.rules.link_open = ((

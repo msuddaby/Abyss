@@ -72,7 +72,8 @@ public class ServersController : ControllerBase
                 Permission.MentionEveryone |
                 Permission.Connect |
                 Permission.Speak |
-                Permission.Stream),
+                Permission.Stream |
+                Permission.AddToWatchTogether),
             Position = 0,
             IsDefault = true,
             DisplaySeparately = false,

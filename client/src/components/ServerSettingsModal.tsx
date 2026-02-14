@@ -105,6 +105,13 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
       { perm: Permission.UseSoundboard, label: 'Use Soundboard', description: 'Play soundboard clips in voice channels' },
     ],
   },
+  {
+    section: 'Watch Together',
+    perms: [
+      { perm: Permission.AddToWatchTogether, label: 'Add to Queue', description: 'Add items to the Watch Together queue' },
+      { perm: Permission.ModerateWatchTogether, label: 'Moderate Watch Together', description: 'Pause, stop, skip, and reorder Watch Together queue' },
+    ],
+  },
 ];
 
 const ROLE_COLOR_PRESETS = [

@@ -172,8 +172,10 @@ public class WatchPartyController : ControllerBase
         var state = _watchPartyService.GetParty(channelId);
         if (state == null) return BadRequest("No active watch party");
 
-        // Must be host or have ManageChannels
-        if (state.HostUserId != UserId && !await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels))
+        // Must be host, have ModerateWatchTogether, or have ManageChannels
+        if (state.HostUserId != UserId
+            && !await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ModerateWatchTogether)
+            && !await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels))
             return Forbid();
 
         _watchPartyService.StopParty(channelId);
@@ -199,7 +201,7 @@ public class WatchPartyController : ControllerBase
     {
         var channel = await _db.Channels.FindAsync(channelId);
         if (channel == null || !channel.ServerId.HasValue) return NotFound();
-        if (!await _perms.IsMemberAsync(channel.ServerId.Value, UserId)) return Forbid();
+        if (!await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.AddToWatchTogether)) return Forbid();
 
         var state = _watchPartyService.GetParty(channelId);
         if (state == null) return BadRequest("No active watch party");
@@ -223,8 +225,10 @@ public class WatchPartyController : ControllerBase
         var state = _watchPartyService.GetParty(channelId);
         if (state == null) return BadRequest("No active watch party");
 
-        // Must be host or have ManageChannels
-        if (state.HostUserId != UserId && !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
+        // Must be host, have ModerateWatchTogether, or have ManageChannels
+        if (state.HostUserId != UserId
+            && !await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ModerateWatchTogether)
+            && !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
             return Forbid();
 
         if (!body.TryGetProperty("index", out var indexProp)) return BadRequest("Missing index");
@@ -248,7 +252,9 @@ public class WatchPartyController : ControllerBase
         var state = _watchPartyService.GetParty(channelId);
         if (state == null) return BadRequest("No active watch party");
 
-        if (state.HostUserId != UserId && !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
+        if (state.HostUserId != UserId
+            && !await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ModerateWatchTogether)
+            && !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
             return Forbid();
 
         if (req.NewOrder.Count != state.Queue.Count) return BadRequest("Invalid order length");

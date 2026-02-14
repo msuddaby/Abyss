@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 import SoundboardPanel from './SoundboardPanel';
+import QualityPopover from './QualityPopover';
 import { isMobile } from '../stores/mobileStore';
 
 function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
@@ -43,6 +44,15 @@ export default function VoiceControls() {
 
   const [showSoundboard, setShowSoundboard] = useState(false);
   const soundboardClips = useSoundboardStore((s) => s.clips);
+
+  const cameraBtnRef = useRef<HTMLButtonElement>(null);
+  const screenBtnRef = useRef<HTMLButtonElement>(null);
+  const [qualityPopover, setQualityPopover] = useState<{ type: 'camera' | 'screen'; rect: DOMRect } | null>(null);
+
+  const openQualityPopover = useCallback((type: 'camera' | 'screen', btn: HTMLButtonElement | null) => {
+    if (!btn) return;
+    setQualityPopover({ type, rect: btn.getBoundingClientRect() });
+  }, []);
 
   const channel = channels.find((c) => c.id === currentChannelId);
   const isPtt = voiceMode === 'push-to-talk';
@@ -132,6 +142,11 @@ export default function VoiceControls() {
               {isPttActive ? '● Transmitting' : `Press ${pttKey.startsWith('Mouse') ? `Mouse ${pttKey.slice(5)}` : pttKey} to talk`}
             </span>
           )}
+          {isScreenSharing && (
+            <button className="vc-sharing-indicator" onClick={stopScreenShare} title="Click to stop sharing">
+              Sharing Screen
+            </button>
+          )}
         </div>
         <button className="vc-disconnect-btn" onClick={leaveVoice} title={`Disconnect (${formatKeybind(keybindDisconnect)})`}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -163,26 +178,32 @@ export default function VoiceControls() {
         )}
         {canStream && (
           <button
+            ref={cameraBtnRef}
             className={`vc-btn ${isCameraOn ? 'vc-active' : ''}${isCameraLoading ? ' loading' : ''}`}
             onClick={isCameraOn ? stopCamera : startCamera}
             disabled={isCameraLoading}
-            title={isCameraOn ? 'Stop Camera' : 'Start Camera'}
+            title={isCameraOn ? 'Stop Camera (right-click for quality)' : 'Start Camera'}
+            onContextMenu={(e) => { if (isCameraOn) { e.preventDefault(); openQualityPopover('camera', cameraBtnRef.current); } }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
             </svg>
+            {isCameraOn && <span className="vc-quality-chevron" />}
           </button>
         )}
         {canStream && (
           <button
-            className={`vc-btn ${isScreenSharing ? 'vc-active' : ''}${isScreenShareLoading ? ' loading' : ''}`}
+            ref={screenBtnRef}
+            className={`vc-btn ${isScreenSharing ? 'vc-sharing' : ''}${isScreenShareLoading ? ' loading' : ''}`}
             onClick={isScreenSharing ? stopScreenShare : startScreenShare}
             disabled={isScreenShareLoading}
-            title={isScreenSharing ? 'Stop Sharing' : 'Share Screen'}
+            title={isScreenSharing ? 'Stop Sharing (right-click for quality)' : 'Share Screen'}
+            onContextMenu={(e) => { if (isScreenSharing) { e.preventDefault(); openQualityPopover('screen', screenBtnRef.current); } }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
             </svg>
+            {isScreenSharing && <span className="vc-quality-chevron" />}
           </button>
         )}
         {canStream && (
@@ -210,6 +231,13 @@ export default function VoiceControls() {
       </div>
     </div>
     {showSoundboard && <SoundboardPanel />}
+    {qualityPopover && (
+      <QualityPopover
+        type={qualityPopover.type}
+        anchorRect={qualityPopover.rect}
+        onClose={() => setQualityPopover(null)}
+      />
+    )}
     </div>
   );
 }

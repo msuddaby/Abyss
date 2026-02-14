@@ -10,7 +10,8 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 
 - **Backend**: ASP.NET Core (.NET 10), Entity Framework Core, SignalR, PostgreSQL 16
 - **Web Client**: React 19, TypeScript, Vite, Zustand
-- **Mobile App**: Expo (React Native), iOS & Android only
+- **Mobile App**: Capacitor (iOS & Android) — shares the same React codebase as the web client
+- **Desktop App**: Electron (Linux, macOS, Windows) with auto-updates
 - **Shared**: TypeScript package (`@abyss/shared`) for types, stores, and services
 - **Voice/Video**: WebRTC with coturn TURN server for NAT traversal
 
@@ -20,10 +21,11 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 .
 ├── server/                 # ASP.NET backend
 │   └── Abyss.Api/
-├── client/                 # React web client
+├── client/                 # React web + Capacitor mobile (iOS/Android)
 ├── packages/
 │   ├── shared/             # Shared TypeScript (types, stores, services)
-│   └── app/                # Expo mobile app
+│   ├── desktop/            # Electron desktop app
+│   └── app/                # Expo mobile app (deprecated)
 ├── docker-compose.yml      # Production deployment
 ├── docker-compose.dev.yml  # Development (DB + TURN only)
 ├── .env                    # All configuration (not committed)
@@ -115,7 +117,7 @@ From the project root:
 npm install
 ```
 
-This installs all workspaces (`client`, `packages/shared`, `packages/app`).
+This installs all workspaces (`client`, `packages/shared`).
 
 ### 3. Run the Backend
 
@@ -137,23 +139,40 @@ The web client starts on `http://localhost:5173`. It reads `VITE_*` variables fr
 
 ### 5. Run the Mobile App (optional)
 
-The Expo app is iOS/Android only (no web target). It requires a dev build (Expo Go is not supported due to native dependencies like `react-native-webrtc`).
+The mobile app uses Capacitor to wrap the same React web client for iOS and Android.
 
 ```sh
-cd packages/app
+cd client
+
+# Build the web client first
+npm run build
+
+# Sync web assets to native projects
+npx cap sync
+
+# Open in Xcode (iOS)
+npx cap open ios
+
+# Open in Android Studio (Android)
+npx cap open android
 ```
 
-Edit `app.json` to set `expo.extra.apiUrl` to your backend's local IP (e.g., `http://192.168.1.x:5000`). Then:
+For development, you can point the Capacitor dev server to your local Vite instance by uncommenting the `server.url` in `client/capacitor.config.ts`.
+
+### 6. Run the Desktop App (optional)
+
+The Electron desktop app lives in `packages/desktop/`.
 
 ```sh
-# Build and run on iOS
-npx expo run:ios
-
-# Build and run on Android
-npx expo run:android
+cd packages/desktop
+npm run dev
 ```
 
-ICE server configuration for the mobile app is also in `app.json` under `expo.extra` (`stunUrl`, `turnUrls`, `turnUsername`, `turnCredential`).
+To build a distributable package:
+
+```sh
+npm run make:full
+```
 
 ## Production Deployment
 

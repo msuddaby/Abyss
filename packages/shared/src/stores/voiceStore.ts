@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { getStorage } from '../storage.js';
 
 type VoiceMode = 'voice-activity' | 'push-to-talk';
+export type CameraQuality = 'low' | 'medium' | 'high';
+export type ScreenShareQuality = 'quality' | 'balanced' | 'motion' | 'high-motion';
 
 interface VoiceState {
   currentChannelId: string | null;
@@ -78,6 +80,10 @@ interface VoiceState {
   setVoiceChatDesktopNotify: (enabled: boolean) => void;
   userVolumes: Map<string, number>; // userId -> 0-200 volume percentage
   setUserVolume: (userId: string, volume: number) => void;
+  cameraQuality: CameraQuality;
+  screenShareQuality: ScreenShareQuality;
+  setCameraQuality: (quality: CameraQuality) => void;
+  setScreenShareQuality: (quality: ScreenShareQuality) => void;
   // Keybinds (stored as "mod+shift+m" format)
   keybindToggleMute: string;
   keybindToggleDeafen: string;
@@ -314,6 +320,16 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       else next.set(userId, Math.max(0, Math.min(200, volume)));
       return { userVolumes: next };
     }),
+  cameraQuality: 'medium' as CameraQuality,
+  screenShareQuality: 'balanced' as ScreenShareQuality,
+  setCameraQuality: (quality) => {
+    getStorage().setItem('cameraQuality', quality);
+    set({ cameraQuality: quality });
+  },
+  setScreenShareQuality: (quality) => {
+    getStorage().setItem('screenShareQuality', quality);
+    set({ screenShareQuality: quality });
+  },
   keybindToggleMute: 'mod+shift+m',
   keybindToggleDeafen: 'mod+shift+d',
   keybindDisconnect: 'mod+shift+e',
@@ -355,6 +371,8 @@ export function hydrateVoiceStore() {
     autoGainControl: boolOr('autoGainControl', true),
     inputSensitivity: Number(s.getItem('inputSensitivity')) || 1,
     voiceChatDesktopNotify: boolOr('voiceChatDesktopNotify', false),
+    cameraQuality: (s.getItem('cameraQuality') as CameraQuality) || 'medium',
+    screenShareQuality: (s.getItem('screenShareQuality') as ScreenShareQuality) || 'balanced',
     keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',
     keybindToggleDeafen: s.getItem('keybindToggleDeafen') || 'mod+shift+d',
     keybindDisconnect: s.getItem('keybindDisconnect') || 'mod+shift+e',

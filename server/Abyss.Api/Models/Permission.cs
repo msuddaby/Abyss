@@ -24,4 +24,6 @@ public enum Permission : long
     Stream = 1 << 18,
     ManageSoundboard = 1 << 19,
     UseSoundboard = 1 << 20,
+    AddToWatchTogether = 1 << 21,
+    ModerateWatchTogether = 1 << 22,
 }

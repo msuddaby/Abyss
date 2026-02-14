@@ -1,10 +1,11 @@
-import { Component, useRef, useEffect, useState } from 'react';
+import { Component, useRef, useEffect, useState, useCallback } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
 import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { isMobile } from '../stores/mobileStore';
+import QualityPopover from './QualityPopover';
 
 class VoiceErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
@@ -390,44 +391,127 @@ function MobileVoiceBar() {
   const isScreenSharing = useVoiceStore((s) => s.isScreenSharing);
   const isCameraOn = useVoiceStore((s) => s.isCameraOn);
   const currentChannelId = useVoiceStore((s) => s.currentChannelId);
+  const voiceMode = useVoiceStore((s) => s.voiceMode);
+  const isPttActive = useVoiceStore((s) => s.isPttActive);
+  const setVoiceMode = useVoiceStore((s) => s.setVoiceMode);
+  const setPttActive = useVoiceStore((s) => s.setPttActive);
   const channels = useServerStore((s) => s.channels);
   const channel = channels.find((c) => c.id === currentChannelId);
   const canStream = channel ? hasChannelPermission(channel.permissions, Permission.Stream) : false;
+  const isPtt = voiceMode === 'push-to-talk';
+
+  const [qualityPopover, setQualityPopover] = useState<{ type: 'camera' | 'screen' } | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startLongPress = useCallback((type: 'camera' | 'screen', isActive: boolean) => {
+    if (!isActive) return;
+    longPressTimer.current = setTimeout(() => {
+      setQualityPopover({ type });
+    }, 500);
+  }, []);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handlePttTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    setPttActive(true);
+  }, [setPttActive]);
+
+  const handlePttTouchEnd = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    setPttActive(false);
+  }, [setPttActive]);
 
   return (
-    <div className="vcv-mobile-bar">
-      <button className={`vcv-mobile-btn${isMuted ? ' active' : ''}`} onClick={toggleMute} title="Mute">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-          <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
-        </svg>
-        {isMuted && <div className="vcv-mobile-btn-slash" />}
-      </button>
-      <button className={`vcv-mobile-btn${isDeafened ? ' active' : ''}`} onClick={toggleDeafen} title="Deafen">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/>
-        </svg>
-        {isDeafened && <div className="vcv-mobile-btn-slash" />}
-      </button>
-      {canStream && (
-        <button className={`vcv-mobile-btn${isCameraOn ? ' active' : ''}`} onClick={isCameraOn ? stopCamera : startCamera} title="Camera">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+    <div className="vcv-mobile-bar-wrapper">
+      {isPtt && (
+        <button
+          className={`vcv-mobile-ptt-btn${isPttActive ? ' active' : ''}`}
+          onTouchStart={handlePttTouchStart}
+          onTouchEnd={handlePttTouchEnd}
+          onTouchCancel={handlePttTouchEnd}
+          onMouseDown={() => setPttActive(true)}
+          onMouseUp={() => setPttActive(false)}
+          onMouseLeave={() => { if (isPttActive) setPttActive(false); }}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
           </svg>
+          {isPttActive ? 'Transmitting...' : 'Hold to Talk'}
         </button>
       )}
-      {canStream && (
-        <button className={`vcv-mobile-btn${isScreenSharing ? ' active' : ''}`} onClick={isScreenSharing ? stopScreenShare : startScreenShare} title="Screen Share">
+      <div className="vcv-mobile-bar">
+        <button
+          className={`vcv-mobile-btn${isPtt ? ' vc-mode-active' : ''}`}
+          onClick={() => setVoiceMode(isPtt ? 'voice-activity' : 'push-to-talk')}
+          title={isPtt ? 'Switch to Voice Activity' : 'Switch to Push to Talk'}
+        >
+          <span className="vcv-mobile-btn-label">{isPtt ? 'PTT' : 'VA'}</span>
+        </button>
+        <button className={`vcv-mobile-btn${isMuted ? ' active' : ''}`} onClick={toggleMute} title="Mute">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+          {isMuted && <div className="vcv-mobile-btn-slash" />}
+        </button>
+        <button className={`vcv-mobile-btn${isDeafened ? ' active' : ''}`} onClick={toggleDeafen} title="Deafen">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z"/>
+          </svg>
+          {isDeafened && <div className="vcv-mobile-btn-slash" />}
+        </button>
+        {canStream && (
+          <button
+            className={`vcv-mobile-btn${isCameraOn ? ' active' : ''}`}
+            onClick={isCameraOn ? stopCamera : startCamera}
+            title="Camera"
+            onTouchStart={() => startLongPress('camera', isCameraOn)}
+            onTouchEnd={cancelLongPress}
+            onTouchCancel={cancelLongPress}
+            onContextMenu={(e) => { if (isCameraOn) { e.preventDefault(); setQualityPopover({ type: 'camera' }); } }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+            </svg>
+            {isCameraOn && <span className="vc-quality-chevron" />}
+          </button>
+        )}
+        {canStream && (
+          <button
+            className={`vcv-mobile-btn${isScreenSharing ? ' sharing' : ''}`}
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+            title="Screen Share"
+            onTouchStart={() => startLongPress('screen', isScreenSharing)}
+            onTouchEnd={cancelLongPress}
+            onTouchCancel={cancelLongPress}
+            onContextMenu={(e) => { if (isScreenSharing) { e.preventDefault(); setQualityPopover({ type: 'screen' }); } }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
+            </svg>
+            {isScreenSharing && <span className="vc-quality-chevron" />}
+          </button>
+        )}
+        <button className="vcv-mobile-btn disconnect" onClick={leaveVoice} title="Disconnect">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
           </svg>
         </button>
-      )}
-      <button className="vcv-mobile-btn disconnect" onClick={leaveVoice} title="Disconnect">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.956.956 0 0 1-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28a11.27 11.27 0 0 0-2.67-1.85.996.996 0 0 1-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/>
-        </svg>
-      </button>
+        {qualityPopover && (
+          <QualityPopover
+            type={qualityPopover.type}
+            anchorRect={null}
+            onClose={() => setQualityPopover(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }

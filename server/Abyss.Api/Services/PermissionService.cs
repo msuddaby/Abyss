@@ -17,7 +17,9 @@ public class PermissionService
         Permission.Connect |
         Permission.Speak |
         Permission.Stream |
-        Permission.UseSoundboard);
+        Permission.UseSoundboard |
+        Permission.AddToWatchTogether |
+        Permission.ModerateWatchTogether);
 
     public PermissionService(AppDbContext db) => _db = db;
 

@@ -41,9 +41,11 @@ export default function MessageItem({
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [editError, setEditError] = useState<string | null>(null);
-  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(
-    null,
-  );
+  const [previewSource, setPreviewSource] = useState<
+    | { kind: "attachment"; attachment: Attachment }
+    | { kind: "url"; url: string; fileName: string }
+    | null
+  >(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const reactionsRef = useRef<MessageReactionsHandle>(null);
@@ -85,19 +87,56 @@ export default function MessageItem({
     }
     return map;
   }, [emojis]);
+  const emojisByName = useMemo(() => {
+    const map: Record<string, { id: string; name: string; imageUrl: string }> = {};
+    for (const e of emojis) {
+      map[e.name.toLowerCase()] = { id: e.id, name: e.name, imageUrl: e.imageUrl };
+    }
+    return map;
+  }, [emojis]);
   const markdownEnv = useMemo(
     () => ({
       membersById,
       emojisById,
+      emojisByName,
       apiBase: getApiBase(),
     }),
-    [membersById, emojisById],
+    [membersById, emojisById, emojisByName],
   );
   const renderedContent = useMemo(
     () =>
       message.content ? renderMarkdownSafe(message.content, markdownEnv) : "",
     [message.content, markdownEnv],
   );
+  const isGifMessage = useMemo(() => {
+    if (!message.content) return false;
+    return /^https:\/\/(media[0-9]*\.giphy\.com|i\.giphy\.com)\/media\/[^\s]+$/i.test(
+      message.content.trim(),
+    );
+  }, [message.content]);
+
+  const emojiOnly = useMemo(() => {
+    if (!message.content) return false;
+    // Strip custom emojis (<:name:id> format) and count them
+    let t = message.content.trim();
+    const customEmojiRe = /<:[a-zA-Z0-9_]{2,32}:[a-fA-F0-9-]{36}>/g;
+    let count = 0;
+    for (const _ of t.matchAll(customEmojiRe)) count++;
+    t = t.replace(customEmojiRe, "");
+    // Strip :name: shortcodes that match server emojis
+    const shortcodeRe = /:([a-zA-Z0-9_]{2,32}):/g;
+    t = t.replace(shortcodeRe, (match, name) => {
+      if (emojisByName[(name as string).toLowerCase()]) { count++; return ""; }
+      return match;
+    });
+    // Count remaining native emojis via grapheme segmenter
+    const segs = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(t)];
+    for (const seg of segs) {
+      if (/\p{Emoji_Presentation}|\p{Emoji}\uFE0F/u.test(seg.segment)) count++;
+      else if (seg.segment.trim().length > 0) return false; // non-emoji text
+    }
+    return count >= 1 && count <= 3;
+  }, [message.content, emojisByName]);
 
   // Use live member data when available, fall back to stale message snapshot
   const authorDisplayName =
@@ -323,12 +362,28 @@ export default function MessageItem({
           </div>
         ) : (
           <>
-            {message.content && (
+            {message.content && isGifMessage ? (
+              <div className="message-gif">
+                <img
+                  src={message.content.trim()}
+                  alt="GIF"
+                  loading="lazy"
+                  onClick={() =>
+                    setPreviewSource({
+                      kind: "url",
+                      url: message.content!.trim(),
+                      fileName: "giphy.gif",
+                    })
+                  }
+                  style={{ cursor: "pointer" }}
+                />
+              </div>
+            ) : message.content ? (
               <div
-                className="message-content message-markdown"
+                className={`message-content message-markdown${emojiOnly ? " single-emoji" : ""}`}
                 dangerouslySetInnerHTML={{ __html: renderedContent }}
               />
-            )}
+            ) : null}
           </>
         )}
         {message.attachments?.length > 0 && (
@@ -341,7 +396,7 @@ export default function MessageItem({
                     src={`${getApiBase()}${att.filePath}`}
                     alt={att.fileName}
                     className="attachment-image"
-                    onClick={() => setPreviewAttachment(att)}
+                    onClick={() => setPreviewSource({ kind: "attachment", attachment: att })}
                   />
                 ) : (
                   <AttachmentMedia att={att} />
@@ -394,10 +449,10 @@ export default function MessageItem({
           onClose={() => setProfileCard(null)}
         />
       )}
-      {previewAttachment && (
+      {previewSource && (
         <ImagePreviewModal
-          attachment={previewAttachment}
-          onClose={() => setPreviewAttachment(null)}
+          source={previewSource}
+          onClose={() => setPreviewSource(null)}
         />
       )}
     </div>

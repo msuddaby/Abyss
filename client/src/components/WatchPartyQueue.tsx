@@ -4,7 +4,7 @@ import type { QueueItem } from '@abyss/shared';
 
 interface Props {
   queue: QueueItem[];
-  isHost: boolean;
+  canControl: boolean;
   channelId: string;
   onClose: () => void;
 }
@@ -18,7 +18,7 @@ function formatDuration(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-export default function WatchPartyQueue({ queue, isHost, channelId, onClose }: Props) {
+export default function WatchPartyQueue({ queue, canControl, channelId, onClose }: Props) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
@@ -31,7 +31,7 @@ export default function WatchPartyQueue({ queue, isHost, channelId, onClose }: P
   };
 
   const handleDragStart = (index: number) => {
-    if (!isHost) return;
+    if (!canControl) return;
     setDragIndex(index);
   };
 
@@ -74,7 +74,7 @@ export default function WatchPartyQueue({ queue, isHost, channelId, onClose }: P
             <div
               key={`${item.providerItemId}-${i}`}
               className={`wpq-item ${dragOverIndex === i ? 'wpq-item-dragover' : ''}`}
-              draggable={isHost}
+              draggable={canControl}
               onDragStart={() => handleDragStart(i)}
               onDragOver={(e) => handleDragOver(e, i)}
               onDrop={() => handleDrop(i)}
@@ -93,7 +93,7 @@ export default function WatchPartyQueue({ queue, isHost, channelId, onClose }: P
                   <span className="wpq-item-duration">{formatDuration(item.durationMs)}</span>
                 )}
               </div>
-              {isHost && (
+              {canControl && (
                 <button className="wpq-item-remove" onClick={() => handleRemove(i)} title="Remove">
                   ✕
                 </button>

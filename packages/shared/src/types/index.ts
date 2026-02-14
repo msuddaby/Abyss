@@ -445,6 +445,8 @@ export const Permission = {
   Stream: 1 << 18,
   ManageSoundboard: 1 << 19,
   UseSoundboard: 1 << 20,
+  AddToWatchTogether: 1 << 21,
+  ModerateWatchTogether: 1 << 22,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

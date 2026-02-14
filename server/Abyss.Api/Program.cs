@@ -245,7 +245,17 @@ app.Use(async (context, next) =>
 
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var origin = ctx.Context.Request.Headers.Origin.FirstOrDefault();
+        if (origin != null && allowedOrigins.Contains(origin))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        }
+    }
+});
 
 var soundsDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "sounds");
 Directory.CreateDirectory(soundsDir);
@@ -256,6 +266,11 @@ app.UseStaticFiles(new StaticFileOptions
     OnPrepareResponse = ctx =>
     {
         ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+        var origin = ctx.Context.Request.Headers.Origin.FirstOrDefault();
+        if (origin != null && allowedOrigins.Contains(origin))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        }
     }
 });
 
@@ -268,6 +283,11 @@ app.UseStaticFiles(new StaticFileOptions
     OnPrepareResponse = ctx =>
     {
         ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+        var origin = ctx.Context.Request.Headers.Origin.FirstOrDefault();
+        if (origin != null && allowedOrigins.Contains(origin))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        }
     }
 });
 

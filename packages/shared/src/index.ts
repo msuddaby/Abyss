@@ -17,6 +17,7 @@ export { useAuthStore } from './stores/authStore.js';
 export { useServerStore } from './stores/serverStore.js';
 export { useMessageStore } from './stores/messageStore.js';
 export { useVoiceStore, hydrateVoiceStore } from './stores/voiceStore.js';
+export type { CameraQuality, ScreenShareQuality } from './stores/voiceStore.js';
 export { usePresenceStore } from './stores/presenceStore.js';
 export { useUnreadStore } from './stores/unreadStore.js';
 export { useDmStore } from './stores/dmStore.js';

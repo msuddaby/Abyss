@@ -2,6 +2,7 @@ import { useRef, useCallback, useState } from 'react';
 
 interface Props {
   isHost: boolean;
+  canControl: boolean;
   isPlaying: boolean;
   currentTime: number;
   duration: number;
@@ -20,23 +21,24 @@ interface Props {
   onTuneOut?: () => void;
   onFullscreen?: () => void;
   isFullscreen?: boolean;
+  onTransferHost?: () => void;
 }
 
 export default function WatchPartyControls({
-  isHost, isPlaying, currentTime, duration, title,
+  isHost, canControl, isPlaying, currentTime, duration, title,
   onPlay, onPause, onSeek, onStop, onToggleQueue, hasQueue, formatTime,
-  volume, onVolumeChange, onPiP, isPiP, onTuneOut, onFullscreen, isFullscreen,
+  volume, onVolumeChange, onPiP, isPiP, onTuneOut, onFullscreen, isFullscreen, onTransferHost,
 }: Props) {
   const seekBarRef = useRef<HTMLDivElement>(null);
   const [showVolume, setShowVolume] = useState(false);
   const [premuteVolume, setPremuteVolume] = useState(1);
 
   const handleSeekClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isHost || !seekBarRef.current || !duration) return;
+    if (!canControl || !seekBarRef.current || !duration) return;
     const rect = seekBarRef.current.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onSeek(pct * duration);
-  }, [isHost, duration, onSeek]);
+  }, [canControl, duration, onSeek]);
 
   const handleMuteToggle = useCallback(() => {
     if (volume > 0) {
@@ -65,12 +67,12 @@ export default function WatchPartyControls({
 
   return (
     <div className="wp-controls">
-      <div className="wp-seek-bar" ref={seekBarRef} onClick={handleSeekClick} style={{ cursor: isHost ? 'pointer' : 'default' }}>
+      <div className="wp-seek-bar" ref={seekBarRef} onClick={handleSeekClick} style={{ cursor: canControl ? 'pointer' : 'default' }}>
         <div className="wp-seek-fill" style={{ width: `${progress}%` }} />
       </div>
       <div className="wp-controls-row">
         <div className="wp-controls-left">
-          {isHost ? (
+          {canControl ? (
             <button className="wp-ctrl-btn" onClick={isPlaying ? onPause : onPlay} title={isPlaying ? 'Pause' : 'Play'}>
               {isPlaying ? '⏸' : '▶'}
             </button>
@@ -131,7 +133,14 @@ export default function WatchPartyControls({
           <button className="wp-ctrl-btn" onClick={onToggleQueue} title="Queue">
             📋{hasQueue ? ' •' : ''}
           </button>
-          {isHost && (
+          {isHost && onTransferHost && (
+            <button className="wp-ctrl-btn" onClick={onTransferHost} title="Transfer Host">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M16 17.01V10h-2v7.01h-3L15 21l4-3.99h-3zM9 3L5 6.99h3V14h2V6.99h3L9 3z"/>
+              </svg>
+            </button>
+          )}
+          {canControl && (
             <button className="wp-ctrl-btn wp-stop-btn" onClick={onStop} title="Stop Watch Party">
               ⏹
             </button>

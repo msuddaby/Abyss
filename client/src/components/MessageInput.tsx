@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } fr
 import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
+import GifPicker from "./GifPicker";
 
 interface MentionOption {
   id: string;
@@ -61,6 +62,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [emojiPickerAnchor, setEmojiPickerAnchor] = useState<{ x: number; y: number } | null>(null);
   const [emojiPickerStyle, setEmojiPickerStyle] = useState<React.CSSProperties | null>(null);
+  const [showGifPicker, setShowGifPicker] = useState(false);
+  const [gifPickerAnchor, setGifPickerAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [gifPickerStyle, setGifPickerStyle] = useState<React.CSSProperties | null>(null);
   const [contentLength, setContentLength] = useState(0);
   const [inputError, setInputError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -70,6 +74,8 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const gifPickerRef = useRef<HTMLDivElement>(null);
+  const gifButtonRef = useRef<HTMLButtonElement>(null);
   const savedSelectionRef = useRef<Range | null>(null);
   // Stores the trigger text node + start offset for autocomplete insertion
   const triggerRef = useRef<{ node: Text; startOffset: number } | null>(null);
@@ -199,6 +205,83 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       setEmojiPickerStyle({ left, top });
     }
   }, [showEmojiPicker, emojiPickerAnchor, emojiPickerStyle]);
+
+  // Close gif picker on outside click
+  useEffect(() => {
+    if (!showGifPicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (gifPickerRef.current && !gifPickerRef.current.contains(e.target as Node) &&
+          gifButtonRef.current && !gifButtonRef.current.contains(e.target as Node)) {
+        setShowGifPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showGifPicker]);
+
+  useEffect(() => {
+    if (showGifPicker) return;
+    setGifPickerStyle(null);
+    setGifPickerAnchor(null);
+  }, [showGifPicker]);
+
+  useLayoutEffect(() => {
+    if (!showGifPicker || !gifPickerRef.current || !gifPickerAnchor) return;
+    const rect = gifPickerRef.current.getBoundingClientRect();
+    const margin = 8;
+    let left = gifPickerAnchor.x - rect.width;
+    let top = gifPickerAnchor.y;
+    if (left < margin) left = margin;
+    if (left + rect.width > window.innerWidth - margin) {
+      left = window.innerWidth - rect.width - margin;
+    }
+    const aboveTop = gifPickerAnchor.y - rect.height - margin;
+    const belowTop = gifPickerAnchor.y + margin;
+    if (aboveTop >= margin) {
+      top = aboveTop;
+    } else if (belowTop + rect.height <= window.innerHeight - margin) {
+      top = belowTop;
+    } else {
+      top = Math.max(margin, window.innerHeight - rect.height - margin);
+    }
+    if (!gifPickerStyle || gifPickerStyle.left !== left || gifPickerStyle.top !== top) {
+      setGifPickerStyle({ left, top });
+    }
+  }, [showGifPicker, gifPickerAnchor, gifPickerStyle]);
+
+  useEffect(() => {
+    if (!showGifPicker || !gifPickerRef.current) return;
+    const updatePos = () => {
+      if (!gifPickerRef.current || !gifPickerAnchor) return;
+      const rect = gifPickerRef.current.getBoundingClientRect();
+      const margin = 8;
+      let left = gifPickerAnchor.x - rect.width;
+      if (left < margin) left = margin;
+      if (left + rect.width > window.innerWidth - margin) {
+        left = window.innerWidth - rect.width - margin;
+      }
+      const aboveTop = gifPickerAnchor.y - rect.height - margin;
+      const belowTop = gifPickerAnchor.y + margin;
+      let top = gifPickerAnchor.y;
+      if (aboveTop >= margin) {
+        top = aboveTop;
+      } else if (belowTop + rect.height <= window.innerHeight - margin) {
+        top = belowTop;
+      } else {
+        top = Math.max(margin, window.innerHeight - rect.height - margin);
+      }
+      setGifPickerStyle((prev) =>
+        prev && prev.left === left && prev.top === top ? prev : { left, top }
+      );
+    };
+    const ro = new ResizeObserver(updatePos);
+    ro.observe(gifPickerRef.current);
+    window.addEventListener("resize", updatePos);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updatePos);
+    };
+  }, [showGifPicker, gifPickerAnchor]);
 
   useEffect(() => {
     if (!showEmojiPicker || !emojiPickerRef.current) return;
@@ -613,7 +696,18 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       return;
     }
 
-    const content = extractRawContent(editorRef.current);
+    let content = extractRawContent(editorRef.current);
+    // Auto-convert :emojiName: shortcodes to custom emoji format
+    if (emojis.length > 0) {
+      const emojiByName = new Map(emojis.map((e) => [e.name.toLowerCase(), e]));
+      content = content.replace(
+        /(?<!<):([a-zA-Z0-9_]{2,32}):(?![a-fA-F0-9-]{36}>)/g,
+        (match, name) => {
+          const emoji = emojiByName.get((name as string).toLowerCase());
+          return emoji ? `<:${emoji.name}:${emoji.id}>` : match;
+        },
+      );
+    }
     if (!content.trim() && files.length === 0) return;
     if (content.length > maxMessageLength) {
       setInputError(`Message must be 1-${maxMessageLength} characters.`);
@@ -676,6 +770,36 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       }
     }
     setShowEmojiPicker(!showEmojiPicker);
+  };
+
+  const handleGifPickerToggle = () => {
+    if (!showGifPicker) {
+      const rect = gifButtonRef.current?.getBoundingClientRect();
+      if (rect) {
+        setGifPickerAnchor({ x: rect.right, y: rect.top });
+      } else {
+        setGifPickerAnchor({ x: 0, y: 0 });
+      }
+    }
+    setShowGifPicker(!showGifPicker);
+  };
+
+  const handleGifSelect = async (url: string) => {
+    if (!effectiveChannelId || sending) return;
+    if (!canSendMessages) {
+      addToast('You do not have permission to send messages in this channel.', 'error');
+      return;
+    }
+    setSending(true);
+    try {
+      await sendMessage(effectiveChannelId, url, [], replyingTo?.id);
+      setReplyingTo(null);
+    } catch (err) {
+      console.error("Failed to send GIF:", err);
+      addToast('Failed to send GIF.', 'error');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -818,6 +942,22 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
           {showEmojiPicker && (
             <div className="emoji-picker-input-container" ref={emojiPickerRef} style={emojiPickerStyle ? emojiPickerStyle : { visibility: "hidden" }}>
               <Picker data={data} custom={customEmojiCategory} onEmojiSelect={handlePickerEmojiSelect} theme="dark" previewPosition="none" skinTonePosition="none" />
+            </div>
+          )}
+        </div>
+        <div className="gif-picker-wrapper">
+          <button
+            type="button"
+            className="gif-btn"
+            ref={gifButtonRef}
+            onClick={handleGifPickerToggle}
+            title="GIF"
+          >
+            GIF
+          </button>
+          {showGifPicker && (
+            <div className="gif-picker-container" ref={gifPickerRef} style={gifPickerStyle ? gifPickerStyle : { visibility: "hidden" }}>
+              <GifPicker onSelect={handleGifSelect} onClose={() => setShowGifPicker(false)} />
             </div>
           )}
         </div>

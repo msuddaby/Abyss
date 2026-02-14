@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useWatchPartyStore, useMediaProviderStore, useServerStore, useVoiceStore, useAuthStore, getStorage } from '@abyss/shared';
+import { useWatchPartyStore, useMediaProviderStore, useServerStore, useVoiceStore, useAuthStore, getStorage, Permission, hasChannelPermission } from '@abyss/shared';
 import { getConnection } from '@abyss/shared';
 import { PlexPlayerAdapter } from '../services/playerAdapters/PlexPlayerAdapter';
 import { YouTubePlayerAdapter } from '../services/playerAdapters/YouTubePlayerAdapter';
@@ -39,8 +39,16 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     return saved ? parseFloat(saved) : 1;
   });
 
+  const channels = useServerStore((s) => s.channels);
+  const voiceParticipants = useVoiceStore((s) => s.participants);
+
   const isHost = activeParty?.hostUserId === currentUser?.id;
   const isYouTube = activeParty?.providerType === 'YouTube';
+
+  const currentChannel = channels.find((c) => c.id === currentChannelId);
+  const canControl = isHost || hasChannelPermission(currentChannel?.permissions, Permission.ModerateWatchTogether);
+
+  const [showTransfer, setShowTransfer] = useState(false);
 
   // Fetch playback URL when party starts or item changes (skip for YouTube)
   useEffect(() => {
@@ -263,6 +271,16 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     if (channel) useServerStore.getState().setActiveChannel(channel);
   }, [currentChannelId]);
 
+  const handleTransferHost = useCallback(async (userId: string) => {
+    if (!currentChannelId) return;
+    try {
+      await useWatchPartyStore.getState().transferHost(currentChannelId, userId);
+    } catch (e) {
+      console.error('Failed to transfer host:', e);
+    }
+    setShowTransfer(false);
+  }, [currentChannelId]);
+
   // Hide queue panel when switching to mini mode
   useEffect(() => {
     if (mini) setShowQueue(false);
@@ -302,7 +320,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
             <div className="wp-mini-info">
               <div className="wp-mini-title" title={activeParty.itemTitle}>{activeParty.itemTitle}</div>
               <div className="wp-mini-controls">
-                {isHost ? (
+                {canControl ? (
                   <button className="wp-ctrl-btn" onClick={isPlaying ? handlePause : handlePlay} title={isPlaying ? 'Pause' : 'Play'}>
                     {isPlaying ? '⏸' : '▶'}
                   </button>
@@ -357,6 +375,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
           ) : (
             <WatchPartyControls
               isHost={isHost}
+              canControl={canControl}
               isPlaying={isPlaying}
               currentTime={currentTime}
               duration={duration || (activeParty.itemDurationMs ?? 0)}
@@ -375,13 +394,34 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
               onTuneOut={handleTuneOut}
               onFullscreen={handleFullscreen}
               isFullscreen={isFullscreen}
+              onTransferHost={isHost ? () => setShowTransfer(!showTransfer) : undefined}
             />
           )}
         </div>
+        {!mini && showTransfer && isHost && (
+          <div className="wpq-panel wp-transfer-panel">
+            <div className="wpq-header">
+              <span>Transfer Host</span>
+              <button className="wpq-close" onClick={() => setShowTransfer(false)}>&#10005;</button>
+            </div>
+            <div className="wpq-list">
+              {Array.from(voiceParticipants.entries())
+                .filter(([id]) => id !== currentUser?.id)
+                .map(([id, name]) => (
+                  <div key={id} className="wpq-item wp-transfer-item" onClick={() => handleTransferHost(id)}>
+                    <span className="wp-transfer-name">{name}</span>
+                  </div>
+                ))}
+              {Array.from(voiceParticipants.keys()).filter((id) => id !== currentUser?.id).length === 0 && (
+                <div className="wpq-empty">No other users in voice</div>
+              )}
+            </div>
+          </div>
+        )}
         {!mini && showQueue && (
           <WatchPartyQueue
             queue={activeParty.queue}
-            isHost={isHost}
+            canControl={canControl}
             channelId={currentChannelId!}
             onClose={() => setShowQueue(false)}
           />
