@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor, getNameplateStyle } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
@@ -16,8 +16,47 @@ export default function MemberList() {
   const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const openContextMenu = useContextMenuStore((s) => s.open);
+  const [shouldPauseAnimations, setShouldPauseAnimations] = useState(false);
+  const [hoveredMemberId, setHoveredMemberId] = useState<string | null>(null);
+  const memberListRef = useRef<HTMLDivElement>(null);
 
   const currentMember = members.find((m) => m.userId === currentUser?.id);
+
+  // Pause animations when not visible or tab is inactive
+  useEffect(() => {
+    let isVisible = true;
+    let isDocumentVisible = !document.hidden;
+
+    const updateAnimationState = () => {
+      setShouldPauseAnimations(!isVisible || !isDocumentVisible);
+    };
+
+    // Intersection Observer to detect if member list is in viewport
+    const observer = new IntersectionObserver(
+      (entries) => {
+        isVisible = entries[0].isIntersecting;
+        updateAnimationState();
+      },
+      { threshold: 0 }
+    );
+
+    if (memberListRef.current) {
+      observer.observe(memberListRef.current);
+    }
+
+    // Visibility change listener to detect tab focus
+    const handleVisibilityChange = () => {
+      isDocumentVisible = !document.hidden;
+      updateAnimationState();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   if (members.length === 0) return null;
 
@@ -103,8 +142,26 @@ export default function MemberList() {
     const displayColor = getDisplayColor(m);
     const nameplateStyle = getNameplateStyle(m.user);
     const nameStyle = nameplateStyle ?? (displayColor ? { color: displayColor } : undefined);
+    const isHovered = hoveredMemberId === m.userId;
+
+    // Add performance hints and hover-based animation control
+    const optimizedStyle = nameplateStyle?.animation ? {
+      ...nameStyle,
+      willChange: 'background-position',
+      animationPlayState: (shouldPauseAnimations || !isHovered) ? 'paused' : 'running',
+      transform: 'translateZ(0)',
+      backfaceVisibility: 'hidden',
+    } : nameStyle;
+
     return (
-      <div key={m.userId} className={`member-item${!onlineUsers.has(m.userId) ? ' offline' : ''}`} onClick={(e) => handleMemberClick(m.userId, e)} onContextMenu={(e) => handleContextMenu(m, e)}>
+      <div
+        key={m.userId}
+        className={`member-item${!onlineUsers.has(m.userId) ? ' offline' : ''}`}
+        onClick={(e) => handleMemberClick(m.userId, e)}
+        onContextMenu={(e) => handleContextMenu(m, e)}
+        onMouseEnter={() => setHoveredMemberId(m.userId)}
+        onMouseLeave={() => setHoveredMemberId(null)}
+      >
         <div className="member-avatar">
           {m.user.avatarUrl ? (
             <img src={m.user.avatarUrl.startsWith('http') ? m.user.avatarUrl : `${getApiBase()}${m.user.avatarUrl}`} alt={m.user.displayName} />
@@ -114,7 +171,7 @@ export default function MemberList() {
           <span className={`presence-dot ${onlineUsers.has(m.userId) ? 'online' : 'offline'}`} />
         </div>
         <div className="member-text">
-          <span className="member-name" style={nameStyle}>{m.user.displayName}</span>
+          <span className="member-name" style={optimizedStyle}>{m.user.displayName}</span>
           <span className="member-status">{m.user.status || ''}</span>
         </div>
         {m.isOwner && <span className="member-badge" style={{ background: '#faa61a', color: '#000' }}>Owner</span>}
@@ -123,7 +180,7 @@ export default function MemberList() {
   };
 
   return (
-    <div className="member-list">
+    <div className="member-list" ref={memberListRef}>
       {displayRoleGroups.orderedGroups.map((group) => (
         <div key={group.role.id}>
           <span className="category-label">{group.role.name} — {group.members.length}</span>

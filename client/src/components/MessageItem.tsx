@@ -46,6 +46,7 @@ export default function MessageItem({
     | { kind: "url"; url: string; fileName: string }
     | null
   >(null);
+  const [isHovered, setIsHovered] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const reactionsRef = useRef<MessageReactionsHandle>(null);
@@ -72,7 +73,13 @@ export default function MessageItem({
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
-  const authorStyle = nameplateStyle ?? (authorColor ? { color: authorColor } : undefined);
+  const authorStyle = nameplateStyle?.animation ? {
+    ...nameplateStyle,
+    animationPlayState: isHovered ? 'running' : 'paused',
+    willChange: 'background-position',
+    transform: 'translateZ(0)',
+    backfaceVisibility: 'hidden',
+  } : (nameplateStyle ?? (authorColor ? { color: authorColor } : undefined));
   const membersById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const m of members) {
@@ -289,6 +296,8 @@ export default function MessageItem({
       ref={messageRef}
       className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}`}
       onContextMenu={handleContextMenu}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       {...longPressHandlers}
     >
       {message.replyTo && (
