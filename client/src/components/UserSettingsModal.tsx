@@ -3,6 +3,7 @@ import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, 
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
+import { VoiceDebugPanel } from "./VoiceDebugPanel";
 import SettingsModal from "./SettingsModal";
 import { isMobile } from "../stores/mobileStore";
 import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
@@ -978,6 +979,8 @@ export default function UserSettingsModal({
                     </div>
                   </div>
                 )}
+
+                <VoiceDebugPanel />
               </>
             )}
 

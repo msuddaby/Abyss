@@ -215,7 +215,28 @@ export interface ConnectionStats {
   packetLoss: number | null;
   jitter: number | null;
 }
+
+export interface PeerDebugInfo {
+  userId: string;
+  iceState: RTCIceConnectionState;
+  signalingState: RTCSignalingState;
+  connectionType: 'direct' | 'relay' | 'unknown';
+  roundTripTime: number | null;
+  packetLoss: number | null;
+  jitter: number | null;
+  bytesReceived: number;
+  bytesSent: number;
+}
+
+export interface DetailedConnectionStats extends ConnectionStats {
+  connectionType: 'direct' | 'relay' | 'mixed' | 'unknown';
+  iceConnectionState: string;
+  activePeerCount: number;
+  perPeerStats: PeerDebugInfo[];
+}
+
 let cachedStats: ConnectionStats = { roundTripTime: null, packetLoss: null, jitter: null };
+let cachedDetailedStats: DetailedConnectionStats | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
 
 // Zombie track detection: after ICE restart, monitor bytesReceived to detect
@@ -230,6 +251,10 @@ export function getConnectionStats(): ConnectionStats {
   return cachedStats;
 }
 
+export function getDetailedConnectionStats(): DetailedConnectionStats | null {
+  return cachedDetailedStats;
+}
+
 function startStatsCollection() {
   if (statsInterval) return;
   statsInterval = setInterval(async () => {
@@ -237,31 +262,83 @@ function startStatsCollection() {
     let totalLoss = 0, lossCount = 0;
     let totalJitter = 0, jitterCount = 0;
 
+    const perPeerData: Map<string, PeerDebugInfo> = new Map();
+    const connectionTypes: Set<string> = new Set();
+
     for (const [peerId, pc] of peers) {
       try {
         const stats = await pc.getStats();
         let peerBytesReceived = 0;
+        let peerBytesSent = 0;
+        let peerRtt: number | null = null;
+        let peerLoss: number | null = null;
+        let peerJitter: number | null = null;
+        let peerConnectionType: 'direct' | 'relay' | 'unknown' = 'unknown';
+
         stats.forEach((report) => {
-          if (report.type === "candidate-pair" && report.state === "succeeded" && report.currentRoundTripTime != null) {
-            totalRtt += report.currentRoundTripTime * 1000; // to ms
-            rttCount++;
+          if (report.type === "candidate-pair" && report.state === "succeeded") {
+            if (report.currentRoundTripTime != null) {
+              const rttMs = report.currentRoundTripTime * 1000;
+              peerRtt = rttMs;
+              totalRtt += rttMs;
+              rttCount++;
+            }
+
+            // Determine connection type from candidate types
+            const localCandidateId = report.localCandidateId;
+            const remoteCandidateId = report.remoteCandidateId;
+            const localCandidate = localCandidateId ? stats.get(localCandidateId) : null;
+            const remoteCandidate = remoteCandidateId ? stats.get(remoteCandidateId) : null;
+
+            if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
+              peerConnectionType = 'relay';
+            } else if (localCandidate?.candidateType === 'host' && remoteCandidate?.candidateType === 'host') {
+              peerConnectionType = 'direct';
+            } else if (localCandidate?.candidateType === 'srflx' || remoteCandidate?.candidateType === 'srflx') {
+              peerConnectionType = 'direct'; // STUN-assisted is still P2P
+            }
+            connectionTypes.add(peerConnectionType);
           }
+
           if (report.type === "inbound-rtp" && report.kind === "audio") {
             if (report.packetsLost != null && report.packetsReceived != null) {
               const total = report.packetsLost + report.packetsReceived;
               if (total > 0) {
-                totalLoss += (report.packetsLost / total) * 100;
+                const lossPercent = (report.packetsLost / total) * 100;
+                peerLoss = lossPercent;
+                totalLoss += lossPercent;
                 lossCount++;
               }
             }
             if (report.jitter != null) {
-              totalJitter += report.jitter * 1000; // to ms
+              const jitterMs = report.jitter * 1000;
+              peerJitter = jitterMs;
+              totalJitter += jitterMs;
               jitterCount++;
             }
             if (report.bytesReceived != null) {
               peerBytesReceived += report.bytesReceived;
             }
           }
+
+          if (report.type === "outbound-rtp" && report.kind === "audio") {
+            if (report.bytesSent != null) {
+              peerBytesSent += report.bytesSent;
+            }
+          }
+        });
+
+        // Store per-peer debug info
+        perPeerData.set(peerId, {
+          userId: peerId,
+          iceState: pc.iceConnectionState,
+          signalingState: pc.signalingState,
+          connectionType: peerConnectionType,
+          roundTripTime: peerRtt,
+          packetLoss: peerLoss,
+          jitter: peerJitter,
+          bytesReceived: peerBytesReceived,
+          bytesSent: peerBytesSent,
         });
 
         // Zombie track detection: if ICE is connected but bytesReceived isn't
@@ -302,6 +379,25 @@ function startStatsCollection() {
       packetLoss: lossCount > 0 ? totalLoss / lossCount : null,
       jitter: jitterCount > 0 ? totalJitter / jitterCount : null,
     };
+
+    // Determine overall connection type
+    let overallConnectionType: 'direct' | 'relay' | 'mixed' | 'unknown' = 'unknown';
+    if (connectionTypes.size === 0) {
+      overallConnectionType = 'unknown';
+    } else if (connectionTypes.size === 1) {
+      overallConnectionType = Array.from(connectionTypes)[0] as 'direct' | 'relay';
+    } else {
+      overallConnectionType = 'mixed';
+    }
+
+    // Store detailed stats
+    cachedDetailedStats = {
+      ...cachedStats,
+      connectionType: overallConnectionType,
+      iceConnectionState: peers.size > 0 ? Array.from(peers.values())[0].iceConnectionState : 'new',
+      activePeerCount: peers.size,
+      perPeerStats: Array.from(perPeerData.values()),
+    };
   }, 3000);
 }
 
@@ -311,6 +407,7 @@ function stopStatsCollection() {
     statsInterval = null;
   }
   cachedStats = { roundTripTime: null, packetLoss: null, jitter: null };
+  cachedDetailedStats = null;
 }
 
 // ICE reconnection timers per peer

@@ -17,6 +17,7 @@ server/Abyss.Api/bin/
 server/Abyss.Api/bin\\*/
 server/Abyss.Api/obj/
 server/Abyss.Api/appsettings.Development.json
+server/Abyss.Api/data-protection-keys/
 
 # Node / Vite
 client/node_modules/

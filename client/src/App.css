@@ -4013,6 +4013,145 @@
   color: var(--text-muted);
 }
 
+/* Voice Debug Panel */
+.voice-debug-panel {
+  margin-top: 16px;
+}
+
+.voice-debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.voice-debug-header:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.voice-debug-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.voice-debug-toggle {
+  transition: transform 0.2s;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.voice-debug-toggle.expanded {
+  transform: rotate(180deg);
+}
+
+.voice-debug-content {
+  margin-top: 8px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.voice-debug-not-active {
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+  padding: 16px;
+}
+
+.voice-debug-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.voice-debug-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.voice-debug-metric {
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+}
+
+.voice-debug-metric-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.voice-debug-metric-value {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.voice-debug-metric-value.quality-good {
+  color: #6bbf59;
+}
+
+.voice-debug-metric-value.quality-warning {
+  color: #d9a441;
+}
+
+.voice-debug-metric-value.quality-error {
+  color: #d1605a;
+}
+
+.voice-debug-peer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.voice-debug-peer-card {
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  border-left: 3px solid var(--accent-primary);
+}
+
+.voice-debug-peer-header {
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.voice-debug-peer-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  font-size: 12px;
+}
+
+.voice-debug-peer-metrics > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.voice-debug-peer-metrics .label {
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.voice-debug-timestamp {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+  margin-top: 12px;
+}
+
 .btn-small {
   padding: 4px 12px;
   font-size: 13px;

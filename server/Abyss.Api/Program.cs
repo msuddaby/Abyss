@@ -117,8 +117,13 @@ builder.Services.AddScoped<MediaUploadService>();
 builder.Services.AddScoped<CosmeticService>();
 
 // Watch party / media providers
+// Use local directory for dev, /app for Docker/production
+var dataProtectionPath = Directory.Exists("/app")
+    ? "/app/data-protection-keys"
+    : Path.Combine(Directory.GetCurrentDirectory(), "data-protection-keys");
+Directory.CreateDirectory(dataProtectionPath);
 builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo("/app/data-protection-keys"));
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath));
 builder.Services.AddSingleton<ProviderConfigProtector>();
 builder.Services.AddScoped<MediaProviderFactory>();
 builder.Services.AddSingleton<WatchPartyService>();
