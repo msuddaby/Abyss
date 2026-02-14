@@ -26,6 +26,8 @@ function ensureYouTubeAPI(): Promise<void> {
 
 export class YouTubePlayerAdapter implements PlayerAdapter {
   private player: YT.Player | null = null;
+  private ready = false;
+  private pendingActions: (() => void)[] = [];
   private pollId: ReturnType<typeof setInterval> | null = null;
   private container: HTMLElement | null = null;
   private playerDiv: HTMLDivElement | null = null;
@@ -60,6 +62,9 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
         },
         events: {
           onReady: () => {
+            this.ready = true;
+            this.pendingActions.forEach((fn) => fn());
+            this.pendingActions = [];
             this.startPolling();
           },
           onStateChange: (event) => {
@@ -104,16 +109,24 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
     }, 250);
   }
 
+  private whenReady(fn: () => void): void {
+    if (this.ready && this.player) {
+      fn();
+    } else {
+      this.pendingActions.push(fn);
+    }
+  }
+
   play(): void {
-    this.player?.playVideo();
+    this.whenReady(() => this.player!.playVideo());
   }
 
   pause(): void {
-    this.player?.pauseVideo();
+    this.whenReady(() => this.player!.pauseVideo());
   }
 
   seek(timeMs: number): void {
-    this.player?.seekTo(timeMs / 1000, true);
+    this.whenReady(() => this.player!.seekTo(timeMs / 1000, true));
   }
 
   getCurrentTime(): number {
@@ -170,6 +183,8 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
       // ignore
     }
     this.player = null;
+    this.ready = false;
+    this.pendingActions = [];
     // The YT.Player replaces our div with an iframe, so clean up the container
     if (this.container) {
       const iframe = this.container.querySelector('iframe');
