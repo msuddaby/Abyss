@@ -5,6 +5,7 @@ import { GlobalShortcutManager } from './global-shortcuts';
 import { setupTray } from './tray';
 import { setupAppMenu } from './app-menu';
 import { UpdateManager } from './update-manager';
+import { AutoLaunchManager } from './auto-launch';
 import { installDesktopEntry } from './linux-desktop-integration';
 import Store from 'electron-store';
 
@@ -31,6 +32,7 @@ const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 let shortcutManager: GlobalShortcutManager | null = null;
 let updateManager: UpdateManager | null = null;
+let autoLaunchManager: AutoLaunchManager | null = null;
 let isQuitting = false;
 
 function setupScreenShareHandler(win: BrowserWindow) {
@@ -224,6 +226,9 @@ function createWindow() {
     updateManager = new UpdateManager(mainWindow);
   }
 
+  // Initialize auto-launch manager
+  autoLaunchManager = new AutoLaunchManager();
+
   // Setup screen share handler (intercepts getDisplayMedia)
   // On Linux, the renderer uses getUserMedia with chromeMediaSource instead of
   // getDisplayMedia to avoid the PipeWire double-dialog issue
@@ -232,7 +237,7 @@ function createWindow() {
   }
 
   // Setup IPC handlers
-  setupIpcHandlers(mainWindow, shortcutManager, updateManager ?? undefined);
+  setupIpcHandlers(mainWindow, shortcutManager, autoLaunchManager, updateManager ?? undefined);
 
   // Setup system tray
   setupTray(mainWindow, updateManager ?? undefined);
@@ -246,6 +251,15 @@ function createWindow() {
       event.preventDefault();
       mainWindow?.hide();
     }
+  });
+
+  // Send focus/blur events to renderer for animation pausing
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.send('window-focus-changed', true);
+  });
+
+  mainWindow.on('blur', () => {
+    mainWindow?.webContents.send('window-focus-changed', false);
   });
 }
 

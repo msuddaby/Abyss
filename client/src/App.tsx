@@ -6,6 +6,7 @@ import RegisterPage from './pages/RegisterPage';
 import MainLayout from './pages/MainLayout';
 import ToastHost from './components/ToastHost';
 import ScreenSharePicker from './components/ScreenSharePicker';
+import { useWindowVisibility } from './hooks/useWindowVisibility';
 import './App.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -26,10 +27,20 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
+  const isWindowVisible = useWindowVisibility();
 
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Pause all animations globally when window is not visible
+  useEffect(() => {
+    if (isWindowVisible) {
+      document.body.classList.remove('window-hidden');
+    } else {
+      document.body.classList.add('window-hidden');
+    }
+  }, [isWindowVisible]);
 
   const Router = window.electron ? HashRouter : BrowserRouter;
 

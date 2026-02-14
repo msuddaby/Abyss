@@ -8,7 +8,7 @@ import SettingsModal from "./SettingsModal";
 import { isMobile } from "../stores/mobileStore";
 import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
 
-type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "account";
+type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "app" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -28,7 +28,8 @@ export default function UserSettingsModal({
     { id: "video", label: "Video" },
     { id: "keybinds", label: "Keybinds" },
     { id: "cosmetics", label: "Cosmetics" },
-    { id: "account", label: "Account", separatorBefore: true },
+    { id: "app", label: "App Settings", visible: isElectron(), separatorBefore: true },
+    { id: "account", label: "Account", separatorBefore: !isElectron() },
   ];
 
   const [displayName, setDisplayName] = useState(user.displayName);
@@ -87,6 +88,10 @@ export default function UserSettingsModal({
   const [soundError, setSoundError] = useState<string | null>(null);
   const joinSoundInputRef = useRef<HTMLInputElement>(null);
   const leaveSoundInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-launch state
+  const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(false);
+  const [autoLaunchLoading, setAutoLaunchLoading] = useState(false);
 
   // Cosmetics state
   const [myCosmetics, setMyCosmetics] = useState<UserCosmetic[]>([]);
@@ -378,6 +383,17 @@ export default function UserSettingsModal({
     };
   }, []);
 
+  // Load auto-launch status when app tab is opened
+  useEffect(() => {
+    if (activeTab === "app" && isElectron() && window.electron?.autoLaunch) {
+      setAutoLaunchLoading(true);
+      window.electron.autoLaunch.isEnabled()
+        .then(enabled => setAutoLaunchEnabled(enabled))
+        .catch(err => console.error("Failed to check auto-launch status:", err))
+        .finally(() => setAutoLaunchLoading(false));
+    }
+  }, [activeTab]);
+
   const renderDeviceLabel = (
     device: MediaDeviceInfo,
     index: number,
@@ -494,6 +510,20 @@ export default function UserSettingsModal({
       console.error("Failed to update profile", err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleAutoLaunchToggle = async (enabled: boolean) => {
+    if (!window.electron?.autoLaunch) return;
+    setAutoLaunchLoading(true);
+    try {
+      await window.electron.autoLaunch.setEnabled(enabled);
+      setAutoLaunchEnabled(enabled);
+    } catch (err) {
+      console.error("Failed to toggle auto-launch:", err);
+      alert("Failed to change auto-launch setting.");
+    } finally {
+      setAutoLaunchLoading(false);
     }
   };
 
@@ -1143,6 +1173,24 @@ export default function UserSettingsModal({
                   </>
                 )}
               </>
+            )}
+
+            {activeTab === "app" && (
+              <div className="us-card">
+                <div className="us-card-title">Launch on Startup</div>
+                <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
+                  Automatically start Abyss when you log in to your computer.
+                </p>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={autoLaunchEnabled}
+                    disabled={autoLaunchLoading}
+                    onChange={(e) => handleAutoLaunchToggle(e.target.checked)}
+                  />
+                  <span>Launch Abyss on system startup</span>
+                </label>
+              </div>
             )}
 
             {activeTab === "account" && (

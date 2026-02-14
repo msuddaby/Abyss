@@ -1,7 +1,7 @@
 {
   "name": "abyss-desktop",
   "productName": "Abyss",
-  "version": "1.2.14",
+  "version": "1.2.15",
   "description": "Abyss Desktop - Electron wrapper for Abyss web client",
   "main": "dist/main/main.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "url": "https://github.com/msuddaby/Abyss.git"
   },
   "dependencies": {
+    "auto-launch": "^5.0.6",
     "electron-log": "^5.1.0",
     "electron-squirrel-startup": "^1.0.1",
     "electron-store": "^8.2.0",

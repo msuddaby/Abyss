@@ -69,6 +69,16 @@ contextBridge.exposeInMainWorld('electron', {
     return await ipcRenderer.invoke('is-focused');
   },
 
+  onWindowFocusChanged: (callback: (focused: boolean) => void) => {
+    const subscription = (_event: any, focused: boolean) => callback(focused);
+    ipcRenderer.on('window-focus-changed', subscription);
+
+    // Return unsubscribe function
+    return () => {
+      ipcRenderer.removeListener('window-focus-changed', subscription);
+    };
+  },
+
   showWindow: () => {
     ipcRenderer.send('show-window');
   },
@@ -105,6 +115,25 @@ contextBridge.exposeInMainWorld('electron', {
 
   selectScreenShareSource: (sourceId: string | null) => {
     ipcRenderer.send('screen-share-selected', sourceId);
+  },
+
+  // Auto-launch on startup
+  autoLaunch: {
+    isEnabled: async () => {
+      return await ipcRenderer.invoke('auto-launch-is-enabled');
+    },
+
+    enable: async () => {
+      return await ipcRenderer.invoke('auto-launch-enable');
+    },
+
+    disable: async () => {
+      return await ipcRenderer.invoke('auto-launch-disable');
+    },
+
+    setEnabled: async (enabled: boolean) => {
+      return await ipcRenderer.invoke('auto-launch-set-enabled', enabled);
+    },
   },
 
   // Auto-updater (only available in production builds)

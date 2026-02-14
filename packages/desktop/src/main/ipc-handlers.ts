@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import Store from 'electron-store';
 import { GlobalShortcutManager } from './global-shortcuts';
+import { AutoLaunchManager } from './auto-launch';
 import { showNotification } from './notifications';
 import { UpdateManager } from './update-manager';
 
@@ -9,6 +10,7 @@ const store = new Store();
 export function setupIpcHandlers(
   window: BrowserWindow,
   shortcutManager: GlobalShortcutManager,
+  autoLaunchManager: AutoLaunchManager,
   updateManager?: UpdateManager
 ) {
   // Check accessibility permissions
@@ -89,6 +91,23 @@ export function setupIpcHandlers(
   ipcMain.on('store-remove', (event, key: string) => {
     store.delete(`client.${key}`);
     event.returnValue = true;
+  });
+
+  // Auto-launch handlers
+  ipcMain.handle('auto-launch-is-enabled', async () => {
+    return await autoLaunchManager.isEnabled();
+  });
+
+  ipcMain.handle('auto-launch-enable', async () => {
+    await autoLaunchManager.enable();
+  });
+
+  ipcMain.handle('auto-launch-disable', async () => {
+    await autoLaunchManager.disable();
+  });
+
+  ipcMain.handle('auto-launch-set-enabled', async (_event, enabled: boolean) => {
+    await autoLaunchManager.setEnabled(enabled);
   });
 
   // Update handlers (only available in production)

@@ -56,6 +56,7 @@ interface Window {
 
     // Window state
     isFocused: () => Promise<boolean>;
+    onWindowFocusChanged: (callback: (focused: boolean) => void) => () => void; // Returns unsubscribe function
     showWindow: () => void;
     minimizeWindow: () => void;
     toggleMaximize: () => void;
@@ -63,6 +64,14 @@ interface Window {
 
     // Update log forwarding
     onUpdateLog: (callback: (msg: string) => void) => () => void;
+
+    // Auto-launch on startup
+    autoLaunch: {
+      isEnabled: () => Promise<boolean>;
+      enable: () => Promise<void>;
+      disable: () => Promise<void>;
+      setEnabled: (enabled: boolean) => Promise<void>;
+    };
 
     // Auto-updater (only available in production builds)
     updates: ElectronUpdates;

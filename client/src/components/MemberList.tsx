@@ -4,6 +4,7 @@ import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayC
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
 import { useContextMenuStore } from '../stores/contextMenuStore';
+import { useWindowVisibility } from '../hooks/useWindowVisibility';
 
 export default function MemberList() {
   const members = useServerStore((s) => s.members);
@@ -16,26 +17,18 @@ export default function MemberList() {
   const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const openContextMenu = useContextMenuStore((s) => s.open);
-  const [shouldPauseAnimations, setShouldPauseAnimations] = useState(false);
   const [hoveredMemberId, setHoveredMemberId] = useState<string | null>(null);
+  const [isInViewport, setIsInViewport] = useState(true);
   const memberListRef = useRef<HTMLDivElement>(null);
+  const isWindowVisible = useWindowVisibility();
 
   const currentMember = members.find((m) => m.userId === currentUser?.id);
 
-  // Pause animations when not visible or tab is inactive
+  // Detect if member list is in viewport
   useEffect(() => {
-    let isVisible = true;
-    let isDocumentVisible = !document.hidden;
-
-    const updateAnimationState = () => {
-      setShouldPauseAnimations(!isVisible || !isDocumentVisible);
-    };
-
-    // Intersection Observer to detect if member list is in viewport
     const observer = new IntersectionObserver(
       (entries) => {
-        isVisible = entries[0].isIntersecting;
-        updateAnimationState();
+        setIsInViewport(entries[0].isIntersecting);
       },
       { threshold: 0 }
     );
@@ -44,19 +37,13 @@ export default function MemberList() {
       observer.observe(memberListRef.current);
     }
 
-    // Visibility change listener to detect tab focus
-    const handleVisibilityChange = () => {
-      isDocumentVisible = !document.hidden;
-      updateAnimationState();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     return () => {
       observer.disconnect();
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  // Combine window visibility with viewport visibility
+  const shouldPauseAnimations = !isWindowVisible || !isInViewport;
 
   if (members.length === 0) return null;
 

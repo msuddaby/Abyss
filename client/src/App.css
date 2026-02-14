@@ -1,3 +1,10 @@
+/* Global animation pause when window is not visible/focused */
+body.window-hidden *,
+body.window-hidden *::before,
+body.window-hidden *::after {
+  animation-play-state: paused !important;
+}
+
 /* Auth Pages */
 .auth-page {
   display: flex;
