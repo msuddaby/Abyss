@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, net, protocol, session, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
@@ -12,6 +12,20 @@ import Store from 'electron-store';
 if (require('electron-squirrel-startup')) {
   app.quit();
 }
+
+// Register custom scheme before app is ready — gives the renderer a real
+// origin (app://abyss) instead of file://, which fixes YouTube embedding
+// (error 150/153) and other web APIs that reject null/file:// origins.
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'app',
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    stream: true,
+  }
+}]);
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
@@ -63,23 +77,36 @@ function setupScreenShareHandler(win: BrowserWindow) {
 }
 
 function createWindow() {
-  // Fix YouTube embedding in production: file:// origins send no Referer,
-  // which causes YouTube to reject embeds with error 150/153 for any video
-  // with embedding restrictions. Set a valid Referer so YouTube accepts them.
-  session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['https://*.youtube.com/*'] },
-    (details, callback) => {
-      const ref = details.requestHeaders['Referer'];
-      if (!ref || ref.startsWith('file://')) {
-        details.requestHeaders['Referer'] = 'https://www.youtube.com/';
+  // Serve production app files via custom 'app://' protocol so the renderer
+  // gets a real origin (app://abyss) instead of file://. This fixes YouTube
+  // embedding and gives us a proper secure context.
+  if (process.env.NODE_ENV !== 'development') {
+    const clientDir = app.isPackaged
+      ? path.join(process.resourcesPath, 'dist')
+      : path.join(__dirname, '../../../../client/dist');
+
+    protocol.handle('app', (request) => {
+      const url = new URL(request.url);
+      let filePath = path.normalize(path.join(clientDir, decodeURIComponent(url.pathname)));
+
+      // Prevent directory traversal
+      if (!filePath.startsWith(clientDir)) {
+        return new Response('Forbidden', { status: 403 });
       }
-      callback({ requestHeaders: details.requestHeaders });
-    }
-  );
+
+      // SPA fallback: serve index.html for routes without a file extension
+      if (!path.extname(filePath)) {
+        filePath = path.join(clientDir, 'index.html');
+      }
+
+      return net.fetch(`file://${filePath}`);
+    });
+  }
 
   // Set Content Security Policy (only for our own pages, not third-party iframes)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const isOwnPage =
+      details.url.startsWith('app://') ||
       details.url.startsWith('file://') ||
       details.url.startsWith('http://localhost');
 
@@ -155,7 +182,7 @@ function createWindow() {
 
   // Prevent the main window from navigating away from the app
   mainWindow.webContents.on('will-navigate', (event, url) => {
-    const appOrigins = ['http://localhost:5173', 'file://'];
+    const appOrigins = ['http://localhost:5173', 'app://', 'file://'];
     if (!appOrigins.some((origin) => url.startsWith(origin))) {
       event.preventDefault();
       shell.openExternal(url);
@@ -172,12 +199,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
-    // Production: load from built client
-    const clientPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'dist/index.html')
-      : path.join(__dirname, '../../../../client/dist/index.html');
-
-    mainWindow.loadFile(clientPath);
+    mainWindow.loadURL('app://abyss/');
   }
 
   // Initialize global shortcut manager
