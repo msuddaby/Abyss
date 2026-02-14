@@ -63,6 +63,20 @@ function setupScreenShareHandler(win: BrowserWindow) {
 }
 
 function createWindow() {
+  // Fix YouTube embedding in production: file:// origins send no Referer,
+  // which causes YouTube to reject embeds with error 150/153 for any video
+  // with embedding restrictions. Set a valid Referer so YouTube accepts them.
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://*.youtube.com/*'] },
+    (details, callback) => {
+      const ref = details.requestHeaders['Referer'];
+      if (!ref || ref.startsWith('file://')) {
+        details.requestHeaders['Referer'] = 'https://www.youtube.com/';
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    }
+  );
+
   // Set Content Security Policy (only for our own pages, not third-party iframes)
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     const isOwnPage =
