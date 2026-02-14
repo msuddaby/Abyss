@@ -132,12 +132,15 @@ export default function MemberList() {
     const isHovered = hoveredMemberId === m.userId;
 
     // Add performance hints and hover-based animation control
-    const optimizedStyle: React.CSSProperties | undefined = nameplateStyle?.animation ? {
+    // Always add animationPlayState control if there's any nameplateStyle (not just when animation property exists)
+    const optimizedStyle: React.CSSProperties | undefined = nameplateStyle ? {
       ...nameStyle,
-      willChange: 'background-position',
       animationPlayState: (shouldPauseAnimations || !isHovered) ? 'paused' : 'running',
-      transform: 'translateZ(0)',
-      backfaceVisibility: 'hidden',
+      ...(nameplateStyle?.animation ? {
+        willChange: 'background-position',
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden',
+      } : {}),
     } : nameStyle;
 
     return (

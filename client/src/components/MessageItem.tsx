@@ -73,13 +73,16 @@ export default function MessageItem({
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
-  const authorStyle: React.CSSProperties | undefined = nameplateStyle?.animation ? {
+  // Always add animationPlayState control if there's any nameplateStyle (not just when animation property exists)
+  const authorStyle: React.CSSProperties | undefined = nameplateStyle ? {
     ...nameplateStyle,
     animationPlayState: isHovered ? 'running' : 'paused',
-    willChange: 'background-position',
-    transform: 'translateZ(0)',
-    backfaceVisibility: 'hidden',
-  } : (nameplateStyle ?? (authorColor ? { color: authorColor } : undefined));
+    ...(nameplateStyle?.animation ? {
+      willChange: 'background-position',
+      transform: 'translateZ(0)',
+      backfaceVisibility: 'hidden',
+    } : {}),
+  } : (authorColor ? { color: authorColor } : undefined);
   const membersById = useMemo(() => {
     const map: Record<string, string> = {};
     for (const m of members) {

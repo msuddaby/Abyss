@@ -1181,14 +1181,14 @@ export default function UserSettingsModal({
                 <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
                   Automatically start Abyss when you log in to your computer.
                 </p>
-                <label className="checkbox-label">
+                <label className="settings-toggle">
                   <input
                     type="checkbox"
                     checked={autoLaunchEnabled}
                     disabled={autoLaunchLoading}
                     onChange={(e) => handleAutoLaunchToggle(e.target.checked)}
                   />
-                  <span>Launch Abyss on system startup</span>
+                  Launch Abyss on system startup
                 </label>
               </div>
             )}

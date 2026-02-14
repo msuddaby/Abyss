@@ -13,6 +13,27 @@ export class AutoLaunchManager {
       path: app.getPath('exe'),
       isHidden: false, // Start minimized if true
     });
+
+    // Enable auto-launch by default on first run
+    this.initializeAutoLaunch();
+  }
+
+  /**
+   * Initialize auto-launch on first run
+   */
+  private async initializeAutoLaunch(): Promise<void> {
+    try {
+      // Check if autoLaunch preference has been set before
+      const hasPreference = store.has('autoLaunch');
+
+      if (!hasPreference) {
+        // First run - enable auto-launch by default
+        await this.enable();
+        console.log('[AutoLaunch] Enabled by default on first run');
+      }
+    } catch (error) {
+      console.error('[AutoLaunch] Failed to initialize:', error);
+    }
   }
 
   /**
@@ -59,7 +80,7 @@ export class AutoLaunchManager {
    * Get the stored preference (used for settings UI)
    */
   getStoredPreference(): boolean {
-    return store.get('autoLaunch', false) as boolean;
+    return store.get('autoLaunch', true) as boolean;
   }
 
   /**

@@ -405,8 +405,15 @@ export default function MessageList() {
               groups.push({ key: msg.id, msgs: [{ msg, grouped: false }], cosmeticStyle: getMessageStyle(msg.author) });
             }
           }
-          return groups.map((group) => (
-            <div key={group.key} className={`message-group${group.cosmeticStyle ? ' message-cosmetic-group' : ''}`} style={group.cosmeticStyle}>
+          return groups.map((group) => {
+            // Add animation control to message cosmetic styles
+            const groupStyle = group.cosmeticStyle ? {
+              ...group.cosmeticStyle,
+              animationPlayState: 'paused', // CSS :hover will override this
+            } : undefined;
+
+            return (
+            <div key={group.key} className={`message-group${group.cosmeticStyle ? ' message-cosmetic-group' : ''}`} style={groupStyle}>
               {group.msgs.map(({ msg, grouped }) => (
                 <div
                   key={msg.id}
@@ -424,7 +431,8 @@ export default function MessageList() {
                 </div>
               ))}
             </div>
-          ));
+            );
+          });
         })()}
         <div ref={bottomRef} />
       </div>

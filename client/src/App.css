@@ -5,6 +5,54 @@ body.window-hidden *::after {
   animation-play-state: paused !important;
 }
 
+/* Pause nameplate animations when not hovered (performance optimization) */
+.member-item:not(:hover) .member-name,
+.member-item:not(:hover) .member-name *,
+.member-item:not(:hover) .member-name::before,
+.member-item:not(:hover) .member-name::after {
+  animation-play-state: paused !important;
+}
+
+/* Enable animations when member item is hovered */
+.member-item:hover .member-name,
+.member-item:hover .member-name *,
+.member-item:hover .member-name::before,
+.member-item:hover .member-name::after {
+  animation-play-state: running !important;
+}
+
+/* Pause message author nameplate animations when message not hovered */
+.message:not(:hover) .msg-author,
+.message:not(:hover) .msg-author *,
+.message:not(:hover) .msg-author::before,
+.message:not(:hover) .msg-author::after {
+  animation-play-state: paused !important;
+}
+
+/* Enable animations when message is hovered */
+.message:hover .msg-author,
+.message:hover .msg-author *,
+.message:hover .msg-author::before,
+.message:hover .msg-author::after {
+  animation-play-state: running !important;
+}
+
+/* Pause message cosmetic group animations when not hovered */
+.message-cosmetic-group:not(:hover),
+.message-cosmetic-group:not(:hover) *,
+.message-cosmetic-group:not(:hover)::before,
+.message-cosmetic-group:not(:hover)::after {
+  animation-play-state: paused !important;
+}
+
+/* Enable animations when message cosmetic group is hovered */
+.message-cosmetic-group:hover,
+.message-cosmetic-group:hover *,
+.message-cosmetic-group:hover::before,
+.message-cosmetic-group:hover::after {
+  animation-play-state: running !important;
+}
+
 /* Auth Pages */
 .auth-page {
   display: flex;
