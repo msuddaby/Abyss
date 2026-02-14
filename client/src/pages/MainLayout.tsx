@@ -28,6 +28,7 @@ export default function MainLayout() {
   const signalRStatus = useSignalRStore((s) => s.status);
   const fetchConfig = useAppConfigStore((s) => s.fetchConfig);
   const activeParty = useWatchPartyStore((s) => s.activeParty);
+  const isTunedIn = useWatchPartyStore((s) => s.isTunedIn);
   const isBrowsingLibrary = useWatchPartyStore((s) => s.isBrowsingLibrary);
   const setIsBrowsingLibrary = useWatchPartyStore((s) => s.setIsBrowsingLibrary);
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
@@ -193,7 +194,7 @@ export default function MainLayout() {
             <p>Select a channel to start chatting</p>
           </div>
         )}
-        {activeParty && voiceChannelId && (
+        {activeParty && voiceChannelId && isTunedIn && (
           <WatchPartyPlayer mini={activeChannel?.id !== voiceChannelId || activeChannel?.type !== 'Voice'} />
         )}
       </div>

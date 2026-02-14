@@ -5,8 +5,10 @@ import type { WatchParty, QueueItem } from '../types/index.js';
 interface WatchPartyState {
   activeParty: WatchParty | null;
   isBrowsingLibrary: boolean;
+  isTunedIn: boolean;
 
   setActiveParty: (party: WatchParty | null) => void;
+  setTunedIn: (val: boolean) => void;
   updatePlaybackState: (timeMs: number, isPlaying: boolean) => void;
   setQueue: (queue: QueueItem[]) => void;
   updateHost: (hostUserId: string) => void;
@@ -24,8 +26,10 @@ interface WatchPartyState {
 export const useWatchPartyStore = create<WatchPartyState>((set, get) => ({
   activeParty: null,
   isBrowsingLibrary: false,
+  isTunedIn: true,
 
-  setActiveParty: (party) => set({ activeParty: party }),
+  setActiveParty: (party) => set({ activeParty: party, ...(party ? { isTunedIn: true } : {}) }),
+  setTunedIn: (val) => set({ isTunedIn: val }),
 
   updatePlaybackState: (timeMs, isPlaying) => {
     const { activeParty } = get();

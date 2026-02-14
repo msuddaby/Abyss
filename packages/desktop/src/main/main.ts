@@ -69,13 +69,14 @@ function createWindow() {
       "default-src 'self'",
       process.env.NODE_ENV === 'development'
         ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
-        : "script-src 'self' 'wasm-unsafe-eval'",
+        : "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com",
       "style-src 'self' 'unsafe-inline'",
       "connect-src 'self' http: https: ws: wss:",
       "img-src 'self' data: blob: http: https:",
       "media-src 'self' blob: mediastream: http: https:",
       "font-src 'self' data:",
       "worker-src 'self' blob:",
+      "frame-src 'self' https://www.youtube.com",
     ].join('; ');
 
     callback({

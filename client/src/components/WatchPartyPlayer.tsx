@@ -31,6 +31,8 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
   const [showQueue, setShowQueue] = useState(false);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [isPiP, setIsPiP] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const playerRef = useRef<HTMLDivElement>(null);
   const [volume, setVolume] = useState(() => {
     const saved = localStorage.getItem('wp-volume');
     return saved ? parseFloat(saved) : 1;
@@ -230,6 +232,28 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     }
   }, []);
 
+  const handleFullscreen = useCallback(() => {
+    const el = playerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(console.warn);
+    } else {
+      el.requestFullscreen().catch(console.warn);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement && document.fullscreenElement === playerRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  const handleTuneOut = useCallback(() => {
+    useWatchPartyStore.getState().setTunedIn(false);
+  }, []);
+
   const handleGoToChannel = useCallback(() => {
     if (!currentChannelId) return;
     const channel = useServerStore.getState().channels.find((c) => c.id === currentChannelId);
@@ -244,7 +268,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
   if (!activeParty) return null;
 
   return (
-    <div className={`wp-player-persistent ${mini ? 'wp-mini' : 'wp-full'}`}>
+    <div ref={playerRef} className={`wp-player-persistent ${mini ? 'wp-mini' : 'wp-full'}`}>
       <div className={mini ? 'wp-mini-video-wrap' : 'wp-container'}>
         <div className={mini ? undefined : 'wp-main'}>
           <div
@@ -308,6 +332,9 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
               onVolumeChange={handleVolumeChange}
               onPiP={pipSupported ? handlePiP : undefined}
               isPiP={isPiP}
+              onTuneOut={handleTuneOut}
+              onFullscreen={handleFullscreen}
+              isFullscreen={isFullscreen}
             />
           )}
         </div>
