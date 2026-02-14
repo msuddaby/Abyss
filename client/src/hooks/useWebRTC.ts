@@ -192,6 +192,14 @@ export interface ConnectionStats {
 let cachedStats: ConnectionStats = { roundTripTime: null, packetLoss: null, jitter: null };
 let statsInterval: ReturnType<typeof setInterval> | null = null;
 
+// Zombie track detection: after ICE restart, monitor bytesReceived to detect
+// tracks that appear live but stop delivering audio data.
+const prevBytesReceived: Map<string, number> = new Map(); // peerId → last bytesReceived
+const zombieStaleCount: Map<string, number> = new Map(); // peerId → consecutive stale intervals
+const lastZombieRecreate: Map<string, number> = new Map(); // peerId → timestamp of last zombie recreation
+const ZOMBIE_STALE_THRESHOLD = 3; // 3 consecutive stale intervals (9s at 3s stats interval)
+const ZOMBIE_COOLDOWN_MS = 30_000; // don't zombie-recreate same peer within 30s
+
 export function getConnectionStats(): ConnectionStats {
   return cachedStats;
 }
@@ -203,9 +211,10 @@ function startStatsCollection() {
     let totalLoss = 0, lossCount = 0;
     let totalJitter = 0, jitterCount = 0;
 
-    for (const pc of peers.values()) {
+    for (const [peerId, pc] of peers) {
       try {
         const stats = await pc.getStats();
+        let peerBytesReceived = 0;
         stats.forEach((report) => {
           if (report.type === "candidate-pair" && report.state === "succeeded" && report.currentRoundTripTime != null) {
             totalRtt += report.currentRoundTripTime * 1000; // to ms
@@ -223,8 +232,40 @@ function startStatsCollection() {
               totalJitter += report.jitter * 1000; // to ms
               jitterCount++;
             }
+            if (report.bytesReceived != null) {
+              peerBytesReceived += report.bytesReceived;
+            }
           }
         });
+
+        // Zombie track detection: if ICE is connected but bytesReceived isn't
+        // increasing, the remote audio sender is likely in a corrupted state
+        // (e.g. after ICE restart). Recreate the peer to force a fresh connection.
+        const iceState = pc.iceConnectionState;
+        const prev = prevBytesReceived.get(peerId);
+        prevBytesReceived.set(peerId, peerBytesReceived);
+
+        if ((iceState === "connected" || iceState === "completed") && prev != null && peerBytesReceived === prev) {
+          const count = (zombieStaleCount.get(peerId) ?? 0) + 1;
+          zombieStaleCount.set(peerId, count);
+          if (count >= ZOMBIE_STALE_THRESHOLD) {
+            const lastRecreate = lastZombieRecreate.get(peerId) ?? 0;
+            if (Date.now() - lastRecreate < ZOMBIE_COOLDOWN_MS) {
+              console.warn(`[zombie] Skipping recreation for ${peerId}, cooldown active`);
+              zombieStaleCount.delete(peerId);
+            } else {
+              console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer`);
+              zombieStaleCount.delete(peerId);
+              prevBytesReceived.delete(peerId);
+              lastZombieRecreate.set(peerId, Date.now());
+              void recreatePeer(peerId).catch((err) => {
+                console.error(`[zombie] Peer recreation failed for ${peerId}:`, err);
+              });
+            }
+          }
+        } else {
+          zombieStaleCount.delete(peerId);
+        }
       } catch {
         // peer may have closed
       }
@@ -908,7 +949,7 @@ async function recreatePeer(peerId: string) {
   const hadScreenTracks = screenTrackSenders.has(peerId);
   await enqueueSignaling(peerId, async () => {
     console.warn(`[recreate] Recreating peer connection for ${peerId} (hadScreenTracks=${hadScreenTracks}, hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream}, hasScreenStream=${!!screenStream})`);
-    const pc = createPeerConnection(peerId);
+    const pc = createPeerConnection(peerId, { preserveZombieRecreateCooldown: true });
     const outStream = getPeerStream();
     if (outStream) {
       outStream.getTracks().forEach((track) => pc.addTrack(track, outStream));
@@ -1322,9 +1363,17 @@ async function sendTrackInfo(
   );
 }
 
-function createPeerConnection(peerId: string): RTCPeerConnection {
+interface CreatePeerConnectionOptions {
+  preserveZombieRecreateCooldown?: boolean;
+}
+
+function createPeerConnection(
+  peerId: string,
+  options: CreatePeerConnectionOptions = {},
+): RTCPeerConnection {
+  const { preserveZombieRecreateCooldown = false } = options;
   console.log(`[peer] Creating new peer connection for ${peerId} (existing peers: ${Array.from(peers.keys()).join(", ") || "none"}, ICE servers: ${currentIceServers.map(s => Array.isArray(s.urls) ? s.urls[0] : s.urls).join(", ")})`);
-  closePeer(peerId);
+  closePeer(peerId, { preserveZombieRecreateCooldown });
   pendingCandidates.delete(peerId);
   const pc = new RTCPeerConnection({ iceServers: currentIceServers });
   peers.set(peerId, pc);
@@ -1433,7 +1482,12 @@ function createPeerConnection(peerId: string): RTCPeerConnection {
   return pc;
 }
 
-function closePeer(peerId: string) {
+interface ClosePeerOptions {
+  preserveZombieRecreateCooldown?: boolean;
+}
+
+function closePeer(peerId: string, options: ClosePeerOptions = {}) {
+  const { preserveZombieRecreateCooldown = false } = options;
   const pc = peers.get(peerId);
   if (pc) {
     console.log(`[peer] Closing peer ${peerId} (connectionState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
@@ -1473,6 +1527,11 @@ function closePeer(peerId: string) {
   signalingQueues.delete(peerId);
   lastIceRestartTime.delete(peerId);
   iceRestartAttempts.delete(peerId);
+  prevBytesReceived.delete(peerId);
+  zombieStaleCount.delete(peerId);
+  if (!preserveZombieRecreateCooldown) {
+    lastZombieRecreate.delete(peerId);
+  }
   const timer = iceReconnectTimers.get(peerId);
   if (timer) { clearTimeout(timer); iceReconnectTimers.delete(peerId); }
 }
@@ -1513,6 +1572,9 @@ function cleanupAll() {
   signalingQueues.clear();
   lastIceRestartTime.clear();
   iceRestartAttempts.clear();
+  prevBytesReceived.clear();
+  zombieStaleCount.clear();
+  lastZombieRecreate.clear();
   // Clear ICE reconnect timers
   iceReconnectTimers.forEach((t) => clearTimeout(t));
   iceReconnectTimers.clear();
