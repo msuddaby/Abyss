@@ -29,7 +29,6 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   private ready = false;
   private pendingActions: (() => void)[] = [];
   private pollId: ReturnType<typeof setInterval> | null = null;
-  private container: HTMLElement | null = null;
   private iframe: HTMLIFrameElement | null = null;
   private endedCb: (() => void) | null = null;
   private timeUpdateCb: ((timeMs: number) => void) | null = null;
@@ -40,8 +39,6 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   private lastState: number = -1;
 
   initialize(container: HTMLElement, videoId: string): void {
-    this.container = container;
-
     // Build the iframe ourselves instead of letting YT.Player auto-generate it.
     // The IFrame API auto-appends origin=window.location.origin to the embed URL,
     // which YouTube rejects in non-HTTP contexts (Electron app://, file://).
@@ -209,6 +206,5 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
       this.iframe.remove();
     }
     this.iframe = null;
-    this.container = null;
   }
 }
