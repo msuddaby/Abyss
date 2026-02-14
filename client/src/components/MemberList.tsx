@@ -145,7 +145,7 @@ export default function MemberList() {
     const isHovered = hoveredMemberId === m.userId;
 
     // Add performance hints and hover-based animation control
-    const optimizedStyle = nameplateStyle?.animation ? {
+    const optimizedStyle: React.CSSProperties | undefined = nameplateStyle?.animation ? {
       ...nameStyle,
       willChange: 'background-position',
       animationPlayState: (shouldPauseAnimations || !isHovered) ? 'paused' : 'running',

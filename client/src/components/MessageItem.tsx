@@ -73,7 +73,7 @@ export default function MessageItem({
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
-  const authorStyle = nameplateStyle?.animation ? {
+  const authorStyle: React.CSSProperties | undefined = nameplateStyle?.animation ? {
     ...nameplateStyle,
     animationPlayState: isHovered ? 'running' : 'paused',
     willChange: 'background-position',
