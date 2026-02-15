@@ -38,7 +38,7 @@ export default function UserSettingsModal({
     { id: "keybinds", label: "Keybinds" },
     { id: "cosmetics", label: "Cosmetics" },
     { id: "app", label: "App Settings", visible: isElectron(), separatorBefore: true },
-    { id: "server", label: "Server", visible: !isProductionWeb, separatorBefore: !isElectron() },
+    { id: "server", label: "Instance", visible: !isProductionWeb, separatorBefore: !isElectron() },
     { id: "account", label: "Account" },
   ];
 
@@ -103,8 +103,10 @@ export default function UserSettingsModal({
   const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(false);
   const [autoLaunchLoading, setAutoLaunchLoading] = useState(false);
 
-  // Server configuration state
+  // Instance configuration state
   const serverUrl = useServerConfigStore((s) => s.serverUrl);
+  const recentInstances = useServerConfigStore((s) => s.recentInstances);
+  const removeRecentInstance = useServerConfigStore((s) => s.removeRecentInstance);
   const setStoredServerUrl = useServerConfigStore((s) => s.setServerUrl);
   const [serverUrlInput, setServerUrlInput] = useState(serverUrl || import.meta.env.VITE_API_URL || '');
   const [serverUrlSaving, setServerUrlSaving] = useState(false);
@@ -544,12 +546,12 @@ export default function UserSettingsModal({
     }
   };
 
-  const handleServerUrlSave = async () => {
+  const handleServerUrlSave = async (urlOverride?: string) => {
     setServerUrlError(null);
     setServerUrlSaving(true);
 
     try {
-      const trimmed = serverUrlInput.trim();
+      const trimmed = (urlOverride || serverUrlInput).trim();
       if (!trimmed) {
         setServerUrlError('Please enter a server URL');
         setServerUrlSaving(false);
@@ -1268,18 +1270,60 @@ export default function UserSettingsModal({
 
             {activeTab === "server" && (
               <>
+                {recentInstances.length > 0 && (
+                  <div className="us-card">
+                    <div className="us-card-title">Recent Instances</div>
+                    <div className="recent-instances-settings">
+                      {recentInstances.map((instance) => (
+                        <div key={instance.url} className="recent-instance-item">
+                          <div className="recent-instance-info">
+                            <div className="recent-instance-name">
+                              {instance.nickname || new URL(instance.url).hostname}
+                            </div>
+                            <div className="recent-instance-url">{instance.url}</div>
+                          </div>
+                          <div className="recent-instance-actions">
+                            {instance.url !== serverUrl && (
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => handleServerUrlSave(instance.url)}
+                                disabled={serverUrlSaving}
+                              >
+                                Switch
+                              </button>
+                            )}
+                            {instance.url === serverUrl && (
+                              <span style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>Current</span>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-danger-secondary"
+                              onClick={() => removeRecentInstance(instance.url)}
+                              disabled={serverUrlSaving}
+                              title="Remove from recent"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="us-card">
-                  <div className="us-card-title">Server Configuration</div>
+                  <div className="us-card-title">Instance Configuration</div>
                   <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
-                    Configure the Abyss server you want to connect to. Change this if you're self-hosting or connecting to a different instance.
+                    Configure the Abyss instance you want to connect to. Change this if you're self-hosting or connecting to a different instance.
                   </p>
                   <label>
-                    Server URL
+                    Instance URL
                     <input
                       type="text"
                       value={serverUrlInput}
                       onChange={(e) => setServerUrlInput(e.target.value)}
-                      placeholder="https://your-server.com"
+                      placeholder="https://abyss.example.com"
                       disabled={serverUrlSaving}
                     />
                   </label>
@@ -1289,7 +1333,7 @@ export default function UserSettingsModal({
                     </div>
                   )}
                   <div className="settings-help" style={{ marginTop: 8 }}>
-                    Current server: {serverUrl || 'Using default configuration'}
+                    Current instance: {serverUrl || 'Using default configuration'}
                   </div>
                 </div>
 
@@ -1302,7 +1346,7 @@ export default function UserSettingsModal({
                     Reset
                   </button>
                   <button
-                    onClick={handleServerUrlSave}
+                    onClick={() => handleServerUrlSave()}
                     disabled={serverUrlSaving || serverUrlInput === serverUrl}
                   >
                     {serverUrlSaving ? 'Saving...' : 'Save Changes'}

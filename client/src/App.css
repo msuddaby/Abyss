@@ -283,6 +283,145 @@ body.window-hidden *::after {
   cursor: not-allowed;
 }
 
+/* Recent Instances (Server Setup Modal) */
+.recent-instances {
+  margin-bottom: 24px;
+}
+
+.recent-instances-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.recent-instances-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recent-instance-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.recent-instance-card:hover:not(:disabled) {
+  background: var(--bg-secondary-alt);
+  border-color: var(--bg-accent);
+}
+
+.recent-instance-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recent-instance-name {
+  color: var(--header-primary);
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.recent-instance-url {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.recent-instances-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 20px 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.recent-instances-divider::before,
+.recent-instances-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.recent-instances-divider span {
+  padding: 0 12px;
+}
+
+/* Recent Instances (User Settings) */
+.recent-instances-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recent-instance-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.recent-instance-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.recent-instance-item .recent-instance-name {
+  color: var(--header-primary);
+  font-weight: 500;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.recent-instance-item .recent-instance-url {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-instance-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.recent-instance-actions button {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-danger-secondary {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.btn-danger-secondary:hover:not(:disabled) {
+  background: var(--danger);
+  color: white;
+}
+
 /* Main Layout */
 .main-layout {
   display: flex;

@@ -10,6 +10,7 @@ interface ServerSetupModalProps {
 
 export default function ServerSetupModal({ onComplete, allowSkip = false }: ServerSetupModalProps) {
   const setServerUrl = useServerConfigStore((s) => s.setServerUrl);
+  const recentInstances = useServerConfigStore((s) => s.recentInstances);
   const [url, setUrl] = useState(import.meta.env.VITE_API_URL || '');
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,35 +71,66 @@ export default function ServerSetupModal({ onComplete, allowSkip = false }: Serv
     onComplete();
   };
 
+  const handleSelectInstance = (instanceUrl: string) => {
+    setServerUrl(instanceUrl);
+    setApiBase(instanceUrl);
+    onComplete();
+  };
+
   return createPortal(
     <div className="modal-overlay">
       <div className="modal server-setup-modal" onClick={(e) => e.stopPropagation()}>
         <div className="server-setup-content">
           <h1 className="server-setup-title">Welcome to Abyss</h1>
           <p className="server-setup-subtitle">
-            Connect to your Abyss server to get started.
+            Connect to an Abyss instance to get started.
           </p>
+
+          {recentInstances.length > 0 && (
+            <div className="recent-instances">
+              <div className="recent-instances-title">Recent Instances</div>
+              <div className="recent-instances-list">
+                {recentInstances.map((instance) => (
+                  <button
+                    key={instance.url}
+                    type="button"
+                    className="recent-instance-card"
+                    onClick={() => handleSelectInstance(instance.url)}
+                    disabled={testing}
+                  >
+                    <div className="recent-instance-name">
+                      {instance.nickname || new URL(instance.url).hostname}
+                    </div>
+                    <div className="recent-instance-url">{instance.url}</div>
+                  </button>
+                ))}
+              </div>
+              <div className="recent-instances-divider">
+                <span>or connect to a new instance</span>
+              </div>
+            </div>
+          )}
 
           <div className="us-card">
             <label>
-              Server URL
+              Instance URL
               <input
                 type="text"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://your-server.com"
+                placeholder="https://abyss.example.com"
                 disabled={testing}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') testAndSave();
                 }}
-                autoFocus
+                autoFocus={recentInstances.length === 0}
               />
             </label>
 
             {error && <div className="server-setup-error">{error}</div>}
 
             <div className="server-setup-help">
-              Enter the URL of your Abyss server. If you're self-hosting, this is the address where your server is running.
+              Enter the URL of your Abyss instance. If you're self-hosting, this is the address where your backend is running.
             </div>
           </div>
 
