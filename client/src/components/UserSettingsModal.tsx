@@ -896,11 +896,13 @@ export default function UserSettingsModal({
                       disabled={!navigator.mediaDevices?.enumerateDevices}
                     >
                       <option value="default">Default</option>
-                      {inputDevices.map((device, index) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {renderDeviceLabel(device, index, "input")}
-                        </option>
-                      ))}
+                      {inputDevices
+                        .filter((d) => d.deviceId !== "default" && d.deviceId !== "")
+                        .map((device, index) => (
+                          <option key={device.deviceId} value={device.deviceId}>
+                            {renderDeviceLabel(device, index, "input")}
+                          </option>
+                        ))}
                     </select>
                   </label>
 
@@ -913,11 +915,13 @@ export default function UserSettingsModal({
                       disabled={!canSelectOutput}
                     >
                       <option value="default">Default</option>
-                      {outputDevices.map((device, index) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {renderDeviceLabel(device, index, "output")}
-                        </option>
-                      ))}
+                      {outputDevices
+                        .filter((d) => d.deviceId !== "default" && d.deviceId !== "")
+                        .map((device, index) => (
+                          <option key={device.deviceId} value={device.deviceId}>
+                            {renderDeviceLabel(device, index, "output")}
+                          </option>
+                        ))}
                     </select>
                     {!canSelectOutput && (
                       <div className="settings-help">
@@ -1027,13 +1031,13 @@ export default function UserSettingsModal({
                       disabled={!navigator.mediaDevices?.enumerateDevices}
                     >
                       <option value="default">Default</option>
-                      {videoDevices.map((device, index) => (
-                        <option key={device.deviceId} value={device.deviceId}>
-                          {device.deviceId === "default"
-                            ? "Default"
-                            : device.label || `Camera ${index + 1}`}
-                        </option>
-                      ))}
+                      {videoDevices
+                        .filter((d) => d.deviceId !== "default" && d.deviceId !== "")
+                        .map((device, index) => (
+                          <option key={device.deviceId} value={device.deviceId}>
+                            {device.label || `Camera ${index + 1}`}
+                          </option>
+                        ))}
                     </select>
                   </label>
                 </div>

@@ -88,12 +88,13 @@ jobs:
           cd packages/desktop
           npm run make
 
-      # Windows build (unsigned)
+      # Windows build — uses electron-builder (NSIS) for a fixed install path
+      # so that Windows Firewall rules persist across updates
       - name: Build and package (Windows)
         if: matrix.os == 'windows-latest'
         run: |
           cd packages/desktop
-          npm run make
+          npx electron-builder --win --publish never
 
       # Linux build (AppImage requires squashfs-tools)
       - name: Install Linux build dependencies
@@ -127,10 +128,8 @@ jobs:
         with:
           name: windows-artifacts
           path: |
-            packages/desktop/out/make/**/*.exe
-            packages/desktop/out/make/**/RELEASES
-            packages/desktop/out/make/**/*.nupkg
-            packages/desktop/out/make/**/latest.yml
+            packages/desktop/out/make/*.exe
+            packages/desktop/out/make/latest.yml
 
       - name: Upload Linux artifacts
         if: matrix.os == 'ubuntu-latest'

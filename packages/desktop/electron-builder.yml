@@ -1,0 +1,36 @@
+appId: com.abyss.desktop
+productName: Abyss
+artifactName: "abyss-desktop-${version}-Setup.${ext}"
+
+directories:
+  output: out/make
+
+asar: true
+asarUnpack:
+  - "node_modules/uiohook-napi/**"
+
+extraResources:
+  - from: "../../client/dist"
+    to: "dist"
+  - from: "resources/app-update.yml"
+    to: "app-update.yml"
+  - from: "resources/icon.png"
+    to: "icon.png"
+
+win:
+  target: nsis
+  icon: resources/icon.ico
+  executableName: abyss-desktop
+
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  shortcutName: Abyss
+
+afterPack: ./afterPack.js
+
+publish:
+  provider: github
+  owner: msuddaby
+  repo: Abyss
