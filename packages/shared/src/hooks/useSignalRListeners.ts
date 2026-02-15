@@ -428,24 +428,25 @@ export function useSignalRListeners() {
         const isCurrentChannel = notification.serverId
           ? (useServerStore.getState().activeChannel?.id === notification.channelId && useServerStore.getState().activeChannel?.type === 'Text')
           : (useDmStore.getState().activeDmChannel?.id === notification.channelId);
+        const isMention = notification.type !== 'ServerMessage';
 
         if (!notification.serverId) {
           const activeDm = useDmStore.getState().activeDmChannel;
           if (activeDm?.id === notification.channelId) {
             conn.invoke('MarkChannelRead', notification.channelId).catch(console.error);
-          } else {
+          } else if (isMention) {
             useUnreadStore.getState().incrementDmMention(notification.channelId);
           }
         } else {
           const activeChannel = useServerStore.getState().activeChannel;
           if (activeChannel?.id === notification.channelId && activeChannel.type === 'Text') {
             conn.invoke('MarkChannelRead', notification.channelId).catch(console.error);
-          } else {
+          } else if (isMention) {
             useUnreadStore.getState().incrementMention(notification.channelId, notification.serverId);
           }
         }
 
-        // Show desktop notification for mentions if not in current channel
+        // Show desktop notification if not in current channel
         // In Electron, also notify for the current channel when window is hidden/unfocused
         // Suppress notifications if user is in Do Not Disturb status
         const currentUser = useAuthStore.getState().user;
@@ -462,9 +463,9 @@ export function useSignalRListeners() {
             ? useServerStore.getState().servers.find(s => s.id === notification.serverId)?.name
             : null;
 
-          const title = serverName
-            ? `You were mentioned in #${channelName} (${serverName})`
-            : `You were mentioned in ${channelName}`;
+          const title = isMention
+            ? (serverName ? `You were mentioned in #${channelName} (${serverName})` : `You were mentioned in ${channelName}`)
+            : (serverName ? `New message in #${channelName} (${serverName})` : `New message in ${channelName}`);
 
           await showDesktopNotification(
             title,

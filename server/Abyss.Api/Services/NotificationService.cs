@@ -243,12 +243,12 @@ public class NotificationService
             .ToDictionaryAsync(s => s.UserId);
         var server = await _db.Servers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serverId);
         var defaultLevel = server?.DefaultNotificationLevel ?? NotificationLevel.AllMessages;
-        Console.WriteLine($"[AllMsg] Server default level: {defaultLevel}, members: {memberIds.Count}, alreadyNotified: {alreadyNotifiedUserIds.Count}, activeInChannel: {activeChannelUserIds.Count}");
+        Console.WriteLine($"[AllMsg] Channel: {channelId}, server default level: {defaultLevel}, members: {memberIds.Count}, alreadyNotified: {alreadyNotifiedUserIds.Count}, activeInChannel: {activeChannelUserIds.Count}, activeChannelUserIds: [{string.Join(", ", activeChannelUserIds)}]");
 
         foreach (var userId in memberIds)
         {
             if (alreadyNotifiedUserIds.Contains(userId)) { Console.WriteLine($"[AllMsg] {userId}: skip — already notified"); continue; }
-            if (activeChannelUserIds.Contains(userId)) { Console.WriteLine($"[AllMsg] {userId}: skip — viewing channel"); continue; }
+            if (activeChannelUserIds.Contains(userId)) { Console.WriteLine($"[AllMsg] {userId}: skip — viewing this channel"); continue; }
             if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
 
             // Resolve effective notification level
