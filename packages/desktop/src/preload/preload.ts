@@ -69,6 +69,10 @@ contextBridge.exposeInMainWorld('electron', {
     return await ipcRenderer.invoke('is-focused');
   },
 
+  getSystemIdleTime: async (): Promise<number> => {
+    return await ipcRenderer.invoke('get-system-idle-time');
+  },
+
   onWindowFocusChanged: (callback: (focused: boolean) => void) => {
     const subscription = (_event: any, focused: boolean) => callback(focused);
     ipcRenderer.on('window-focus-changed', subscription);

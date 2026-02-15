@@ -56,6 +56,7 @@ interface Window {
 
     // Window state
     isFocused: () => Promise<boolean>;
+    getSystemIdleTime: () => Promise<number>;
     onWindowFocusChanged: (callback: (focused: boolean) => void) => () => void; // Returns unsubscribe function
     showWindow: () => void;
     minimizeWindow: () => void;

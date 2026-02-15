@@ -29,6 +29,8 @@ public class ChatHub : Hub
 
     // Track online users: connectionId -> userId
     internal static readonly ConcurrentDictionary<string, string> _connections = new();
+    // Track which channel each user is actively viewing: userId -> channelId
+    private static readonly ConcurrentDictionary<string, Guid> _activeChannels = new();
     private static readonly ConcurrentDictionary<string, PendingVoiceDisconnect> _pendingVoiceDisconnects = new();
 
     private sealed class PendingVoiceDisconnect
@@ -301,6 +303,8 @@ public class ChatHub : Hub
 
         if (!stillOnline)
         {
+            _activeChannels.TryRemove(UserId, out _);
+
             // Get user to check presence status
             var user = await _db.Users.FindAsync(UserId);
 
@@ -318,6 +322,9 @@ public class ChatHub : Hub
                     await Clients.Group($"server:{serverId}").SendAsync("UserOffline", UserId);
                 }
             }
+
+            // Enqueue offline replay for deferred push delivery
+            NotificationDispatchService.EnqueueOfflineReplay(UserId);
         }
 
         // Leave voice if this was the voice connection (or user is fully offline).
@@ -439,11 +446,17 @@ public class ChatHub : Hub
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
 
+        _activeChannels[UserId] = channelGuid;
         await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
     public async Task LeaveChannel(string channelId)
     {
+        if (Guid.TryParse(channelId, out var channelGuid))
+        {
+            // Only remove if still tracking this channel (avoid race with JoinChannel on another channel)
+            _activeChannels.TryRemove(new KeyValuePair<string, Guid>(UserId, channelGuid));
+        }
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
@@ -566,6 +579,7 @@ public class ChatHub : Hub
             await Clients.Group($"user:{recipientId}").SendAsync("NewUnreadMessage", channelId, (string?)null);
 
             // Create DM notification for the recipient
+            var isRecipientOffline = !_connections.Values.Contains(recipientId);
             var dmNotification = new Notification
             {
                 Id = Guid.NewGuid(),
@@ -574,15 +588,15 @@ public class ChatHub : Hub
                 ChannelId = channelGuid,
                 ServerId = null,
                 Type = NotificationType.UserMention,
+                PushStatus = isRecipientOffline ? PushStatus.Pending : PushStatus.None,
                 CreatedAt = DateTime.UtcNow,
             };
             _db.Notifications.Add(dmNotification);
             await _db.SaveChangesAsync();
 
-            // Send push notification to offline DM recipient
-            var dmOnlineUserIds = new HashSet<string>(_connections.Values);
-            await _notifications.SendPushNotifications(
-                new List<Notification> { dmNotification }, dmOnlineUserIds, message);
+            // Enqueue push notification for async delivery
+            if (dmNotification.PushStatus == PushStatus.Pending)
+                NotificationDispatchService.Enqueue(dmNotification.Id);
 
             var dmNotifDto = new NotificationDto(dmNotification.Id, dmNotification.MessageId, dmNotification.ChannelId, null, dmNotification.Type.ToString(), dmNotification.CreatedAt);
             await Clients.Group($"user:{recipientId}").SendAsync("MentionReceived", dmNotifDto);
@@ -598,8 +612,9 @@ public class ChatHub : Hub
 
             // Process mentions and send targeted notifications
             var onlineUserIds = new HashSet<string>(_connections.Values);
+            var activeChannelUserIds = GetActiveChannelUserIds(channelGuid);
 
-            var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds);
+            var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds, activeChannelUserIds);
             var notifiedUserIds = new HashSet<string>(notifications.Select(n => n.UserId));
             foreach (var notification in notifications)
             {
@@ -610,9 +625,12 @@ public class ChatHub : Hub
             // Reply notification: if replying to someone else who wasn't already notified
             if (replyToGuid.HasValue && replyDto != null && replyDto.AuthorId != UserId && !notifiedUserIds.Contains(replyDto.AuthorId))
             {
-                if (await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel)
+                var isReplyTargetViewingChannel = activeChannelUserIds.Contains(replyDto.AuthorId);
+                if (!isReplyTargetViewingChannel
+                    && await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel)
                     && await _notifications.ShouldNotify(replyDto.AuthorId, channel.ServerId.Value, channelGuid, NotificationType.ReplyMention))
                 {
+                    var isReplyTargetOffline = !onlineUserIds.Contains(replyDto.AuthorId);
                     var replyNotification = new Notification
                     {
                         Id = Guid.NewGuid(),
@@ -621,17 +639,32 @@ public class ChatHub : Hub
                         ChannelId = channelGuid,
                         ServerId = channel.ServerId,
                         Type = NotificationType.ReplyMention,
+                        PushStatus = isReplyTargetOffline ? PushStatus.Pending : PushStatus.None,
                         CreatedAt = DateTime.UtcNow,
                     };
                     _db.Notifications.Add(replyNotification);
                     await _db.SaveChangesAsync();
 
-                    // Send push notification to offline reply target
-                    await _notifications.SendPushNotifications(
-                        new List<Notification> { replyNotification }, onlineUserIds, message);
+                    if (replyNotification.PushStatus == PushStatus.Pending)
+                        NotificationDispatchService.Enqueue(replyNotification.Id);
 
+                    notifiedUserIds.Add(replyDto.AuthorId);
                     var replyNotifDto = new NotificationDto(replyNotification.Id, replyNotification.MessageId, replyNotification.ChannelId, replyNotification.ServerId, replyNotification.Type.ToString(), replyNotification.CreatedAt);
                     await Clients.Group($"user:{replyDto.AuthorId}").SendAsync("MentionReceived", replyNotifDto);
+                }
+            }
+
+            // AllMessages notifications for users with that notification level
+            if (Environment.GetEnvironmentVariable("NOTIFICATIONS_ALL_MESSAGES_ENABLED") == "true")
+            {
+                var allMsgNotifications = await _notifications.CreateAllMessageNotifications(
+                    message, channel.ServerId.Value, channelGuid,
+                    onlineUserIds, activeChannelUserIds, notifiedUserIds);
+
+                foreach (var notification in allMsgNotifications)
+                {
+                    var dto = new NotificationDto(notification.Id, notification.MessageId, notification.ChannelId, notification.ServerId, notification.Type.ToString(), notification.CreatedAt);
+                    await Clients.Group($"user:{notification.UserId}").SendAsync("MentionReceived", dto);
                 }
             }
         }
@@ -1596,5 +1629,17 @@ public class ChatHub : Hub
     public static HashSet<string> GetOnlineUserIds()
     {
         return new HashSet<string>(_connections.Values);
+    }
+
+    // Get user IDs currently viewing a specific channel
+    public static HashSet<string> GetActiveChannelUserIds(Guid channelId)
+    {
+        var result = new HashSet<string>();
+        foreach (var kvp in _activeChannels)
+        {
+            if (kvp.Value == channelId)
+                result.Add(kvp.Key);
+        }
+        return result;
     }
 }

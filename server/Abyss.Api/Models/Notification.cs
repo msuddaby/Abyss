@@ -5,7 +5,16 @@ public enum NotificationType
     UserMention,
     EveryoneMention,
     HereMention,
-    ReplyMention
+    ReplyMention,
+    ServerMessage
+}
+
+public enum PushStatus
+{
+    None = 0,
+    Pending = 1,
+    Sent = 2,
+    Failed = 3
 }
 
 public class Notification
@@ -21,5 +30,7 @@ public class Notification
     public Server? Server { get; set; }
     public NotificationType Type { get; set; }
     public bool IsRead { get; set; }
+    public PushStatus PushStatus { get; set; } = PushStatus.None;
+    public int PushAttempts { get; set; } = 0;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

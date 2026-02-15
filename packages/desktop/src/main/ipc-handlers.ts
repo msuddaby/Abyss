@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
 import Store from 'electron-store';
 import { GlobalShortcutManager } from './global-shortcuts';
 import { AutoLaunchManager } from './auto-launch';
@@ -49,6 +49,11 @@ export function setupIpcHandlers(
   // Check if window is focused
   ipcMain.handle('is-focused', () => {
     return window.isFocused();
+  });
+
+  // Get system-wide idle time in seconds
+  ipcMain.handle('get-system-idle-time', () => {
+    return powerMonitor.getSystemIdleTime();
   });
 
   // Show window (from tray or notification)

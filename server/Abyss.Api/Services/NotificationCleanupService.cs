@@ -43,12 +43,18 @@ public class NotificationCleanupService : BackgroundService
                     $@"DELETE FROM ""DevicePushTokens"" WHERE ""CreatedAt"" < {tokenCutoff}",
                     stoppingToken);
 
-                var total = deletedRead + deletedOld + deletedTokens;
+                // Reset old Failed push notifications so they don't pile up
+                var failedCutoff = DateTime.UtcNow.AddDays(-1);
+                var resetFailed = await db.Database.ExecuteSqlInterpolatedAsync(
+                    $@"UPDATE ""Notifications"" SET ""PushStatus"" = 0 WHERE ""PushStatus"" = 3 AND ""CreatedAt"" < {failedCutoff}",
+                    stoppingToken);
+
+                var total = deletedRead + deletedOld + deletedTokens + resetFailed;
                 if (total > 0)
                 {
                     _logger.LogInformation(
-                        "Notification cleanup: {Read} read notifs (>7d), {Old} old notifs (>30d), {Tokens} stale tokens (>90d)",
-                        deletedRead, deletedOld, deletedTokens);
+                        "Notification cleanup: {Read} read notifs (>7d), {Old} old notifs (>30d), {Tokens} stale tokens (>90d), {Failed} failed push reset (>1d)",
+                        deletedRead, deletedOld, deletedTokens, resetFailed);
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

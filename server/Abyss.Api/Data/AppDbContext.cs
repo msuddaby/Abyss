@@ -250,6 +250,10 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<Notification>()
             .HasIndex(n => new { n.UserId, n.ServerId, n.IsRead });
 
+        builder.Entity<Notification>()
+            .HasIndex(n => new { n.PushStatus, n.CreatedAt })
+            .HasFilter("\"PushStatus\" = 1");
+
         // CustomEmoji
         builder.Entity<CustomEmoji>()
             .HasOne(e => e.Server)

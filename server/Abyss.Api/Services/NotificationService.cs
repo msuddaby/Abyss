@@ -3,21 +3,18 @@ using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
 using Abyss.Api.Models;
-using FcmMessaging = FirebaseAdmin.Messaging;
 
 namespace Abyss.Api.Services;
 
 public class NotificationService
 {
     private readonly AppDbContext _db;
-    private readonly FcmMessaging.FirebaseMessaging? _fcm;
     private readonly PermissionService _perms;
     private static readonly Regex MentionRegex = new(@"<@([a-zA-Z0-9-]+)>", RegexOptions.Compiled);
 
-    public NotificationService(AppDbContext db, FcmMessaging.FirebaseMessaging? fcm, PermissionService perms)
+    public NotificationService(AppDbContext db, PermissionService perms)
     {
         _db = db;
-        _fcm = fcm;
         _perms = perms;
     }
 
@@ -79,7 +76,8 @@ public class NotificationService
 
     public async Task<List<Notification>> CreateMentionNotifications(
         Message message, Guid serverId, Guid channelId,
-        HashSet<string> onlineUserIds)
+        HashSet<string> onlineUserIds,
+        HashSet<string>? activeChannelUserIds = null)
     {
         var mentions = ParseMentions(message.Content);
         var notifications = new List<Notification>();
@@ -120,6 +118,7 @@ public class NotificationService
         {
             if (userId == message.AuthorId) continue;
             if (!notifiedUsers.Add(userId)) continue;
+            if (activeChannelUserIds != null && activeChannelUserIds.Contains(userId)) continue;
 
             // Verify user is a server member
             var isMember = await _db.ServerMembers
@@ -128,6 +127,7 @@ public class NotificationService
             if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
             if (!ShouldNotifyLocal(userId, NotificationType.UserMention)) continue;
 
+            var isOffline = !onlineUserIds.Contains(userId);
             notifications.Add(new Notification
             {
                 Id = Guid.NewGuid(),
@@ -137,6 +137,7 @@ public class NotificationService
                 ServerId = serverId,
                 Type = NotificationType.UserMention,
                 IsRead = false,
+                PushStatus = isOffline ? PushStatus.Pending : PushStatus.None,
                 CreatedAt = DateTime.UtcNow
             });
         }
@@ -152,8 +153,11 @@ public class NotificationService
             foreach (var userId in memberIds)
             {
                 if (!notifiedUsers.Add(userId)) continue;
+                if (activeChannelUserIds != null && activeChannelUserIds.Contains(userId)) continue;
                 if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
                 if (!ShouldNotifyLocal(userId, NotificationType.EveryoneMention)) continue;
+
+                var isOffline = !onlineUserIds.Contains(userId);
                 notifications.Add(new Notification
                 {
                     Id = Guid.NewGuid(),
@@ -163,6 +167,7 @@ public class NotificationService
                     ServerId = serverId,
                     Type = NotificationType.EveryoneMention,
                     IsRead = false,
+                    PushStatus = isOffline ? PushStatus.Pending : PushStatus.None,
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -181,6 +186,7 @@ public class NotificationService
             foreach (var userId in onlineMembers)
             {
                 if (!notifiedUsers.Add(userId)) continue;
+                if (activeChannelUserIds != null && activeChannelUserIds.Contains(userId)) continue;
                 if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
                 if (!ShouldNotifyLocal(userId, NotificationType.HereMention)) continue;
                 notifications.Add(new Notification
@@ -192,6 +198,7 @@ public class NotificationService
                     ServerId = serverId,
                     Type = NotificationType.HereMention,
                     IsRead = false,
+                    PushStatus = PushStatus.None,
                     CreatedAt = DateTime.UtcNow
                 });
             }
@@ -202,140 +209,86 @@ public class NotificationService
             _db.Notifications.AddRange(notifications);
             await _db.SaveChangesAsync();
 
-            // Send push notifications to offline users
-            await SendPushNotifications(notifications, onlineUserIds, message);
+            // Enqueue pending push notifications for async delivery
+            var pendingIds = notifications
+                .Where(n => n.PushStatus == PushStatus.Pending)
+                .Select(n => n.Id)
+                .ToArray();
+            if (pendingIds.Length > 0)
+                NotificationDispatchService.Enqueue(pendingIds);
         }
 
         return notifications;
     }
 
-    public async Task SendPushNotifications(
-        List<Notification> notifications,
+    public async Task<List<Notification>> CreateAllMessageNotifications(
+        Message message, Guid serverId, Guid channelId,
         HashSet<string> onlineUserIds,
-        Message message)
+        HashSet<string> activeChannelUserIds,
+        HashSet<string> alreadyNotifiedUserIds)
     {
-        Console.WriteLine($"[Push] SendPushNotifications called — {notifications.Count} notifications, {onlineUserIds.Count} online users");
-        if (_fcm == null) { Console.WriteLine("[Push] FCM is null — Firebase not configured"); return; }
+        var notifications = new List<Notification>();
 
-        // Only send push to offline users
-        var allNotifUserIds = notifications.Select(n => n.UserId).Distinct().ToList();
-        var offlineUserIds = allNotifUserIds
-            .Where(userId => !onlineUserIds.Contains(userId))
-            .ToList();
-
-        Console.WriteLine($"[Push] Notif targets: {string.Join(", ", allNotifUserIds)} | Online: {string.Join(", ", onlineUserIds)} | Offline: {string.Join(", ", offlineUserIds)}");
-        if (offlineUserIds.Count == 0) { Console.WriteLine("[Push] All recipients are online — skipping push"); return; }
-
-        // Get push tokens for offline users
-        var pushTokens = await _db.DevicePushTokens
-            .Where(t => offlineUserIds.Contains(t.UserId))
-            .Include(t => t.User)
+        var memberIds = await _db.ServerMembers
+            .Where(sm => sm.ServerId == serverId && sm.UserId != message.AuthorId)
+            .Select(sm => sm.UserId)
             .ToListAsync();
 
-        Console.WriteLine($"[Push] Found {pushTokens.Count} push tokens for offline users");
-        if (pushTokens.Count == 0) { Console.WriteLine("[Push] No push tokens found"); return; }
+        // Batch-load notification settings
+        var serverSettings = await _db.UserServerNotificationSettings
+            .Where(s => s.ServerId == serverId)
+            .ToDictionaryAsync(s => s.UserId);
+        var channelSettings = await _db.UserChannelNotificationSettings
+            .Where(s => s.ChannelId == channelId)
+            .ToDictionaryAsync(s => s.UserId);
+        var server = await _db.Servers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serverId);
+        var defaultLevel = server?.DefaultNotificationLevel ?? NotificationLevel.AllMessages;
 
-        // Get author info
-        var author = await _db.Users.FindAsync(message.AuthorId);
-        if (author == null) return;
-
-        // Get channel info
-        var channel = await _db.Channels.FindAsync(message.ChannelId);
-        if (channel == null) return;
-
-        // Prepare FCM messages
-        var fcmMessages = new List<FcmMessaging.Message>();
-        foreach (var token in pushTokens)
+        foreach (var userId in memberIds)
         {
-            var userNotifications = notifications
-                .Where(n => n.UserId == token.UserId)
-                .ToList();
+            if (alreadyNotifiedUserIds.Contains(userId)) continue;
+            if (activeChannelUserIds.Contains(userId)) continue;
+            if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
 
-            if (userNotifications.Count == 0) continue;
+            // Resolve effective notification level
+            channelSettings.TryGetValue(userId, out var chSetting);
+            serverSettings.TryGetValue(userId, out var svSetting);
 
-            var isDm = channel.Type == ChannelType.DM;
-            var channelName = isDm ? $"@{author.DisplayName}" : $"#{channel.Name}";
-            var contentPreview = message.Content.Length > 100
-                ? message.Content[..100] + "..."
-                : message.Content;
-            var badgeCount = await GetUnreadMentionCount(token.UserId);
+            if (chSetting?.MuteUntil != null && chSetting.MuteUntil > DateTime.UtcNow) continue;
+            if (svSetting?.MuteUntil != null && svSetting.MuteUntil > DateTime.UtcNow) continue;
 
-            fcmMessages.Add(new FcmMessaging.Message
+            var effectiveLevel = chSetting?.NotificationLevel ?? svSetting?.NotificationLevel ?? defaultLevel;
+            if (effectiveLevel != NotificationLevel.AllMessages) continue;
+
+            var isOffline = !onlineUserIds.Contains(userId);
+            notifications.Add(new Notification
             {
-                Token = token.Token,
-                Notification = new FcmMessaging.Notification
-                {
-                    Title = $"{author.DisplayName} in {channelName}",
-                    Body = contentPreview,
-                },
-                Data = new Dictionary<string, string>
-                {
-                    ["channelId"] = message.ChannelId.ToString(),
-                    ["serverId"] = channel.ServerId?.ToString() ?? "",
-                    ["messageId"] = message.Id.ToString(),
-                    ["type"] = "message",
-                },
-                Android = new FcmMessaging.AndroidConfig
-                {
-                    Notification = new FcmMessaging.AndroidNotification
-                    {
-                        Sound = "default",
-                        ChannelId = "messages",
-                    },
-                },
-                Apns = new FcmMessaging.ApnsConfig
-                {
-                    Aps = new FcmMessaging.Aps
-                    {
-                        Badge = badgeCount,
-                        Sound = "default",
-                    },
-                },
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                MessageId = message.Id,
+                ChannelId = channelId,
+                ServerId = serverId,
+                Type = NotificationType.ServerMessage,
+                IsRead = false,
+                PushStatus = isOffline ? PushStatus.Pending : PushStatus.None,
+                CreatedAt = DateTime.UtcNow
             });
         }
 
-        if (fcmMessages.Count == 0) { Console.WriteLine("[Push] No FCM messages to send"); return; }
-
-        try
+        if (notifications.Count > 0)
         {
-            Console.WriteLine($"[Push] Sending {fcmMessages.Count} FCM messages...");
-            var response = await _fcm.SendEachAsync(fcmMessages);
-            Console.WriteLine($"[Push] FCM response: {response.SuccessCount} success, {response.FailureCount} failed");
+            _db.Notifications.AddRange(notifications);
+            await _db.SaveChangesAsync();
 
-            // Auto-clean stale/unregistered tokens
-            var staleTokens = new List<DevicePushToken>();
-            for (var i = 0; i < response.Responses.Count; i++)
-            {
-                var r = response.Responses[i];
-                if (!r.IsSuccess)
-                {
-                    Console.WriteLine($"[Push] FCM error for token {i}: {r.Exception?.MessagingErrorCode} — {r.Exception?.Message}");
-                    if (r.Exception?.MessagingErrorCode == FcmMessaging.MessagingErrorCode.Unregistered)
-                    {
-                        var staleTokenValue = fcmMessages[i].Token;
-                        var stale = pushTokens.FirstOrDefault(t => t.Token == staleTokenValue);
-                        if (stale != null) staleTokens.Add(stale);
-                    }
-                }
-            }
-
-            if (staleTokens.Count > 0)
-            {
-                _db.DevicePushTokens.RemoveRange(staleTokens);
-                await _db.SaveChangesAsync();
-            }
+            var pendingIds = notifications
+                .Where(n => n.PushStatus == PushStatus.Pending)
+                .Select(n => n.Id)
+                .ToArray();
+            if (pendingIds.Length > 0)
+                NotificationDispatchService.Enqueue(pendingIds);
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Push] Error sending FCM push notification: {ex.Message}");
-        }
-    }
 
-
-    private async Task<int> GetUnreadMentionCount(string userId)
-    {
-        return await _db.Notifications
-            .CountAsync(n => n.UserId == userId && !n.IsRead);
+        return notifications;
     }
 
     public async Task MarkChannelRead(string userId, Guid channelId)

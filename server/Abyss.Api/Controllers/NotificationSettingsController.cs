@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
@@ -52,7 +53,7 @@ public class NotificationSettingsController : ControllerBase
 
     [HttpPatch("notification-settings")]
     public async Task<ActionResult<ServerNotificationSettingsDto>> UpdateServerNotificationSettings(
-        Guid serverId, UpdateServerNotificationSettingsRequest req)
+        Guid serverId, [FromBody] JsonElement req)
     {
         if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
 
@@ -65,12 +66,56 @@ public class NotificationSettingsController : ControllerBase
             _db.UserServerNotificationSettings.Add(setting);
         }
 
-        if (req.NotificationLevel.HasValue)
-            setting.NotificationLevel = (NotificationLevel)req.NotificationLevel.Value;
-        if (req.MuteUntil.HasValue)
-            setting.MuteUntil = req.MuteUntil.Value;
-        if (req.SuppressEveryone.HasValue)
-            setting.SuppressEveryone = req.SuppressEveryone.Value;
+        if (TryGetProperty(req, "notificationLevel", out var notificationLevelValue))
+        {
+            if (notificationLevelValue.ValueKind == JsonValueKind.Null)
+            {
+                setting.NotificationLevel = null;
+            }
+            else if (notificationLevelValue.ValueKind == JsonValueKind.Number &&
+                     notificationLevelValue.TryGetInt32(out var notificationLevelInt) &&
+                     Enum.IsDefined(typeof(NotificationLevel), notificationLevelInt))
+            {
+                setting.NotificationLevel = (NotificationLevel)notificationLevelInt;
+            }
+            else
+            {
+                return BadRequest("Invalid notificationLevel");
+            }
+        }
+
+        if (TryGetProperty(req, "muteUntil", out var muteUntilValue))
+        {
+            if (muteUntilValue.ValueKind == JsonValueKind.Null)
+            {
+                setting.MuteUntil = null;
+            }
+            else if (muteUntilValue.ValueKind == JsonValueKind.String &&
+                     muteUntilValue.TryGetDateTime(out var muteUntil))
+            {
+                setting.MuteUntil = muteUntil;
+            }
+            else
+            {
+                return BadRequest("Invalid muteUntil");
+            }
+        }
+
+        if (TryGetProperty(req, "suppressEveryone", out var suppressEveryoneValue))
+        {
+            if (suppressEveryoneValue.ValueKind == JsonValueKind.True || suppressEveryoneValue.ValueKind == JsonValueKind.False)
+            {
+                setting.SuppressEveryone = suppressEveryoneValue.GetBoolean();
+            }
+            else if (suppressEveryoneValue.ValueKind == JsonValueKind.Null)
+            {
+                setting.SuppressEveryone = false;
+            }
+            else
+            {
+                return BadRequest("Invalid suppressEveryone");
+            }
+        }
 
         await _db.SaveChangesAsync();
 
@@ -85,7 +130,7 @@ public class NotificationSettingsController : ControllerBase
 
     [HttpPatch("channels/{channelId}/notification-settings")]
     public async Task<ActionResult<ChannelNotificationSettingsDto>> UpdateChannelNotificationSettings(
-        Guid serverId, Guid channelId, UpdateChannelNotificationSettingsRequest req)
+        Guid serverId, Guid channelId, [FromBody] JsonElement req)
     {
         if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
 
@@ -101,10 +146,40 @@ public class NotificationSettingsController : ControllerBase
             _db.UserChannelNotificationSettings.Add(setting);
         }
 
-        if (req.NotificationLevel.HasValue)
-            setting.NotificationLevel = (NotificationLevel)req.NotificationLevel.Value;
-        if (req.MuteUntil.HasValue)
-            setting.MuteUntil = req.MuteUntil.Value;
+        if (TryGetProperty(req, "notificationLevel", out var notificationLevelValue))
+        {
+            if (notificationLevelValue.ValueKind == JsonValueKind.Null)
+            {
+                setting.NotificationLevel = null;
+            }
+            else if (notificationLevelValue.ValueKind == JsonValueKind.Number &&
+                     notificationLevelValue.TryGetInt32(out var notificationLevelInt) &&
+                     Enum.IsDefined(typeof(NotificationLevel), notificationLevelInt))
+            {
+                setting.NotificationLevel = (NotificationLevel)notificationLevelInt;
+            }
+            else
+            {
+                return BadRequest("Invalid notificationLevel");
+            }
+        }
+
+        if (TryGetProperty(req, "muteUntil", out var muteUntilValue))
+        {
+            if (muteUntilValue.ValueKind == JsonValueKind.Null)
+            {
+                setting.MuteUntil = null;
+            }
+            else if (muteUntilValue.ValueKind == JsonValueKind.String &&
+                     muteUntilValue.TryGetDateTime(out var muteUntil))
+            {
+                setting.MuteUntil = muteUntil;
+            }
+            else
+            {
+                return BadRequest("Invalid muteUntil");
+            }
+        }
 
         await _db.SaveChangesAsync();
 
@@ -130,5 +205,23 @@ public class NotificationSettingsController : ControllerBase
             .SendAsync("ServerDefaultNotificationLevelChanged", serverId.ToString(), level);
 
         return Ok();
+    }
+
+    private static bool TryGetProperty(JsonElement req, string propertyName, out JsonElement value)
+    {
+        if (req.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in req.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
     }
 }
