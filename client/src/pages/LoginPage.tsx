@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuthStore, useServerConfigStore } from "@abyss/shared";
 import { Link, useNavigate } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
 import ServerSetupModal from "../components/ServerSetupModal";
 
 export default function LoginPage() {
@@ -11,6 +12,13 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const hasConfigured = useServerConfigStore((s) => s.hasConfigured);
   const [showServerSetup, setShowServerSetup] = useState(!hasConfigured);
+
+  // Check if we're on production web (hide server selection)
+  const isProductionWeb = typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    !Capacitor.isNativePlatform() &&
+    typeof window.electron === 'undefined';
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
@@ -58,15 +66,17 @@ export default function LoginPage() {
           <p className="auth-link">
             Need an account? <Link to="/register">Register</Link>
           </p>
-          <p className="auth-link">
-            <button
-              type="button"
-              className="link-button"
-              onClick={() => setShowServerSetup(true)}
-            >
-              Change Server
-            </button>
-          </p>
+          {!isProductionWeb && (
+            <p className="auth-link">
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => setShowServerSetup(true)}
+              >
+                Change Server
+              </button>
+            </p>
+          )}
         </form>
       </div>
     </>
