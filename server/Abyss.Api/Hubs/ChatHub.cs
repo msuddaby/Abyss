@@ -33,6 +33,11 @@ public class ChatHub : Hub
     private static readonly ConcurrentDictionary<string, Guid> _activeChannels = new();
     private static readonly ConcurrentDictionary<string, PendingVoiceDisconnect> _pendingVoiceDisconnects = new();
 
+    // Heartbeat tracking for server-side idle detection
+    internal static readonly ConcurrentDictionary<string, DateTime> _lastHeartbeats = new();
+    // Users that were auto-set to Away by the server (so we can restore on reconnect)
+    internal static readonly ConcurrentDictionary<string, byte> _serverAutoAway = new();
+
     private sealed class PendingVoiceDisconnect
     {
         public PendingVoiceDisconnect(string? expectedVoiceConnectionId)
@@ -251,6 +256,7 @@ public class ChatHub : Hub
     public override async Task OnConnectedAsync()
     {
         _connections[Context.ConnectionId] = UserId;
+        _lastHeartbeats[UserId] = DateTime.UtcNow;
 
         // Join per-user group for targeted notifications
         await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{UserId}");
@@ -261,6 +267,14 @@ public class ChatHub : Hub
         {
             await base.OnConnectedAsync();
             return;
+        }
+
+        // Auto-restore from server-set away: if the server marked this user
+        // as Away due to stale heartbeats, restore to Online on reconnect
+        if (_serverAutoAway.TryRemove(UserId, out _) && user.PresenceStatus == 1)
+        {
+            user.PresenceStatus = 0;
+            await _db.SaveChangesAsync();
         }
 
         // Notify all servers the user is in
@@ -304,9 +318,18 @@ public class ChatHub : Hub
         if (!stillOnline)
         {
             _activeChannels.TryRemove(UserId, out _);
+            _lastHeartbeats.TryRemove(UserId, out _);
 
             // Get user to check presence status
             var user = await _db.Users.FindAsync(UserId);
+
+            // If the server auto-set this user to Away, reset to Online in the DB
+            // so they don't appear as Away on their next login
+            if (_serverAutoAway.TryRemove(UserId, out _) && user != null && user.PresenceStatus == 1)
+            {
+                user.PresenceStatus = 0;
+                await _db.SaveChangesAsync();
+            }
 
             var serverIds = await _db.ServerMembers
                 .Where(sm => sm.UserId == UserId)
@@ -460,9 +483,10 @@ public class ChatHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
-    // Lightweight health check for clients.
+    // Lightweight health check for clients — also serves as a presence heartbeat.
     public string Ping()
     {
+        _lastHeartbeats[UserId] = DateTime.UtcNow;
         return "pong";
     }
 
@@ -909,17 +933,18 @@ public class ChatHub : Hub
     }
 
     // Get online users for a server
-    public async Task<List<string>> GetOnlineUsers(string serverId)
+    public async Task<Dictionary<string, int>> GetOnlineUsers(string serverId)
     {
-        if (!Guid.TryParse(serverId, out var serverGuid)) return new List<string>();
-        var memberUserIds = await _db.ServerMembers
-            .Where(sm => sm.ServerId == serverGuid)
-            .Select(sm => sm.UserId)
-            .ToListAsync();
-
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new Dictionary<string, int>();
         var onlineUserIds = new HashSet<string>(_connections.Values);
 
-        return memberUserIds.Where(uid => onlineUserIds.Contains(uid)).ToList();
+        var onlineMembers = await _db.ServerMembers
+            .Where(sm => sm.ServerId == serverGuid && onlineUserIds.Contains(sm.UserId))
+            .Join(_db.Users, sm => sm.UserId, u => u.Id, (sm, u) => new { u.Id, u.PresenceStatus })
+            .Where(u => u.PresenceStatus != 3) // Exclude Invisible users
+            .ToDictionaryAsync(u => u.Id, u => u.PresenceStatus);
+
+        return onlineMembers;
     }
 
     // Get voice users for all channels in a server (for sidebar display)

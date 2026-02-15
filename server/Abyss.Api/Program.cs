@@ -182,6 +182,9 @@ builder.Services.AddHostedService<NotificationCleanupService>();
 // Async push notification dispatch
 builder.Services.AddHostedService<NotificationDispatchService>();
 
+// Server-side presence monitoring (auto-away on stale heartbeats)
+builder.Services.AddHostedService<PresenceMonitorService>();
+
 // Firebase Cloud Messaging for push notifications
 var firebaseCredEnv = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH");
 var firebaseCredPath = firebaseCredEnv

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useAuthStore, api, getApiBase, PresenceStatus } from '@abyss/shared';
+import { useAuthStore, api, getApiBase, PresenceStatus, onReconnected } from '@abyss/shared';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -96,6 +96,17 @@ export function useIdleDetection() {
     events.forEach(event => window.addEventListener(event, handleActivity, { passive: true }));
     window.addEventListener('focus', handleActivity);
 
+    // On SignalR reconnect (e.g. after waking from sleep), if the server
+    // auto-set us to Away while we were disconnected, adopt that as auto-away
+    // so the next activity event restores us to Online.
+    const unsubReconnect = onReconnected(() => {
+      if (disposed) return;
+      const currentStatus = useAuthStore.getState().user?.presenceStatus;
+      if (currentStatus === PresenceStatus.Away && !autoAwayRef.current) {
+        autoAwayRef.current = true;
+      }
+    });
+
     // Start the web idle timer (no-op path for Electron since handleActivity
     // skips the timer when hasMainProcessIdle is true)
     if (!hasMainProcessIdle) {
@@ -114,6 +125,7 @@ export function useIdleDetection() {
         idleTimerRef.current = null;
       }
       unsubIdle?.();
+      unsubReconnect();
     };
   }, [userId, token, setPresenceStatus]);
 }

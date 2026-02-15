@@ -121,8 +121,12 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
     useServerStore.getState().setVoiceChannelWatchParties(data);
   }).catch(console.error);
 
-  conn.invoke('GetOnlineUsers', serverId).then((userIds: string[]) => {
-    usePresenceStore.getState().setOnlineUsers(userIds);
+  conn.invoke('GetOnlineUsers', serverId).then((data: Record<string, number>) => {
+    const store = usePresenceStore.getState();
+    store.setOnlineUsers(Object.keys(data));
+    for (const [userId, status] of Object.entries(data)) {
+      store.setUserStatus(userId, status);
+    }
   }).catch(console.error);
 
   useMediaProviderStore.getState().fetchConnections(serverId);
