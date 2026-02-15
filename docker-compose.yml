@@ -29,6 +29,7 @@ services:
       - ./data/uploads:/app/wwwroot/uploads
       - ./data/uploads-files:/app/uploads
       - dpkeys:/app/data-protection-keys
+      - ./firebase-service-account.json:/app/firebase-service-account.json:ro
     env_file:
       - .env
     healthcheck:
