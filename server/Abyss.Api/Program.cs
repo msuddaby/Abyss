@@ -176,9 +176,16 @@ builder.Services.AddHostedService<VoiceStateCleanupService>();
 // Audit log cleanup
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
+// Notification & push token cleanup
+builder.Services.AddHostedService<NotificationCleanupService>();
+
 // Firebase Cloud Messaging for push notifications
-var firebaseCredPath = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH")
-    ?? "firebase-service-account.json";
+var firebaseCredEnv = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH");
+var firebaseCredPath = firebaseCredEnv
+    ?? Path.Combine(AppContext.BaseDirectory, "firebase-service-account.json");
+// Also check next to the project source (for `dotnet run` where BaseDirectory != source dir)
+if (!File.Exists(firebaseCredPath) && firebaseCredEnv == null)
+    firebaseCredPath = Path.Combine(Directory.GetCurrentDirectory(), "firebase-service-account.json");
 if (File.Exists(firebaseCredPath))
 {
     FirebaseApp.Create(new AppOptions
@@ -213,7 +220,7 @@ if (builder.Environment.IsDevelopment())
     {
         opt.AddDefaultPolicy(policy =>
         {
-            policy.WithOrigins(allowedOrigins)
+            policy.SetIsOriginAllowed(origin => allowedOrigins.Contains(origin))
                 .AllowAnyHeader()
                 .AllowAnyMethod()
                 .AllowCredentials();
@@ -226,7 +233,7 @@ else
     {
         opt.AddDefaultPolicy(policy =>
         {
-            policy.WithOrigins(allowedOrigins)
+            policy.SetIsOriginAllowed(origin => allowedOrigins.Contains(origin))
                 .AllowCredentials()
                 .AllowAnyMethod()
                 .AllowAnyHeader();

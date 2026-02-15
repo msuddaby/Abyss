@@ -44,6 +44,12 @@ Thumbs.db
 *.user
 .expo/
 
+# Firebase (instance-specific config for self-hosting)
+firebase-service-account.json
+client/android/app/google-services.json
+client/ios/App/App/GoogleService-Info.plist
+client/ios/App/GoogleService-Info.plist
+
 # Uploads (user-generated content)
 server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep

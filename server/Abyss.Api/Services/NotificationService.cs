@@ -214,16 +214,17 @@ public class NotificationService
         HashSet<string> onlineUserIds,
         Message message)
     {
-        if (_fcm == null) return;
+        Console.WriteLine($"[Push] SendPushNotifications called — {notifications.Count} notifications, {onlineUserIds.Count} online users");
+        if (_fcm == null) { Console.WriteLine("[Push] FCM is null — Firebase not configured"); return; }
 
         // Only send push to offline users
-        var offlineUserIds = notifications
-            .Select(n => n.UserId)
+        var allNotifUserIds = notifications.Select(n => n.UserId).Distinct().ToList();
+        var offlineUserIds = allNotifUserIds
             .Where(userId => !onlineUserIds.Contains(userId))
-            .Distinct()
             .ToList();
 
-        if (offlineUserIds.Count == 0) return;
+        Console.WriteLine($"[Push] Notif targets: {string.Join(", ", allNotifUserIds)} | Online: {string.Join(", ", onlineUserIds)} | Offline: {string.Join(", ", offlineUserIds)}");
+        if (offlineUserIds.Count == 0) { Console.WriteLine("[Push] All recipients are online — skipping push"); return; }
 
         // Get push tokens for offline users
         var pushTokens = await _db.DevicePushTokens
@@ -231,7 +232,8 @@ public class NotificationService
             .Include(t => t.User)
             .ToListAsync();
 
-        if (pushTokens.Count == 0) return;
+        Console.WriteLine($"[Push] Found {pushTokens.Count} push tokens for offline users");
+        if (pushTokens.Count == 0) { Console.WriteLine("[Push] No push tokens found"); return; }
 
         // Get author info
         var author = await _db.Users.FindAsync(message.AuthorId);
@@ -292,22 +294,28 @@ public class NotificationService
             });
         }
 
-        if (fcmMessages.Count == 0) return;
+        if (fcmMessages.Count == 0) { Console.WriteLine("[Push] No FCM messages to send"); return; }
 
         try
         {
+            Console.WriteLine($"[Push] Sending {fcmMessages.Count} FCM messages...");
             var response = await _fcm.SendEachAsync(fcmMessages);
+            Console.WriteLine($"[Push] FCM response: {response.SuccessCount} success, {response.FailureCount} failed");
 
             // Auto-clean stale/unregistered tokens
             var staleTokens = new List<DevicePushToken>();
             for (var i = 0; i < response.Responses.Count; i++)
             {
                 var r = response.Responses[i];
-                if (!r.IsSuccess && r.Exception?.MessagingErrorCode == FcmMessaging.MessagingErrorCode.Unregistered)
+                if (!r.IsSuccess)
                 {
-                    var staleTokenValue = fcmMessages[i].Token;
-                    var stale = pushTokens.FirstOrDefault(t => t.Token == staleTokenValue);
-                    if (stale != null) staleTokens.Add(stale);
+                    Console.WriteLine($"[Push] FCM error for token {i}: {r.Exception?.MessagingErrorCode} — {r.Exception?.Message}");
+                    if (r.Exception?.MessagingErrorCode == FcmMessaging.MessagingErrorCode.Unregistered)
+                    {
+                        var staleTokenValue = fcmMessages[i].Token;
+                        var stale = pushTokens.FirstOrDefault(t => t.Token == staleTokenValue);
+                        if (stale != null) staleTokens.Add(stale);
+                    }
                 }
             }
 
@@ -319,7 +327,7 @@ public class NotificationService
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error sending FCM push notification: {ex.Message}");
+            Console.WriteLine($"[Push] Error sending FCM push notification: {ex.Message}");
         }
     }
 
