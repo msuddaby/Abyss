@@ -199,6 +199,51 @@ npm run build
 
 Output goes to `client/dist/`. Serve with any static file server, or put behind a reverse proxy.
 
+## Push Notifications (Mobile)
+
+Push notifications are delivered via Firebase Cloud Messaging (FCM). Because FCM tokens are scoped to a Firebase project, each server operator who publishes their own iOS/Android app needs their own Firebase project, and will need to distribute their own app to app stores. This will change in the future with a central relay, probably.
+
+### 1. Create a Firebase Project
+
+Go to the [Firebase Console](https://console.firebase.google.com/), create a project, and add both an Android app (`com.abyss.app` or your custom ID) and an iOS app.
+
+### 2. Add Platform Config Files
+
+**Android:** Download `google-services.json` and place it at:
+```
+client/android/app/google-services.json
+```
+
+**iOS:** Download `GoogleService-Info.plist` and add it to the Xcode project at:
+```
+client/ios/App/App/GoogleService-Info.plist
+```
+Also enable these capabilities in Xcode under your app target:
+- **Push Notifications**
+- **Background Modes** > **Remote notifications**
+
+### 3. Configure the Server
+
+Generate a Firebase Admin SDK service account key (Firebase Console > Project Settings > Service Accounts > Generate New Private Key). Place the JSON file on the server and set the path via environment variable:
+
+| Variable | Description | Default |
+|---|---|---|
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to Firebase service account JSON | `firebase-service-account.json` |
+
+If the file is not present, push notifications are silently disabled — everything else works normally.
+
+### 4. Android Notification Channel
+
+FCM messages are sent with channel ID `messages`. Android 8+ requires a notification channel to be created in the app. Capacitor's push plugin handles this automatically on first notification, but if you want to customize the channel (name, importance, sound), do so in `client/android/app/src/main/java/.../MainActivity.java`.
+
+### How It Works
+
+1. On login, the mobile app requests push permission and registers the FCM token with the server (`POST /api/notifications/register-device`)
+2. When a user is offline (no active SignalR connection), the server sends push notifications for: mentions, DMs, and replies
+3. Tapping a notification navigates to the relevant channel/DM
+4. On logout, the token is unregistered (`DELETE /api/notifications/unregister-device`)
+5. Stale tokens (app uninstalled) are automatically cleaned up when FCM reports them as unregistered
+
 ## Backend Development
 
 ### EF Core Migrations

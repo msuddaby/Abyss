@@ -54,4 +54,14 @@ setOnUnauthorized(() => useAuthStore.getState().logout());
 // Listen for OS notification clicks to navigate to the relevant channel
 if (!Capacitor.isNativePlatform()) {
   setupNotificationClickListener();
+} else {
+  // Native (Capacitor): set up push notification tap listeners
+  import('./services/pushNotifications').then(({ setupPushNotificationListeners }) => {
+    setupPushNotificationListeners();
+  });
+
+  // Native (Capacitor): notify the OTA updater that the current bundle is healthy
+  import('./services/otaUpdater').then(({ initOtaUpdater }) => {
+    initOtaUpdater();
+  });
 }

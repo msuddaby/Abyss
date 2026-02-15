@@ -12,7 +12,7 @@ export function useIdleDetection() {
   useEffect(() => {
     if (!user || !token) return;
 
-    let idleTimer: NodeJS.Timeout;
+    let idleTimer: ReturnType<typeof setTimeout>;
 
     const setPresence = async (status: number) => {
       try {

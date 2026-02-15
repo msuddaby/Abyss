@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.DataProtection;
+using FirebaseAdmin;
+using FirebaseAdmin.Messaging;
 using Abyss.Api.Data;
 using Abyss.Api.Hubs;
 using Abyss.Api.Models;
@@ -174,8 +176,22 @@ builder.Services.AddHostedService<VoiceStateCleanupService>();
 // Audit log cleanup
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
-// HTTP Client for push notifications
-builder.Services.AddHttpClient();
+// Firebase Cloud Messaging for push notifications
+var firebaseCredPath = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH")
+    ?? "firebase-service-account.json";
+if (File.Exists(firebaseCredPath))
+{
+    FirebaseApp.Create(new AppOptions
+    {
+        Credential = Google.Apis.Auth.OAuth2.GoogleCredential.FromFile(firebaseCredPath),
+    });
+    builder.Services.AddSingleton(FirebaseMessaging.DefaultInstance);
+}
+else
+{
+    Console.WriteLine("Firebase service account not found — push notifications disabled.");
+    builder.Services.AddSingleton<FirebaseMessaging>(sp => null!);
+}
 
 // SignalR
 builder.Services.AddSignalR(options =>

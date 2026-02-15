@@ -30,6 +30,15 @@ const config: CapacitorConfig = {
       style: "dark",
       backgroundColor: "#1a1a2e",
     },
+    PushNotifications: {
+      presentationOptions: ["badge", "sound"],
+    },
+    CapacitorUpdater: {
+      autoUpdate: false,
+      statsUrl: "",
+      autoDeleteFailed: true,
+      autoDeletePrevious: true,
+    },
   },
 };
 

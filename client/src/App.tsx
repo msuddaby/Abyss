@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { useAuthStore } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -28,12 +29,42 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const initialized = useAuthStore((s) => s.initialized);
   const isWindowVisible = useWindowVisibility();
   useIdleDetection();
 
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Check for OTA updates after auth init on native platforms
+  useEffect(() => {
+    if (!initialized || !Capacitor.isNativePlatform()) return;
+
+    import('./services/otaUpdater').then(({ checkForOtaUpdate }) => {
+      checkForOtaUpdate();
+    });
+  }, [initialized]);
+
+  // Register/unregister push token based on auth state
+  useEffect(() => {
+    if (!initialized || !Capacitor.isNativePlatform()) return;
+
+    if (isAuthenticated) {
+      import('./services/pushNotifications').then(({ registerForPushNotifications }) => {
+        registerForPushNotifications();
+      });
+    }
+
+    return () => {
+      if (isAuthenticated) {
+        import('./services/pushNotifications').then(({ unregisterPushToken }) => {
+          unregisterPushToken();
+        });
+      }
+    };
+  }, [isAuthenticated, initialized]);
 
   // Pause all animations globally when window is not visible
   useEffect(() => {

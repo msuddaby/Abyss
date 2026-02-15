@@ -1,0 +1,45 @@
+name: Release Mobile OTA Bundle
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-ota:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Build client for mobile
+        env:
+          CAPACITOR: "true"
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          cd client
+          npm run build
+
+      - name: Create OTA bundle zip
+        run: |
+          cd client/dist
+          zip -r ../../mobile-ota-bundle.zip .
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: mobile-ota-bundle.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

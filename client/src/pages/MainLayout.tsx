@@ -92,7 +92,7 @@ export default function MainLayout() {
             <span>{signalRMessage}</span>
           </div>
         )}
-        {window.electron && <UpdateBanner />}
+        <UpdateBanner />
         {isDmMode && activeDmChannel ? (
           <>
             <div className="channel-header">

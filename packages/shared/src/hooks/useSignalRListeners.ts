@@ -208,7 +208,7 @@ export function useSignalRListeners() {
       ];
       for (const e of events) conn.off(e);
 
-      conn.on('UserOnline', (userId: string, displayName: string, presenceStatus: number) => {
+      conn.on('UserOnline', (userId: string, _displayName: string, presenceStatus: number) => {
         usePresenceStore.getState().setUserOnline(userId);
         usePresenceStore.getState().setUserStatus(userId, presenceStatus);
       });

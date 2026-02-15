@@ -1,23 +1,23 @@
 using System.Text.RegularExpressions;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
 using Abyss.Api.Models;
+using FcmMessaging = FirebaseAdmin.Messaging;
 
 namespace Abyss.Api.Services;
 
 public class NotificationService
 {
     private readonly AppDbContext _db;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly FcmMessaging.FirebaseMessaging? _fcm;
     private readonly PermissionService _perms;
     private static readonly Regex MentionRegex = new(@"<@([a-zA-Z0-9-]+)>", RegexOptions.Compiled);
 
-    public NotificationService(AppDbContext db, IHttpClientFactory httpClientFactory, PermissionService perms)
+    public NotificationService(AppDbContext db, FcmMessaging.FirebaseMessaging? fcm, PermissionService perms)
     {
         _db = db;
-        _httpClientFactory = httpClientFactory;
+        _fcm = fcm;
         _perms = perms;
     }
 
@@ -214,6 +214,8 @@ public class NotificationService
         HashSet<string> onlineUserIds,
         Message message)
     {
+        if (_fcm == null) return;
+
         // Only send push to offline users
         var offlineUserIds = notifications
             .Select(n => n.UserId)
@@ -239,8 +241,8 @@ public class NotificationService
         var channel = await _db.Channels.FindAsync(message.ChannelId);
         if (channel == null) return;
 
-        // Prepare push messages
-        var expoPushMessages = new List<object>();
+        // Prepare FCM messages
+        var fcmMessages = new List<FcmMessaging.Message>();
         foreach (var token in pushTokens)
         {
             var userNotifications = notifications
@@ -249,55 +251,75 @@ public class NotificationService
 
             if (userNotifications.Count == 0) continue;
 
-            // Determine notification type
             var isDm = channel.Type == ChannelType.DM;
             var channelName = isDm ? $"@{author.DisplayName}" : $"#{channel.Name}";
-
-            // Truncate message content
             var contentPreview = message.Content.Length > 100
-                ? message.Content.Substring(0, 100) + "..."
+                ? message.Content[..100] + "..."
                 : message.Content;
+            var badgeCount = await GetUnreadMentionCount(token.UserId);
 
-            expoPushMessages.Add(new
+            fcmMessages.Add(new FcmMessaging.Message
             {
-                to = token.Token,
-                sound = "default",
-                title = $"{author.DisplayName} in {channelName}",
-                body = contentPreview,
-                data = new
+                Token = token.Token,
+                Notification = new FcmMessaging.Notification
                 {
-                    channelId = message.ChannelId.ToString(),
-                    serverId = channel.ServerId?.ToString(),
-                    messageId = message.Id.ToString(),
-                    type = "message"
+                    Title = $"{author.DisplayName} in {channelName}",
+                    Body = contentPreview,
                 },
-                badge = await GetUnreadMentionCount(token.UserId)
+                Data = new Dictionary<string, string>
+                {
+                    ["channelId"] = message.ChannelId.ToString(),
+                    ["serverId"] = channel.ServerId?.ToString() ?? "",
+                    ["messageId"] = message.Id.ToString(),
+                    ["type"] = "message",
+                },
+                Android = new FcmMessaging.AndroidConfig
+                {
+                    Notification = new FcmMessaging.AndroidNotification
+                    {
+                        Sound = "default",
+                        ChannelId = "messages",
+                    },
+                },
+                Apns = new FcmMessaging.ApnsConfig
+                {
+                    Aps = new FcmMessaging.Aps
+                    {
+                        Badge = badgeCount,
+                        Sound = "default",
+                    },
+                },
             });
         }
 
-        if (expoPushMessages.Count == 0) return;
+        if (fcmMessages.Count == 0) return;
 
-        // Send to Expo Push Service
         try
         {
-            var httpClient = _httpClientFactory.CreateClient();
-            var json = JsonSerializer.Serialize(expoPushMessages);
-            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var response = await _fcm.SendEachAsync(fcmMessages);
 
-            var response = await httpClient.PostAsync(
-                "https://exp.host/--/api/v2/push/send",
-                content
-            );
-
-            if (!response.IsSuccessStatusCode)
+            // Auto-clean stale/unregistered tokens
+            var staleTokens = new List<DevicePushToken>();
+            for (var i = 0; i < response.Responses.Count; i++)
             {
-                var error = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Failed to send push notification: {error}");
+                var r = response.Responses[i];
+                if (!r.IsSuccess && r.Exception?.MessagingErrorCode == FcmMessaging.MessagingErrorCode.Unregistered)
+                {
+                    var staleTokenValue = fcmMessages[i].Token;
+                    var stale = pushTokens.FirstOrDefault(t => t.Token == staleTokenValue);
+                    if (stale != null) staleTokens.Add(stale);
+                }
+            }
+
+            if (staleTokens.Count > 0)
+            {
+                _db.DevicePushTokens.RemoveRange(staleTokens);
+                await _db.SaveChangesAsync();
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error sending push notification: {ex.Message}");
+            Console.WriteLine($"Error sending FCM push notification: {ex.Message}");
         }
     }
 

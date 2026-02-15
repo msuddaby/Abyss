@@ -92,7 +92,7 @@ function VoiceChannelViewInner() {
     const member = members.find((m) => m.userId === userId);
     const channelUser = channelUsers?.get(userId);
     openContextMenu(e.clientX, e.clientY, {
-      user: member?.user ?? { id: userId, username: '', displayName: channelUser?.displayName ?? userId, status: '', bio: '' },
+      user: member?.user ?? { id: userId, username: '', displayName: channelUser?.displayName ?? userId, status: '', bio: '', presenceStatus: 0 },
       member,
     });
   };

@@ -579,6 +579,11 @@ public class ChatHub : Hub
             _db.Notifications.Add(dmNotification);
             await _db.SaveChangesAsync();
 
+            // Send push notification to offline DM recipient
+            var dmOnlineUserIds = new HashSet<string>(_connections.Values);
+            await _notifications.SendPushNotifications(
+                new List<Notification> { dmNotification }, dmOnlineUserIds, message);
+
             var dmNotifDto = new NotificationDto(dmNotification.Id, dmNotification.MessageId, dmNotification.ChannelId, null, dmNotification.Type.ToString(), dmNotification.CreatedAt);
             await Clients.Group($"user:{recipientId}").SendAsync("MentionReceived", dmNotifDto);
         }
@@ -620,6 +625,10 @@ public class ChatHub : Hub
                     };
                     _db.Notifications.Add(replyNotification);
                     await _db.SaveChangesAsync();
+
+                    // Send push notification to offline reply target
+                    await _notifications.SendPushNotifications(
+                        new List<Notification> { replyNotification }, onlineUserIds, message);
 
                     var replyNotifDto = new NotificationDto(replyNotification.Id, replyNotification.MessageId, replyNotification.ChannelId, replyNotification.ServerId, replyNotification.Type.ToString(), replyNotification.CreatedAt);
                     await Clients.Group($"user:{replyDto.AuthorId}").SendAsync("MentionReceived", replyNotifDto);

@@ -39,7 +39,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
     e.stopPropagation();
     const member = members.find((m) => m.userId === userId);
     openContextMenu(e.clientX, e.clientY, {
-      user: member?.user ?? { id: userId, username: '', displayName: channelUsers?.get(userId)?.displayName ?? userId, status: '', bio: '' },
+      user: member?.user ?? { id: userId, username: '', displayName: channelUsers?.get(userId)?.displayName ?? userId, status: '', bio: '', presenceStatus: 0 },
       member,
     });
   };
