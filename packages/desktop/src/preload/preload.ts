@@ -83,6 +83,15 @@ contextBridge.exposeInMainWorld('electron', {
     };
   },
 
+  onScreenLockChanged: (callback: (locked: boolean) => void) => {
+    const subscription = (_event: any, locked: boolean) => callback(locked);
+    ipcRenderer.on('screen-lock-changed', subscription);
+
+    return () => {
+      ipcRenderer.removeListener('screen-lock-changed', subscription);
+    };
+  },
+
   showWindow: () => {
     ipcRenderer.send('show-window');
   },

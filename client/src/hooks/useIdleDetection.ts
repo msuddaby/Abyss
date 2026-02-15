@@ -110,6 +110,21 @@ export function useIdleDetection() {
       }, IDLE_POLL_INTERVAL_MS);
     }
 
+    // Listen for screen lock/unlock events from the main process.
+    // The setInterval polling above gets throttled by macOS when the screen
+    // is locked, so this ensures away status is set immediately.
+    let unsubScreenLock: (() => void) | null = null;
+    if (typeof window.electron?.onScreenLockChanged === 'function') {
+      unsubScreenLock = window.electron.onScreenLockChanged((locked) => {
+        if (disposed) return;
+        if (locked) {
+          void markAwayIfEligible();
+        } else {
+          void restoreIfAutoAway();
+        }
+      });
+    }
+
     return () => {
       disposed = true;
       events.forEach(event => window.removeEventListener(event, handleActivity));
@@ -122,6 +137,7 @@ export function useIdleDetection() {
       if (idlePollInterval) {
         clearInterval(idlePollInterval);
       }
+      unsubScreenLock?.();
     };
   }, [userId, token, setPresenceStatus]);
 }

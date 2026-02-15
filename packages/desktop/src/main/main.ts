@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, net, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, net, powerMonitor, protocol, session, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';
 import { GlobalShortcutManager } from './global-shortcuts';
@@ -266,6 +266,16 @@ function createWindow() {
 
   mainWindow.on('blur', () => {
     mainWindow?.webContents.send('window-focus-changed', false);
+  });
+
+  // Forward screen lock/unlock events to renderer for idle detection.
+  // The renderer's setInterval-based polling gets throttled by macOS when
+  // the screen is locked, so this ensures away status is set immediately.
+  powerMonitor.on('lock-screen', () => {
+    mainWindow?.webContents.send('screen-lock-changed', true);
+  });
+  powerMonitor.on('unlock-screen', () => {
+    mainWindow?.webContents.send('screen-lock-changed', false);
   });
 }
 
