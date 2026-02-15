@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useAuthStore } from "@abyss/shared";
+import { useAuthStore, useServerConfigStore } from "@abyss/shared";
 import { Link, useNavigate } from "react-router-dom";
+import ServerSetupModal from "../components/ServerSetupModal";
 
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
@@ -11,6 +12,8 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
+  const hasConfigured = useServerConfigStore((s) => s.hasConfigured);
+  const [showServerSetup, setShowServerSetup] = useState(!hasConfigured);
 
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
@@ -35,60 +38,77 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="auth-page">
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <h1>Create an account</h1>
-        {error && <div className="auth-error">{error}</div>}
-        <label>
-          Email
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Display Name
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Username
-          <input
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Invite Code
-          <input
-            type="text"
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-            placeholder="Only required if invite-only is enabled"
-          />
-        </label>
-        <button type="submit">Continue</button>
-        <p className="auth-link">
-          <Link to="/login">Already have an account?</Link>
-        </p>
-      </form>
-    </div>
+    <>
+      {showServerSetup && (
+        <ServerSetupModal
+          onComplete={() => setShowServerSetup(false)}
+          allowSkip={!!import.meta.env.VITE_API_URL}
+        />
+      )}
+      <div className="auth-page">
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <h1>Create an account</h1>
+          {error && <div className="auth-error">{error}</div>}
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Display Name
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Username
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Invite Code
+            <input
+              type="text"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value)}
+              placeholder="Only required if invite-only is enabled"
+            />
+          </label>
+          <button type="submit">Continue</button>
+          <p className="auth-link">
+            <Link to="/login">Already have an account?</Link>
+          </p>
+          <p className="auth-link">
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => setShowServerSetup(true)}
+            >
+              Change Server
+            </button>
+          </p>
+        </form>
+      </div>
+    </>
   );
 }

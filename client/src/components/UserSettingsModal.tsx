@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, getApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from "@abyss/shared";
+import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from "@abyss/shared";
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
+import axios from "axios";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
 import { VoiceDebugPanel } from "./VoiceDebugPanel";
@@ -8,7 +9,7 @@ import SettingsModal from "./SettingsModal";
 import { isMobile } from "../stores/mobileStore";
 import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
 
-type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "app" | "account";
+type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "app" | "server" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -29,7 +30,8 @@ export default function UserSettingsModal({
     { id: "keybinds", label: "Keybinds" },
     { id: "cosmetics", label: "Cosmetics" },
     { id: "app", label: "App Settings", visible: isElectron(), separatorBefore: true },
-    { id: "account", label: "Account", separatorBefore: !isElectron() },
+    { id: "server", label: "Server", separatorBefore: !isElectron() },
+    { id: "account", label: "Account" },
   ];
 
   const [displayName, setDisplayName] = useState(user.displayName);
@@ -92,6 +94,13 @@ export default function UserSettingsModal({
   // Auto-launch state
   const [autoLaunchEnabled, setAutoLaunchEnabled] = useState(false);
   const [autoLaunchLoading, setAutoLaunchLoading] = useState(false);
+
+  // Server configuration state
+  const serverUrl = useServerConfigStore((s) => s.serverUrl);
+  const setStoredServerUrl = useServerConfigStore((s) => s.setServerUrl);
+  const [serverUrlInput, setServerUrlInput] = useState(serverUrl || import.meta.env.VITE_API_URL || '');
+  const [serverUrlSaving, setServerUrlSaving] = useState(false);
+  const [serverUrlError, setServerUrlError] = useState<string | null>(null);
 
   // Cosmetics state
   const [myCosmetics, setMyCosmetics] = useState<UserCosmetic[]>([]);
@@ -524,6 +533,49 @@ export default function UserSettingsModal({
       alert("Failed to change auto-launch setting.");
     } finally {
       setAutoLaunchLoading(false);
+    }
+  };
+
+  const handleServerUrlSave = async () => {
+    setServerUrlError(null);
+    setServerUrlSaving(true);
+
+    try {
+      const trimmed = serverUrlInput.trim();
+      if (!trimmed) {
+        setServerUrlError('Please enter a server URL');
+        setServerUrlSaving(false);
+        return;
+      }
+
+      // Test if the server is reachable
+      const testUrl = `${trimmed}/health`;
+      try {
+        await axios.get(testUrl, { timeout: 5000 });
+      } catch (err: any) {
+        if (err.code === 'ECONNABORTED') {
+          setServerUrlError('Server connection timed out. Please check the URL.');
+        } else if (err.response) {
+          // Server responded - good enough
+          console.warn('Server responded with status:', err.response.status);
+        } else {
+          setServerUrlError('Unable to connect to server. Please check the URL.');
+        }
+        setServerUrlSaving(false);
+        return;
+      }
+
+      // Save and apply
+      setStoredServerUrl(trimmed);
+      setApiBase(trimmed);
+
+      // Show success message
+      alert('Server URL updated successfully. Please restart the app for all changes to take effect.');
+    } catch (err) {
+      console.error('Server URL save error:', err);
+      setServerUrlError('Failed to update server URL');
+    } finally {
+      setServerUrlSaving(false);
     }
   };
 
@@ -1195,6 +1247,51 @@ export default function UserSettingsModal({
                   Launch Abyss on system startup
                 </label>
               </div>
+            )}
+
+            {activeTab === "server" && (
+              <>
+                <div className="us-card">
+                  <div className="us-card-title">Server Configuration</div>
+                  <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
+                    Configure the Abyss server you want to connect to. Change this if you're self-hosting or connecting to a different instance.
+                  </p>
+                  <label>
+                    Server URL
+                    <input
+                      type="text"
+                      value={serverUrlInput}
+                      onChange={(e) => setServerUrlInput(e.target.value)}
+                      placeholder="https://your-server.com"
+                      disabled={serverUrlSaving}
+                    />
+                  </label>
+                  {serverUrlError && (
+                    <div className="settings-help" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                      {serverUrlError}
+                    </div>
+                  )}
+                  <div className="settings-help" style={{ marginTop: 8 }}>
+                    Current server: {serverUrl || 'Using default configuration'}
+                  </div>
+                </div>
+
+                <div className="us-card-actions">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setServerUrlInput(serverUrl || import.meta.env.VITE_API_URL || '')}
+                    disabled={serverUrlSaving}
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={handleServerUrlSave}
+                    disabled={serverUrlSaving || serverUrlInput === serverUrl}
+                  >
+                    {serverUrlSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </>
             )}
 
             {activeTab === "account" && (

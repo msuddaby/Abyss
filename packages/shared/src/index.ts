@@ -32,6 +32,7 @@ export { useUserPreferencesStore } from './stores/userPreferencesStore.js';
 export { useMediaProviderStore } from './stores/mediaProviderStore.js';
 export { useWatchPartyStore } from './stores/watchPartyStore.js';
 export { useSoundboardStore } from './stores/soundboardStore.js';
+export { useServerConfigStore } from './stores/serverConfigStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

@@ -197,6 +197,92 @@ body.window-hidden *::after {
   color: var(--text-link);
 }
 
+.auth-link .link-button {
+  background: none;
+  border: none;
+  color: var(--text-link);
+  cursor: pointer;
+  font-size: inherit;
+  padding: 0;
+  text-decoration: none;
+  font-family: inherit;
+}
+
+.auth-link .link-button:hover {
+  text-decoration: underline;
+}
+
+/* Server Setup Modal */
+.server-setup-modal {
+  max-width: 500px;
+  width: 90%;
+}
+
+.server-setup-content {
+  padding: 32px;
+}
+
+.server-setup-title {
+  color: var(--header-primary);
+  font-size: 24px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  text-align: center;
+}
+
+.server-setup-subtitle {
+  color: var(--text-secondary);
+  font-size: 16px;
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.server-setup-error {
+  color: var(--danger);
+  font-size: 14px;
+  margin-top: 8px;
+  background: rgba(237, 66, 69, 0.1);
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+
+.server-setup-help {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 12px;
+}
+
+.server-setup-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 24px;
+}
+
+.server-setup-actions button {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+}
+
+.server-setup-actions button:not(.btn-secondary) {
+  background: var(--bg-accent);
+  color: white;
+}
+
+.server-setup-actions button:not(.btn-secondary):hover:not(:disabled) {
+  background: var(--bg-accent-hover);
+}
+
+.server-setup-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Main Layout */
 .main-layout {
   display: flex;
