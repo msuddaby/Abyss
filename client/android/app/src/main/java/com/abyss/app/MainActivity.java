@@ -1,4 +1,4 @@
-package com.abyss.app;
+package net.hexagonsuns.abyssapp;
 
 import com.getcapacitor.BridgeActivity;
 

@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.abyss.app",
+  appId: "net.hexagonsuns.abyssapp",
   appName: "Abyss",
   webDir: "dist",
   server: {
