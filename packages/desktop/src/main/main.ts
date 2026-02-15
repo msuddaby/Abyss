@@ -268,14 +268,39 @@ function createWindow() {
     mainWindow?.webContents.send('window-focus-changed', false);
   });
 
-  // Forward screen lock/unlock events to renderer for idle detection.
-  // The renderer's setInterval-based polling gets throttled by macOS when
-  // the screen is locked, so this ensures away status is set immediately.
+  // Idle detection runs in the main process because macOS App Nap throttles
+  // the renderer's setInterval when the window is backgrounded or the screen
+  // is locked, making renderer-side polling unreliable.
+  const IDLE_THRESHOLD_S = 10 * 60; // 10 minutes
+  const IDLE_POLL_S = 30;
+  let wasIdle = false;
+
+  const checkIdle = () => {
+    const idleSeconds = powerMonitor.getSystemIdleTime();
+    const isIdle = idleSeconds >= IDLE_THRESHOLD_S;
+    if (isIdle !== wasIdle) {
+      wasIdle = isIdle;
+      mainWindow?.webContents.send('system-idle-changed', isIdle);
+    }
+  };
+
+  const idleInterval = setInterval(checkIdle, IDLE_POLL_S * 1000);
+  checkIdle();
+
+  // Screen lock is an immediate idle signal (don't wait for the next poll)
   powerMonitor.on('lock-screen', () => {
-    mainWindow?.webContents.send('screen-lock-changed', true);
+    if (!wasIdle) {
+      wasIdle = true;
+      mainWindow?.webContents.send('system-idle-changed', true);
+    }
   });
   powerMonitor.on('unlock-screen', () => {
-    mainWindow?.webContents.send('screen-lock-changed', false);
+    // Don't restore immediately — let the next poll check actual idle time.
+    // The user may have unlocked but not interacted yet.
+  });
+
+  mainWindow.on('closed', () => {
+    clearInterval(idleInterval);
   });
 }
 

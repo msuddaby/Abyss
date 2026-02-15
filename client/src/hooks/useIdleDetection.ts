@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react';
 import { useAuthStore, api, getApiBase, PresenceStatus } from '@abyss/shared';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
-const IDLE_POLL_INTERVAL_MS = 30 * 1000;
 
 export function useIdleDetection() {
   const userId = useAuthStore((s) => s.user?.id);
@@ -29,7 +28,6 @@ export function useIdleDetection() {
     }
 
     let disposed = false;
-    const hasSystemIdleDetector = typeof window.electron?.getSystemIdleTime === 'function';
 
     const updatePresence = async (status: number) => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
@@ -64,65 +62,46 @@ export function useIdleDetection() {
       await updatePresence(PresenceStatus.Online);
     };
 
-    const resetWebIdleTimer = () => {
-      if (hasSystemIdleDetector) return;
-      if (idleTimerRef.current) {
-        clearTimeout(idleTimerRef.current);
-      }
-      idleTimerRef.current = setTimeout(() => {
-        void markAwayIfEligible();
-      }, IDLE_TIMEOUT_MS);
-    };
+    // Electron: idle detection runs in the main process (immune to renderer
+    // throttling from macOS App Nap / screen lock). We just listen for its signal.
+    const hasMainProcessIdle = typeof window.electron?.onSystemIdleChanged === 'function';
 
-    const handleActivity = () => {
-      void restoreIfAutoAway();
-      resetWebIdleTimer();
-    };
-
-    // Activity event listeners
-    const events = ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'];
-    events.forEach(event => window.addEventListener(event, handleActivity, { passive: true }));
-
-    window.addEventListener('focus', handleActivity);
-
-    resetWebIdleTimer();
-
-    let idlePollInterval: ReturnType<typeof setInterval> | null = null;
-    if (hasSystemIdleDetector) {
-      const pollSystemIdle = async () => {
-        try {
-          const idleSeconds = await window.electron!.getSystemIdleTime();
-          if (disposed) return;
-          const idleMs = idleSeconds * 1000;
-          if (idleMs >= IDLE_TIMEOUT_MS) {
-            await markAwayIfEligible();
-          } else {
-            await restoreIfAutoAway();
-          }
-        } catch (error) {
-          console.error('Failed to poll system idle time:', error);
-        }
-      };
-
-      void pollSystemIdle();
-      idlePollInterval = setInterval(() => {
-        void pollSystemIdle();
-      }, IDLE_POLL_INTERVAL_MS);
-    }
-
-    // Listen for screen lock/unlock events from the main process.
-    // The setInterval polling above gets throttled by macOS when the screen
-    // is locked, so this ensures away status is set immediately.
-    let unsubScreenLock: (() => void) | null = null;
-    if (typeof window.electron?.onScreenLockChanged === 'function') {
-      unsubScreenLock = window.electron.onScreenLockChanged((locked) => {
+    let unsubIdle: (() => void) | null = null;
+    if (hasMainProcessIdle) {
+      unsubIdle = window.electron!.onSystemIdleChanged((isIdle) => {
         if (disposed) return;
-        if (locked) {
+        if (isIdle) {
           void markAwayIfEligible();
         } else {
           void restoreIfAutoAway();
         }
       });
+    }
+
+    // Web browser fallback: track activity events with a 10-minute timeout.
+    // Also handles restoring from auto-away on activity in Electron.
+    const handleActivity = () => {
+      void restoreIfAutoAway();
+      if (!hasMainProcessIdle) {
+        if (idleTimerRef.current) {
+          clearTimeout(idleTimerRef.current);
+        }
+        idleTimerRef.current = setTimeout(() => {
+          void markAwayIfEligible();
+        }, IDLE_TIMEOUT_MS);
+      }
+    };
+
+    const events = ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'];
+    events.forEach(event => window.addEventListener(event, handleActivity, { passive: true }));
+    window.addEventListener('focus', handleActivity);
+
+    // Start the web idle timer (no-op path for Electron since handleActivity
+    // skips the timer when hasMainProcessIdle is true)
+    if (!hasMainProcessIdle) {
+      idleTimerRef.current = setTimeout(() => {
+        void markAwayIfEligible();
+      }, IDLE_TIMEOUT_MS);
     }
 
     return () => {
@@ -134,10 +113,7 @@ export function useIdleDetection() {
         clearTimeout(idleTimerRef.current);
         idleTimerRef.current = null;
       }
-      if (idlePollInterval) {
-        clearInterval(idlePollInterval);
-      }
-      unsubScreenLock?.();
+      unsubIdle?.();
     };
   }, [userId, token, setPresenceStatus]);
 }
