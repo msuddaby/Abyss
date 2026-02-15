@@ -6,6 +6,27 @@ A self-hosted chat platform with text channels, voice chat (WebRTC), screen shar
 
 tl;dr Discord sucks and there's no sane alternative that offers all of the features I want out of a chat app. Thus, Abyss was created.
 
+## Features
+
+- Host many servers in an instance
+- Create text channels
+- Custom roles with permissions
+- Per-channel permissions
+- @ mentions with notifications
+- Reactions
+- Custom emojis
+- Pin messages
+- Chat search
+- Voice chat
+- Webcam and screen sharing with audio
+- Watch parties (connect your Plex server to a server or YouTube) - keeps everyone in sync
+- Soundboard
+- Cosmetics
+- Online, away, DnD status
+- Friend system
+- Direct messages
+- System administrator control panel
+
 ## Tech Stack
 
 - **Backend**: ASP.NET Core (.NET 10), Entity Framework Core, SignalR, PostgreSQL 16
