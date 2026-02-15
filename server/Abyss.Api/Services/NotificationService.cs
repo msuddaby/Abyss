@@ -243,12 +243,11 @@ public class NotificationService
             .ToDictionaryAsync(s => s.UserId);
         var server = await _db.Servers.AsNoTracking().FirstOrDefaultAsync(s => s.Id == serverId);
         var defaultLevel = server?.DefaultNotificationLevel ?? NotificationLevel.AllMessages;
-        Console.WriteLine($"[AllMsg] Channel: {channelId}, server default level: {defaultLevel}, members: {memberIds.Count}, alreadyNotified: {alreadyNotifiedUserIds.Count}, activeInChannel: {activeChannelUserIds.Count}, activeChannelUserIds: [{string.Join(", ", activeChannelUserIds)}]");
 
         foreach (var userId in memberIds)
         {
-            if (alreadyNotifiedUserIds.Contains(userId)) { Console.WriteLine($"[AllMsg] {userId}: skip — already notified"); continue; }
-            if (activeChannelUserIds.Contains(userId)) { Console.WriteLine($"[AllMsg] {userId}: skip — viewing this channel"); continue; }
+            if (alreadyNotifiedUserIds.Contains(userId)) continue;
+            if (activeChannelUserIds.Contains(userId)) continue;
             if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
 
             // Resolve effective notification level
@@ -259,7 +258,7 @@ public class NotificationService
             if (svSetting?.MuteUntil != null && svSetting.MuteUntil > DateTime.UtcNow) continue;
 
             var effectiveLevel = chSetting?.NotificationLevel ?? svSetting?.NotificationLevel ?? defaultLevel;
-            if (effectiveLevel != NotificationLevel.AllMessages) { Console.WriteLine($"[AllMsg] {userId}: skip — level is {effectiveLevel}"); continue; }
+            if (effectiveLevel != NotificationLevel.AllMessages) continue;
 
             var isOffline = !onlineUserIds.Contains(userId);
             notifications.Add(new Notification
@@ -275,8 +274,6 @@ public class NotificationService
                 CreatedAt = DateTime.UtcNow
             });
         }
-
-        Console.WriteLine($"[AllMsg] Created {notifications.Count} AllMessage notifications ({notifications.Count(n => n.PushStatus == PushStatus.Pending)} pending push, {notifications.Count(n => n.PushStatus == PushStatus.None)} online/deferred)");
 
         if (notifications.Count > 0)
         {
