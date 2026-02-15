@@ -220,11 +220,16 @@ public class NotificationDispatchService : BackgroundService
             try
             {
                 // Grace period — wait 5 seconds then re-check if user is still offline
+                _logger.LogInformation("[OfflineReplay] User {UserId} disconnected, waiting 5s grace period", userId);
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
 
                 if (ChatHub._connections.Values.Contains(userId))
-                    continue; // User reconnected
+                {
+                    _logger.LogInformation("[OfflineReplay] User {UserId} reconnected within grace period — skipping", userId);
+                    continue;
+                }
 
+                _logger.LogInformation("[OfflineReplay] User {UserId} still offline, running replay", userId);
                 await SendOfflineReplayAsync(userId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -242,8 +247,16 @@ public class NotificationDispatchService : BackgroundService
 
         // Check DND
         var user = await db.Users.FindAsync(userId);
-        if (user == null || user.PresenceStatus == 2) return;
-        if (fcm == null) return;
+        if (user == null || user.PresenceStatus == 2)
+        {
+            _logger.LogInformation("[OfflineReplay] User {UserId} is null or DND (presence={Presence}) — skipping", userId, user?.PresenceStatus);
+            return;
+        }
+        if (fcm == null)
+        {
+            _logger.LogInformation("[OfflineReplay] FCM not configured — skipping");
+            return;
+        }
 
         var cutoff = DateTime.UtcNow.AddHours(-1);
         var notifications = await db.Notifications
@@ -254,6 +267,7 @@ public class NotificationDispatchService : BackgroundService
                 && n.CreatedAt > cutoff)
             .ToListAsync();
 
+        _logger.LogInformation("[OfflineReplay] User {UserId}: found {Count} unread notifications with PushStatus=None in last hour", userId, notifications.Count);
         if (notifications.Count == 0) return;
 
         // Group by channel for summary pushes

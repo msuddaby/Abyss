@@ -655,17 +655,14 @@ public class ChatHub : Hub
             }
 
             // AllMessages notifications for users with that notification level
-            if (Environment.GetEnvironmentVariable("NOTIFICATIONS_ALL_MESSAGES_ENABLED") == "true")
-            {
-                var allMsgNotifications = await _notifications.CreateAllMessageNotifications(
-                    message, channel.ServerId.Value, channelGuid,
-                    onlineUserIds, activeChannelUserIds, notifiedUserIds);
+            var allMsgNotifications = await _notifications.CreateAllMessageNotifications(
+                message, channel.ServerId.Value, channelGuid,
+                onlineUserIds, activeChannelUserIds, notifiedUserIds);
 
-                foreach (var notification in allMsgNotifications)
-                {
-                    var dto = new NotificationDto(notification.Id, notification.MessageId, notification.ChannelId, notification.ServerId, notification.Type.ToString(), notification.CreatedAt);
-                    await Clients.Group($"user:{notification.UserId}").SendAsync("MentionReceived", dto);
-                }
+            foreach (var notification in allMsgNotifications)
+            {
+                var dto = new NotificationDto(notification.Id, notification.MessageId, notification.ChannelId, notification.ServerId, notification.Type.ToString(), notification.CreatedAt);
+                await Clients.Group($"user:{notification.UserId}").SendAsync("MentionReceived", dto);
             }
         }
     }
