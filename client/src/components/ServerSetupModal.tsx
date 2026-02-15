@@ -33,14 +33,19 @@ export default function ServerSetupModal({ onComplete, allowSkip = false }: Serv
       } catch (err: any) {
         if (err.code === 'ECONNABORTED') {
           setError('Server connection timed out. Please check the URL.');
+          setTesting(false);
+          return;
         } else if (err.response) {
-          // Server responded but maybe with error - that's still better than no response
-          console.warn('Server responded with status:', err.response.status);
+          // Server responded - that's good enough (CORS errors still mean server is reachable)
+          console.log('Server is reachable (status:', err.response.status, ')');
+        } else if (err.message?.includes('Network Error') || err.message?.includes('CORS')) {
+          // CORS error means server exists but doesn't allow app://abyss origin - that's fine
+          console.log('Server detected (CORS blocked but server is reachable)');
         } else {
           setError('Unable to connect to server. Please check the URL.');
+          setTesting(false);
+          return;
         }
-        setTesting(false);
-        return;
       }
 
       // Save and apply

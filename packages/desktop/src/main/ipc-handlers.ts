@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import Store from 'electron-store';
 import { GlobalShortcutManager } from './global-shortcuts';
 import { AutoLaunchManager } from './auto-launch';
@@ -77,6 +77,12 @@ export function setupIpcHandlers(
   // Close window (hide to tray)
   ipcMain.on('close-window', () => {
     window.hide();
+  });
+
+  // Restart app
+  ipcMain.on('restart-app', () => {
+    app.relaunch();
+    app.exit(0);
   });
 
   // Synchronous key/value storage for renderer (used by @abyss/shared storage adapter)

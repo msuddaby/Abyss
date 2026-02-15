@@ -41,6 +41,9 @@ setStorage({
 
 hydrateVoiceStore();
 
+// Hydrate server config store after storage is initialized
+useServerConfigStore.getState()._hydrate();
+
 // Server URL priority: stored config > env var > empty (relative paths)
 // Empty VITE_API_URL = use relative paths (Vite proxy handles /api and /hubs in dev).
 const storedServerUrl = useServerConfigStore.getState().serverUrl;

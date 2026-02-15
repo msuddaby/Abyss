@@ -555,22 +555,31 @@ export default function UserSettingsModal({
       } catch (err: any) {
         if (err.code === 'ECONNABORTED') {
           setServerUrlError('Server connection timed out. Please check the URL.');
+          setServerUrlSaving(false);
+          return;
         } else if (err.response) {
-          // Server responded - good enough
-          console.warn('Server responded with status:', err.response.status);
+          // Server responded - that's good enough (CORS errors still mean server is reachable)
+          console.log('Server is reachable (status:', err.response.status, ')');
+        } else if (err.message?.includes('Network Error') || err.message?.includes('CORS')) {
+          // CORS error means server exists but doesn't allow app://abyss origin - that's fine
+          console.log('Server detected (CORS blocked but server is reachable)');
         } else {
           setServerUrlError('Unable to connect to server. Please check the URL.');
+          setServerUrlSaving(false);
+          return;
         }
-        setServerUrlSaving(false);
-        return;
       }
 
       // Save and apply
       setStoredServerUrl(trimmed);
       setApiBase(trimmed);
 
-      // Show success message
-      alert('Server URL updated successfully. Please restart the app for all changes to take effect.');
+      // Restart app if in Electron, otherwise show message
+      if (isElectron() && window.electron?.restartApp) {
+        window.electron.restartApp();
+      } else {
+        alert('Server URL updated successfully. Please restart the app for all changes to take effect.');
+      }
     } catch (err) {
       console.error('Server URL save error:', err);
       setServerUrlError('Failed to update server URL');

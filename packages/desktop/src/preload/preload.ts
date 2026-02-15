@@ -95,6 +95,10 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('close-window');
   },
 
+  restartApp: () => {
+    ipcRenderer.send('restart-app');
+  },
+
   // Update log forwarding from main process
   onUpdateLog: (callback: (msg: string) => void) => {
     const subscription = (_event: any, msg: string) => callback(msg);

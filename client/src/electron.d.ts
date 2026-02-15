@@ -61,6 +61,7 @@ interface Window {
     minimizeWindow: () => void;
     toggleMaximize: () => void;
     closeWindow: () => void;
+    restartApp: () => void;
 
     // Update log forwarding
     onUpdateLog: (callback: (msg: string) => void) => () => void;
