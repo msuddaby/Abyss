@@ -1,7 +1,6 @@
 const { FusesPlugin } = require("@electron-forge/plugin-fuses");
 const { FuseV1Options, FuseVersion } = require("@electron/fuses");
 const { MakerAppImage } = require("@reforged/maker-appimage");
-const { version } = require("./package.json");
 
 module.exports = {
   packagerConfig: {
@@ -41,14 +40,6 @@ module.exports = {
     },
   ],
   makers: [
-    {
-      name: "@electron-forge/maker-squirrel",
-      config: {
-        name: "abyss_desktop",
-        setupExe: `abyss-desktop-${version}-Setup.exe`,
-        noMsi: true,
-      },
-    },
     {
       name: "@electron-forge/maker-zip",
       platforms: ["darwin"],

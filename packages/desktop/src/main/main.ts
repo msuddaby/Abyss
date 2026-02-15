@@ -9,9 +9,15 @@ import { AutoLaunchManager } from './auto-launch';
 import { installDesktopEntry } from './linux-desktop-integration';
 import Store from 'electron-store';
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling
-if (require('electron-squirrel-startup')) {
-  app.quit();
+// Legacy Squirrel.Windows handler — only relevant if the app was installed via
+// the old Squirrel-based installer. Safe to leave: it simply checks for
+// Squirrel CLI flags and exits early when found.
+try {
+  if (require('electron-squirrel-startup')) {
+    app.quit();
+  }
+} catch {
+  // electron-squirrel-startup not installed (NSIS builds); nothing to do.
 }
 
 // Register custom scheme before app is ready — gives the renderer a real

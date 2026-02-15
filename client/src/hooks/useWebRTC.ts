@@ -1921,10 +1921,24 @@ async function startCameraInternal() {
     if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
       videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
     }
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: videoConstraints,
-      audio: false,
-    });
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
+        audio: false,
+      });
+    } catch (firstErr: any) {
+      if ((firstErr?.name === "OverconstrainedError" || firstErr?.name === "NotFoundError") &&
+          voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
+        console.warn(`Saved camera device unavailable (${firstErr.name}), falling back to default`);
+        const { deviceId: _, ...fallbackConstraints } = videoConstraints;
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+          video: fallbackConstraints,
+          audio: false,
+        });
+      } else {
+        throw firstErr;
+      }
+    }
 
     const videoTrack = cameraStream.getVideoTracks()[0];
     videoTrack.onended = () => {
@@ -2805,8 +2819,20 @@ export function useWebRTC() {
         const constraints: MediaStreamConstraints = {
           audio: audioConstraints,
         };
-        const newStream =
-          await navigator.mediaDevices.getUserMedia(constraints);
+        let newStream: MediaStream;
+        try {
+          newStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (firstErr: any) {
+          if (firstErr?.name === "OverconstrainedError" || firstErr?.name === "NotFoundError") {
+            console.warn(`Saved audio device unavailable (${firstErr.name}), falling back to default`);
+            const { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc } = useVoiceStore.getState();
+            newStream = await navigator.mediaDevices.getUserMedia({
+              audio: { noiseSuppression: ns, echoCancellation: ec, autoGainControl: agc },
+            });
+          } else {
+            throw firstErr;
+          }
+        }
         if (cancelled) {
           newStream.getTracks().forEach((track) => track.stop());
           return;
@@ -3069,7 +3095,20 @@ export function useWebRTC() {
           const constraints: MediaStreamConstraints = {
             audio: audioConstraints,
           };
-          localStream = await navigator.mediaDevices.getUserMedia(constraints);
+          try {
+            localStream = await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (firstErr: any) {
+            // If the saved device ID is stale/invalid, retry with no device constraint
+            if (firstErr?.name === "OverconstrainedError" || firstErr?.name === "NotFoundError") {
+              console.warn(`Saved audio device unavailable (${firstErr.name}), falling back to default`);
+              const { noiseSuppression, echoCancellation, autoGainControl } = useVoiceStore.getState();
+              localStream = await navigator.mediaDevices.getUserMedia({
+                audio: { noiseSuppression, echoCancellation, autoGainControl },
+              });
+            } else {
+              throw firstErr;
+            }
+          }
           const audioTracks = localStream.getAudioTracks();
           console.log(
             `Got local audio stream, tracks: ${audioTracks.length}`,
