@@ -28,6 +28,7 @@ interface ServerState {
   fetchChannels: (serverId: string) => Promise<Channel[]>;
   setActiveServer: (server: Server) => Promise<void>;
   setActiveChannel: (channel: Channel | null) => void;
+  getServersSortedByRecency: () => Server[];
   createServer: (name: string) => Promise<Server>;
   updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
   createChannel: (serverId: string, name: string, type: 'Text' | 'Voice', userLimit?: number | null) => Promise<Channel>;
@@ -102,6 +103,25 @@ function saveLastChannel(serverId: string, channelId: string) {
   getStorage().setItem('lastChannelByServer', JSON.stringify(map));
 }
 
+function getRecentServerIds(): string[] {
+  try {
+    return JSON.parse(getStorage().getItem('recentServerIds') || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function addRecentServer(serverId: string) {
+  const recent = getRecentServerIds();
+  // Remove if already exists
+  const filtered = recent.filter((id) => id !== serverId);
+  // Add to front
+  filtered.unshift(serverId);
+  // Keep only last 10
+  const limited = filtered.slice(0, 10);
+  getStorage().setItem('recentServerIds', JSON.stringify(limited));
+}
+
 export const useServerStore = create<ServerState>((set, get) => ({
   servers: [],
   activeServer: null,
@@ -143,6 +163,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   setActiveServer: async (server) => {
     set({ activeServer: server, activeChannel: null, voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map(), voiceChannelWatchParties: new Map() });
     getStorage().setItem('activeServerId', server.id);
+    addRecentServer(server.id);
     const channels = await get().fetchChannels(server.id);
 
     const lastChannelId = getLastChannelMap()[server.id];
@@ -625,4 +646,33 @@ export const useServerStore = create<ServerState>((set, get) => ({
 
   clearActiveServer: () =>
     set({ activeServer: null, channels: [], activeChannel: null, members: [], roles: [], bans: [], emojis: [], voiceChannelUsers: new Map(), voiceChannelSharers: new Map(), voiceChannelCameras: new Map(), voiceChannelWatchParties: new Map() }),
+
+  getServersSortedByRecency: () => {
+    const servers = get().servers;
+    const recentIds = getRecentServerIds();
+
+    // Create a map of serverId -> position in recent list (lower = more recent)
+    const recentMap = new Map<string, number>();
+    recentIds.forEach((id, index) => recentMap.set(id, index));
+
+    // Sort: recent servers first (by position), then all others (maintain original order)
+    return [...servers].sort((a, b) => {
+      const aPos = recentMap.get(a.id);
+      const bPos = recentMap.get(b.id);
+
+      // Both in recent list: sort by position
+      if (aPos !== undefined && bPos !== undefined) {
+        return aPos - bPos;
+      }
+
+      // Only a is recent: a comes first
+      if (aPos !== undefined) return -1;
+
+      // Only b is recent: b comes first
+      if (bPos !== undefined) return 1;
+
+      // Neither is recent: maintain original order
+      return 0;
+    });
+  },
 }));

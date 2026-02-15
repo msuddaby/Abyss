@@ -73,11 +73,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       storage.setItem('user', JSON.stringify(user));
       set({ user });
     } catch (err: any) {
-      // Only logout on 401 (auth truly invalid) or 404 (user deleted).
-      // Network errors, 500s, etc. should not log out — keep cached user data.
       const status = err?.response?.status;
-      if (status === 401 || status === 404) {
+      if (status === 404) {
+        // User deleted from server — logout immediately.
         get().logout();
+      } else if (status === 401) {
+        // Only logout if refreshAccessToken already cleared the refresh token
+        // (meaning auth is genuinely invalid). If the refresh token is still
+        // in storage, the failure was transient — keep cached user data.
+        if (!getStorage().getItem('refreshToken')) {
+          get().logout();
+        }
       }
     }
     set({ initialized: true });

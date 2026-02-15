@@ -1,6 +1,7 @@
 # Secrets / environment
 .env
 .env.dev
+.env.production
 .env.local
 .env.*.local
 packages/desktop/.env

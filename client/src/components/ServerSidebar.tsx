@@ -9,8 +9,9 @@ import ConfirmModal from './ConfirmModal';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 
 export default function ServerSidebar() {
-  const { servers, activeServer, fetchServers, setActiveServer, leaveServer, members } = useServerStore();
+  const { activeServer, fetchServers, setActiveServer, leaveServer, members, getServersSortedByRecency } = useServerStore();
   const { isDmMode, enterDmMode, exitDmMode, fetchDmChannels } = useDmStore();
+  const servers = getServersSortedByRecency();
   const serverUnreads = useUnreadStore((s) => s.serverUnreads);
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
   const pendingFriendRequests = useFriendStore((s) => s.requests.filter((r) => !r.isOutgoing).length);

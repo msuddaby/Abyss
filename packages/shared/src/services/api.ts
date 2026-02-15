@@ -37,10 +37,15 @@ export function setOnUnauthorized(cb: () => void): void {
 
 let refreshPromise: Promise<string | null> | null = null;
 
-async function doRefresh(): Promise<string | null> {
+// Sentinel: doRefresh returns this when the server explicitly rejects the
+// refresh token (401).  A plain `null` means the attempt failed for a
+// transient reason (network error, 5xx, 429 exhaustion, etc.).
+const AUTH_REJECTED: unique symbol = Symbol('AUTH_REJECTED');
+
+async function doRefresh(): Promise<string | typeof AUTH_REJECTED | null> {
   const storage = getStorage();
   const refreshToken = storage.getItem('refreshToken');
-  if (!refreshToken) return null;
+  if (!refreshToken) return AUTH_REJECTED;
   try {
     const res = await rawApi.post('/auth/refresh', { refreshToken });
     const { token, refreshToken: newRefreshToken, user } = res.data;
@@ -50,6 +55,7 @@ async function doRefresh(): Promise<string | null> {
     return token;
   } catch (err: any) {
     const status = err?.response?.status;
+    if (status === 401) return AUTH_REJECTED;
     if (status === 429) {
       const retryAfter = Number(err.response?.headers?.['retry-after']) || 5;
       await new Promise((r) => setTimeout(r, retryAfter * 1000));
@@ -64,6 +70,7 @@ async function doRefresh(): Promise<string | null> {
         return null;
       }
     }
+    // Network errors, 5xx, etc. — transient failure, don't treat as auth rejection
     return null;
   }
 }
@@ -76,10 +83,18 @@ export async function refreshAccessToken(): Promise<string | null> {
     if (!originalRefreshToken) return null;
 
     const token = await doRefresh();
-    if (token) return token;
+    if (typeof token === 'string') return token;
 
-    // First attempt failed. Wait briefly — another tab or SignalR reconnect
-    // may have rotated the token in the meantime.
+    // Server explicitly rejected the refresh token — auth is invalid.
+    if (token === AUTH_REJECTED) {
+      storage.removeItem('token');
+      storage.removeItem('refreshToken');
+      if (onUnauthorized) onUnauthorized();
+      return null;
+    }
+
+    // Transient failure (network error, 5xx). Wait briefly — another tab or
+    // SignalR reconnect may have rotated the token in the meantime.
     await new Promise((r) => setTimeout(r, 1000));
 
     // Re-read from storage: if the refresh token changed, another code path
@@ -91,13 +106,16 @@ export async function refreshAccessToken(): Promise<string | null> {
 
     // Same token, retry once more (covers transient network blips).
     const retryToken = await doRefresh();
-    if (retryToken) return retryToken;
+    if (typeof retryToken === 'string') return retryToken;
+    if (retryToken === AUTH_REJECTED) {
+      storage.removeItem('token');
+      storage.removeItem('refreshToken');
+      if (onUnauthorized) onUnauthorized();
+      return null;
+    }
 
-    // Refresh has definitively failed. Clear tokens and trigger logout now,
-    // so parallel requests don't each independently discover the failure.
-    storage.removeItem('token');
-    storage.removeItem('refreshToken');
-    if (onUnauthorized) onUnauthorized();
+    // Still a transient failure — don't clear tokens. The session may still
+    // be valid once the server comes back.
     return null;
   })();
   try {
@@ -160,10 +178,18 @@ api.interceptors.response.use(
           return api(original);
         }
       }
-      // Only logout if the current access token is actually expired.
-      // If it's still valid, the 401 was for a different reason (permissions etc.)
-      // — don't nuke the session.
-      const currentToken = getStorage().getItem('token');
+      // If refreshAccessToken determined auth was truly invalid, it already
+      // cleared tokens and called onUnauthorized. If the refresh token is
+      // still in storage, the failure was transient (server down, 5xx, etc.)
+      // — don't nuke the session; it may recover when the server is back.
+      const currentStorage = getStorage();
+      if (currentStorage.getItem('refreshToken')) {
+        return Promise.reject(err);
+      }
+      // No refresh token left — either refreshAccessToken cleared it (auth
+      // invalid) and already called onUnauthorized, or the user never had one.
+      // Check if the access token is still valid before logging out.
+      const currentToken = currentStorage.getItem('token');
       if (currentToken) {
         const exp = getTokenExpiry(currentToken);
         if (exp && Date.now() < exp) {

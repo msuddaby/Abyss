@@ -1,5 +1,5 @@
 import * as signalR from "@microsoft/signalr";
-import { getApiBase, refreshAccessToken, ensureFreshToken } from "./api.js";
+import { getApiBase, ensureFreshToken } from "./api.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
@@ -139,8 +139,9 @@ async function restartConnection(reason: string): Promise<void> {
   } catch {
     // Ignore stop errors; we'll attempt a clean start anyway.
   }
-  // Refresh the access token before reconnecting — it may have expired while idle
-  await refreshAccessToken().catch(() => {});
+  // Ensure the access token is still valid before reconnecting — only refreshes
+  // if near expiry, avoiding unnecessary API calls that could fail during restarts.
+  await ensureFreshToken().catch(() => {});
   try {
     await startConnection();
     fireReconnectCallbacks();

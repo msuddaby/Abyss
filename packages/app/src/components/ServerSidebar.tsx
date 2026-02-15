@@ -7,10 +7,11 @@ import { useUiStore } from '../stores/uiStore';
 import { colors, spacing, borderRadius } from '../theme/tokens';
 
 export default function ServerSidebar() {
-  const servers = useServerStore((s) => s.servers);
   const activeServer = useServerStore((s) => s.activeServer);
   const fetchServers = useServerStore((s) => s.fetchServers);
   const setActiveServer = useServerStore((s) => s.setActiveServer);
+  const getServersSortedByRecency = useServerStore((s) => s.getServersSortedByRecency);
+  const servers = getServersSortedByRecency();
   const isDmMode = useDmStore((s) => s.isDmMode);
   const enterDmMode = useDmStore((s) => s.enterDmMode);
   const exitDmMode = useDmStore((s) => s.exitDmMode);

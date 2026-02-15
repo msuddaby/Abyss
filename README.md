@@ -57,6 +57,8 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 
 All configuration is done through environment variables in a `.env` file at the project root. Both the backend and frontend read from this file.
 
+For production builds (especially mobile apps), create a `.env.production` file which Vite will automatically use instead of `.env` during `npm run build`.
+
 ### Development Setup
 
 Copy the example and edit:
@@ -162,11 +164,33 @@ The web client starts on `http://localhost:5173`. It reads `VITE_*` variables fr
 
 The mobile app uses Capacitor to wrap the same React web client for iOS and Android.
 
+#### Environment Configuration
+
+Mobile builds automatically use different environment variables than development:
+
+- **Development** (`npm run dev`): Uses `.env` → `VITE_API_URL=http://localhost:5000`
+- **Production Build** (`npm run build:mobile`): Uses `.env.production` → `VITE_API_URL=https://your-domain.com`
+
+Create a `.env.production` file at the project root with production values:
+
+```sh
+# .env.production
+VITE_API_URL=https://your-domain.com
+VITE_STUN_URL=stun:stun.l.google.com:19302
+VITE_TURN_URLS=turn:IP:3478,turn:IP:3478?transport=tcp
+VITE_TURN_USERNAME=username
+VITE_TURN_CREDENTIAL=password
+```
+
+Vite automatically selects `.env.production` during production builds, so your mobile app will connect to the production server instead of localhost.
+
+#### Building and Running
+
 ```sh
 cd client
 
-# Build the web client first
-npm run build
+# Build the web client for mobile (uses .env.production)
+npm run build:mobile
 
 # Sync web assets to native projects
 npx cap sync
