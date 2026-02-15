@@ -27,7 +27,7 @@ public class FriendsController : ControllerBase
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
 
     private static UserDto ToUserDto(AppUser u) =>
-        new(u.Id, u.UserName!, u.DisplayName, u.AvatarUrl, u.Status, u.Bio);
+        new(u.Id, u.UserName!, u.DisplayName, u.AvatarUrl, u.Status, u.Bio, u.PresenceStatus);
 
     [HttpGet]
     public async Task<ActionResult<List<FriendshipDto>>> GetFriends()

@@ -219,7 +219,28 @@ public class AuthController : ControllerBase
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();
         var cosmetics = await _cosmeticService.GetEquippedAsync(userId);
-        return Ok(new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, cosmetics));
+        return Ok(new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus, cosmetics));
+    }
+
+    [HttpPut("presence")]
+    [Authorize]
+    public async Task<IActionResult> UpdatePresenceStatus([FromBody] UpdatePresenceRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null) return NotFound();
+
+        // Validate status value (0-3)
+        if (request.PresenceStatus < 0 || request.PresenceStatus > 3)
+            return BadRequest("Invalid presence status");
+
+        user.PresenceStatus = request.PresenceStatus;
+        await _userManager.UpdateAsync(user);
+
+        // Broadcast status change via SignalR
+        await BroadcastPresenceChange(userId, request.PresenceStatus);
+
+        return Ok();
     }
 
     private async Task BroadcastProfileUpdate(string userId, UserDto dto)
@@ -235,8 +256,21 @@ public class AuthController : ControllerBase
         }
     }
 
+    private async Task BroadcastPresenceChange(string userId, int presenceStatus)
+    {
+        var serverIds = await _db.ServerMembers
+            .Where(sm => sm.UserId == userId)
+            .Select(sm => sm.ServerId)
+            .ToListAsync();
+
+        foreach (var serverId in serverIds)
+        {
+            await _hubContext.Clients.Group($"server:{serverId}").SendAsync("UserPresenceStatusChanged", userId, presenceStatus);
+        }
+    }
+
     private static UserDto ToUserDto(AppUser user) =>
-        new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio);
+        new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus);
 
     private async Task<bool> IsInviteOnlyAsync()
     {

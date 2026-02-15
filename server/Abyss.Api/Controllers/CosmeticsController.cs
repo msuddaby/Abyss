@@ -152,7 +152,7 @@ public class CosmeticsController : ControllerBase
             .Include(uc => uc.User)
             .Select(uc => new UserDto(
                 uc.User.Id, uc.User.UserName!, uc.User.DisplayName,
-                uc.User.AvatarUrl, uc.User.Status, uc.User.Bio))
+                uc.User.AvatarUrl, uc.User.Status, uc.User.Bio, uc.User.PresenceStatus))
             .ToListAsync();
 
         return Ok(owners);

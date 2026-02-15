@@ -7,6 +7,7 @@ import MainLayout from './pages/MainLayout';
 import ToastHost from './components/ToastHost';
 import ScreenSharePicker from './components/ScreenSharePicker';
 import { useWindowVisibility } from './hooks/useWindowVisibility';
+import { useIdleDetection } from './hooks/useIdleDetection';
 import './App.css';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -28,6 +29,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
   const isWindowVisible = useWindowVisibility();
+  useIdleDetection();
 
   useEffect(() => {
     initialize();

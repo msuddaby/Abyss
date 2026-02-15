@@ -61,7 +61,7 @@ public class SystemMessageService
         _db.Messages.Add(message);
         await _db.SaveChangesAsync();
 
-        var authorDto = new UserDto(author.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio);
+        var authorDto = new UserDto(author.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio, author.PresenceStatus);
         var messageDto = new MessageDto(
             message.Id,
             message.Content,

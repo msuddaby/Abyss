@@ -63,6 +63,14 @@ export interface UserCosmetic {
   acquiredAt: string;
 }
 
+export const PresenceStatus = {
+  Online: 0,
+  Away: 1,
+  DoNotDisturb: 2,
+  Invisible: 3,
+} as const;
+export type PresenceStatus = (typeof PresenceStatus)[keyof typeof PresenceStatus];
+
 export interface User {
   id: string;
   username: string;
@@ -70,6 +78,7 @@ export interface User {
   avatarUrl?: string;
   status: string;
   bio: string;
+  presenceStatus: number;
   cosmetics?: EquippedCosmetics | null;
 }
 

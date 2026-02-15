@@ -53,7 +53,7 @@ public class CosmeticService
     /// </summary>
     public UserDto ToUserDto(AppUser user, EquippedCosmeticsDto? cosmetics)
     {
-        return new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, cosmetics);
+        return new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus, cosmetics);
     }
 
     /// <summary>

@@ -4,9 +4,11 @@ interface PresenceState {
   onlineUsers: Set<string>; // userId set
   typingUsers: Map<string, { displayName: string; timeout: ReturnType<typeof setTimeout> }>; // per channel: userId -> info
   typingChannelId: string | null;
+  userStatuses: Map<string, number>; // userId -> presenceStatus
   setUserOnline: (userId: string) => void;
   setUserOffline: (userId: string) => void;
   setOnlineUsers: (userIds: string[]) => void;
+  setUserStatus: (userId: string, status: number) => void;
   addTypingUser: (channelId: string, userId: string, displayName: string) => void;
   removeTypingUser: (userId: string) => void;
   clearTyping: () => void;
@@ -17,6 +19,7 @@ export const usePresenceStore = create<PresenceState>((set, get) => ({
   onlineUsers: new Set(),
   typingUsers: new Map(),
   typingChannelId: null,
+  userStatuses: new Map(),
 
   setUserOnline: (userId) =>
     set((s) => {
@@ -34,6 +37,13 @@ export const usePresenceStore = create<PresenceState>((set, get) => ({
 
   setOnlineUsers: (userIds) =>
     set({ onlineUsers: new Set(userIds) }),
+
+  setUserStatus: (userId, status) =>
+    set((s) => {
+      const next = new Map(s.userStatuses);
+      next.set(userId, status);
+      return { userStatuses: next };
+    }),
 
   addTypingUser: (channelId, userId, displayName) => {
     const state = get();

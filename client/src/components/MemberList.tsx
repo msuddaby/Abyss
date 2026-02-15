@@ -11,6 +11,7 @@ export default function MemberList() {
   const activeServer = useServerStore((s) => s.activeServer);
   const roles = useServerStore((s) => s.roles);
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
+  const userStatuses = usePresenceStore((s) => s.userStatuses);
   const currentUser = useAuthStore((s) => s.user);
   const [profileCard, setProfileCard] = useState<{ userId: string; x: number; y: number } | null>(null);
   const [showRoleAssign, setShowRoleAssign] = useState(false);
@@ -23,6 +24,16 @@ export default function MemberList() {
   const isWindowVisible = useWindowVisibility();
 
   const currentMember = members.find((m) => m.userId === currentUser?.id);
+
+  const getPresenceDotClass = (userId: string) => {
+    const isOnline = onlineUsers.has(userId);
+    const status = userStatuses.get(userId) ?? 0;
+
+    if (!isOnline || status === 3) return 'presence-dot offline';
+    if (status === 1) return 'presence-dot away';
+    if (status === 2) return 'presence-dot dnd';
+    return 'presence-dot online';
+  };
 
   // Detect if member list is in viewport
   useEffect(() => {
@@ -158,7 +169,7 @@ export default function MemberList() {
           ) : (
             <span>{m.user.displayName.charAt(0).toUpperCase()}</span>
           )}
-          <span className={`presence-dot ${onlineUsers.has(m.userId) ? 'online' : 'offline'}`} />
+          <span className={getPresenceDotClass(m.userId)} />
         </div>
         <div className="member-text">
           <span className="member-name" style={optimizedStyle}>{m.user.displayName}</span>

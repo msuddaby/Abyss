@@ -210,7 +210,7 @@ public class ChatHub : Hub
         var author = await _db.Users.FindAsync(authorId);
         if (author == null) return;
 
-        var authorDto = new UserDto(author.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio);
+        var authorDto = new UserDto(author.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio, author.PresenceStatus);
         var messageDto = new MessageDto(
             message.Id,
             message.Content,
@@ -253,6 +253,14 @@ public class ChatHub : Hub
         // Join per-user group for targeted notifications
         await Groups.AddToGroupAsync(Context.ConnectionId, $"user:{UserId}");
 
+        // Get user to check presence status
+        var user = await _db.Users.FindAsync(UserId);
+        if (user == null)
+        {
+            await base.OnConnectedAsync();
+            return;
+        }
+
         // Notify all servers the user is in
         var serverIds = await _db.ServerMembers
             .Where(sm => sm.UserId == UserId)
@@ -262,7 +270,12 @@ public class ChatHub : Hub
         foreach (var serverId in serverIds)
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"server:{serverId}");
-            await Clients.Group($"server:{serverId}").SendAsync("UserOnline", UserId, DisplayName);
+
+            // Only broadcast UserOnline if NOT Invisible
+            if (user.PresenceStatus != 3)
+            {
+                await Clients.Group($"server:{serverId}").SendAsync("UserOnline", UserId, DisplayName, user.PresenceStatus);
+            }
         }
 
         // Join all DM channel groups
@@ -288,6 +301,9 @@ public class ChatHub : Hub
 
         if (!stillOnline)
         {
+            // Get user to check presence status
+            var user = await _db.Users.FindAsync(UserId);
+
             var serverIds = await _db.ServerMembers
                 .Where(sm => sm.UserId == UserId)
                 .Select(sm => sm.ServerId)
@@ -295,7 +311,12 @@ public class ChatHub : Hub
 
             foreach (var serverId in serverIds)
             {
-                await Clients.Group($"server:{serverId}").SendAsync("UserOffline", UserId);
+                // Only send UserOffline if they weren't Invisible
+                // (if they were Invisible, we never sent UserOnline, so don't send UserOffline)
+                if (user != null && user.PresenceStatus != 3)
+                {
+                    await Clients.Group($"server:{serverId}").SendAsync("UserOffline", UserId);
+                }
             }
         }
 
@@ -519,7 +540,7 @@ public class ChatHub : Hub
 
         var author = await _db.Users.FindAsync(UserId);
         var authorCosmetics = await _cosmetics.GetEquippedAsync(UserId);
-        var authorDto = new UserDto(author!.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio, authorCosmetics);
+        var authorDto = new UserDto(author!.Id, author.UserName!, author.DisplayName, author.AvatarUrl, author.Status, author.Bio, author.PresenceStatus, authorCosmetics);
 
         // Build reply reference DTO
         ReplyReferenceDto? replyDto = null;
@@ -529,7 +550,7 @@ public class ChatHub : Hub
             if (replyMsg != null)
             {
                 var replyCosmetics = replyMsg.AuthorId == UserId ? authorCosmetics : await _cosmetics.GetEquippedAsync(replyMsg.AuthorId);
-                var replyAuthorDto = new UserDto(replyMsg.Author.Id, replyMsg.Author.UserName!, replyMsg.Author.DisplayName, replyMsg.Author.AvatarUrl, replyMsg.Author.Status, replyMsg.Author.Bio, replyCosmetics);
+                var replyAuthorDto = new UserDto(replyMsg.Author.Id, replyMsg.Author.UserName!, replyMsg.Author.DisplayName, replyMsg.Author.AvatarUrl, replyMsg.Author.Status, replyMsg.Author.Bio, replyMsg.Author.PresenceStatus, replyCosmetics);
                 replyDto = new ReplyReferenceDto(replyMsg.Id, replyMsg.IsDeleted ? "" : replyMsg.Content, replyMsg.AuthorId, replyAuthorDto, replyMsg.IsDeleted);
             }
         }
@@ -769,7 +790,7 @@ public class ChatHub : Hub
             message.Id,
             message.Content,
             message.AuthorId,
-            new UserDto(message.Author.Id, message.Author.UserName!, message.Author.DisplayName, message.Author.AvatarUrl, message.Author.Status, message.Author.Bio),
+            new UserDto(message.Author.Id, message.Author.UserName!, message.Author.DisplayName, message.Author.AvatarUrl, message.Author.Status, message.Author.Bio, message.Author.PresenceStatus),
             message.ChannelId,
             message.CreatedAt,
             message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
@@ -782,7 +803,7 @@ public class ChatHub : Hub
                 message.ReplyToMessage.Id,
                 message.ReplyToMessage.IsDeleted ? "" : message.ReplyToMessage.Content,
                 message.ReplyToMessage.AuthorId,
-                new UserDto(message.ReplyToMessage.Author.Id, message.ReplyToMessage.Author.UserName!, message.ReplyToMessage.Author.DisplayName, message.ReplyToMessage.Author.AvatarUrl, message.ReplyToMessage.Author.Status, message.ReplyToMessage.Author.Bio),
+                new UserDto(message.ReplyToMessage.Author.Id, message.ReplyToMessage.Author.UserName!, message.ReplyToMessage.Author.DisplayName, message.ReplyToMessage.Author.AvatarUrl, message.ReplyToMessage.Author.Status, message.ReplyToMessage.Author.Bio, message.ReplyToMessage.Author.PresenceStatus),
                 message.ReplyToMessage.IsDeleted
             )
         );
@@ -790,7 +811,7 @@ public class ChatHub : Hub
         var pinDto = new PinnedMessageDto(
             messageDto,
             pin.PinnedAt,
-            new UserDto(pinnedBy.Id, pinnedBy.UserName!, pinnedBy.DisplayName, pinnedBy.AvatarUrl, pinnedBy.Status, pinnedBy.Bio)
+            new UserDto(pinnedBy.Id, pinnedBy.UserName!, pinnedBy.DisplayName, pinnedBy.AvatarUrl, pinnedBy.Status, pinnedBy.Bio, pinnedBy.PresenceStatus)
         );
 
         await Clients.Group($"channel:{message.ChannelId}").SendAsync("MessagePinned", pinDto);
@@ -1356,7 +1377,7 @@ public class ChatHub : Hub
         return channels.Select(c =>
         {
             var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
-            var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio);
+            var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio, other.PresenceStatus);
             return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
         }).ToList();
     }

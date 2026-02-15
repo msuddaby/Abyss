@@ -46,9 +46,9 @@ public class BansController : ControllerBase
             .Select(b => new ServerBanDto(
                 b.Id,
                 b.UserId,
-                new UserDto(b.User.Id, b.User.UserName!, b.User.DisplayName, b.User.AvatarUrl, b.User.Status, b.User.Bio),
+                new UserDto(b.User.Id, b.User.UserName!, b.User.DisplayName, b.User.AvatarUrl, b.User.Status, b.User.Bio, b.User.PresenceStatus),
                 b.BannedById,
-                new UserDto(b.BannedBy.Id, b.BannedBy.UserName!, b.BannedBy.DisplayName, b.BannedBy.AvatarUrl, b.BannedBy.Status, b.BannedBy.Bio),
+                new UserDto(b.BannedBy.Id, b.BannedBy.UserName!, b.BannedBy.DisplayName, b.BannedBy.AvatarUrl, b.BannedBy.Status, b.BannedBy.Bio, b.BannedBy.PresenceStatus),
                 b.Reason,
                 b.CreatedAt))
             .ToListAsync();

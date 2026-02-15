@@ -186,7 +186,7 @@ export function useSignalRListeners() {
       const conn = getConnection();
 
       const events = [
-        'UserOnline', 'UserOffline', 'UserIsTyping',
+        'UserOnline', 'UserOffline', 'UserPresenceStatusChanged', 'UserIsTyping',
         'VoiceUserJoinedChannel', 'VoiceUserLeftChannel', 'VoiceUserStateUpdated',
         'ScreenShareStartedInChannel', 'ScreenShareStoppedInChannel',
         'CameraStartedInChannel', 'CameraStoppedInChannel',
@@ -208,12 +208,24 @@ export function useSignalRListeners() {
       ];
       for (const e of events) conn.off(e);
 
-      conn.on('UserOnline', (userId: string) => {
+      conn.on('UserOnline', (userId: string, displayName: string, presenceStatus: number) => {
         usePresenceStore.getState().setUserOnline(userId);
+        usePresenceStore.getState().setUserStatus(userId, presenceStatus);
       });
 
       conn.on('UserOffline', (userId: string) => {
         usePresenceStore.getState().setUserOffline(userId);
+      });
+
+      conn.on('UserPresenceStatusChanged', (userId: string, presenceStatus: number) => {
+        usePresenceStore.getState().setUserStatus(userId, presenceStatus);
+        // If status changed to Invisible, remove from online users
+        if (presenceStatus === 3) {
+          usePresenceStore.getState().setUserOffline(userId);
+        } else {
+          // If was invisible and now visible, add to online users
+          usePresenceStore.getState().setUserOnline(userId);
+        }
       });
 
       conn.on('UserIsTyping', (userId: string, displayName: string) => {
@@ -435,10 +447,14 @@ export function useSignalRListeners() {
 
         // Show desktop notification for mentions if not in current channel
         // In Electron, also notify for the current channel when window is hidden/unfocused
+        // Suppress notifications if user is in Do Not Disturb status
+        const currentUser = useAuthStore.getState().user;
+        const isDND = currentUser?.presenceStatus === 2; // 2 = DoNotDisturb
+
         const isWindowHidden = isElectron()
           ? !(await (window as any).electron.isFocused())
           : false;
-        if (!isCurrentChannel || isWindowHidden) {
+        if ((!isCurrentChannel || isWindowHidden) && !isDND) {
           const channelName = notification.serverId
             ? useServerStore.getState().channels.find(c => c.id === notification.channelId)?.name || 'a channel'
             : 'a DM';

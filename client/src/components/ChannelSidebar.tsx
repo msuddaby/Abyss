@@ -18,6 +18,7 @@ import ChannelPermissionsModal from './ChannelPermissionsModal';
 import ServerNotificationModal from './ServerNotificationModal';
 import ChannelNotificationModal from './ChannelNotificationModal';
 import FriendsList from './FriendsList';
+import StatusPicker from './StatusPicker';
 
 export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels, leaveServer } = useServerStore();
@@ -590,12 +591,15 @@ function UserBar({
 
   return (
     <div className="user-bar">
-      <div className="user-bar-avatar">
-        {user.avatarUrl ? (
-          <img src={user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`} alt={user.displayName} />
-        ) : (
-          <span>{user.displayName.charAt(0).toUpperCase()}</span>
-        )}
+      <div className="user-bar-avatar-container">
+        <div className="user-bar-avatar">
+          {user.avatarUrl ? (
+            <img src={user.avatarUrl.startsWith('http') ? user.avatarUrl : `${getApiBase()}${user.avatarUrl}`} alt={user.displayName} />
+          ) : (
+            <span>{user.displayName.charAt(0).toUpperCase()}</span>
+          )}
+        </div>
+        <StatusPicker />
       </div>
       <div className="user-bar-info">
         <span className="user-bar-name">{user.displayName}</span>

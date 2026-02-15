@@ -39,7 +39,7 @@ public class DmController : ControllerBase
         var result = channels.Select(c =>
         {
             var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
-            var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio);
+            var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio, other.PresenceStatus);
             return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
         }).ToList();
 
@@ -76,7 +76,7 @@ public class DmController : ControllerBase
         var users = await _db.Users
             .Where(u => allowedIds.Contains(u.Id) && (u.DisplayName.ToLower().Contains(lowerQ) || u.UserName!.ToLower().Contains(lowerQ)))
             .Take(10)
-            .Select(u => new UserDto(u.Id, u.UserName!, u.DisplayName, u.AvatarUrl, u.Status, u.Bio))
+            .Select(u => new UserDto(u.Id, u.UserName!, u.DisplayName, u.AvatarUrl, u.Status, u.Bio, u.PresenceStatus))
             .ToListAsync();
 
         return Ok(users);
@@ -103,7 +103,7 @@ public class DmController : ControllerBase
         if (existing != null)
         {
             var existingOther = existing.DmUser1Id == UserId ? existing.DmUser2! : existing.DmUser1!;
-            var existingOtherDto = new UserDto(existingOther.Id, existingOther.UserName!, existingOther.DisplayName, existingOther.AvatarUrl, existingOther.Status, existingOther.Bio);
+            var existingOtherDto = new UserDto(existingOther.Id, existingOther.UserName!, existingOther.DisplayName, existingOther.AvatarUrl, existingOther.Status, existingOther.Bio, existingOther.PresenceStatus);
             return Ok(new DmChannelDto(existing.Id, existingOtherDto, existing.LastMessageAt, existing.LastMessageAt ?? DateTime.UtcNow));
         }
 
@@ -133,8 +133,8 @@ public class DmController : ControllerBase
         }
 
         var currentUser = await _db.Users.FindAsync(UserId);
-        var otherDto = new UserDto(otherUser.Id, otherUser.UserName!, otherUser.DisplayName, otherUser.AvatarUrl, otherUser.Status, otherUser.Bio);
-        var currentDto = new UserDto(currentUser!.Id, currentUser.UserName!, currentUser.DisplayName, currentUser.AvatarUrl, currentUser.Status, currentUser.Bio);
+        var otherDto = new UserDto(otherUser.Id, otherUser.UserName!, otherUser.DisplayName, otherUser.AvatarUrl, otherUser.Status, otherUser.Bio, otherUser.PresenceStatus);
+        var currentDto = new UserDto(currentUser!.Id, currentUser.UserName!, currentUser.DisplayName, currentUser.AvatarUrl, currentUser.Status, currentUser.Bio, currentUser.PresenceStatus);
 
         var dmDto = new DmChannelDto(channel.Id, otherDto, null, DateTime.UtcNow);
 

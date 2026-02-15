@@ -72,7 +72,7 @@ public class InvitesController : ControllerBase
             var memberDto = new ServerMemberDto(
                 invite.ServerId,
                 UserId,
-                new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio),
+                new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus),
                 false,
                 defaultRoles,
                 DateTime.UtcNow);

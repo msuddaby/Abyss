@@ -1366,11 +1366,19 @@ body.window-hidden *::after {
 }
 
 .presence-dot.online {
-  background: var(--success);
+  background: #43b581; /* Green */
+}
+
+.presence-dot.away {
+  background: #faa61a; /* Yellow/orange */
+}
+
+.presence-dot.dnd {
+  background: #f04747; /* Red */
 }
 
 .presence-dot.offline {
-  background: var(--text-muted);
+  background: #747f8d; /* Gray */
 }
 
 /* Content Area */
@@ -3687,6 +3695,11 @@ body.window-hidden *::after {
   background: var(--bg-tertiary);
   border-top: 1px solid rgba(0, 0, 0, 0.24);
   margin-top: auto;
+}
+
+.user-bar-avatar-container {
+  position: relative;
+  flex-shrink: 0;
 }
 
 .user-bar-avatar {

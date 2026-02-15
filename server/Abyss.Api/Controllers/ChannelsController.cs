@@ -64,7 +64,7 @@ public class ChannelsController : ControllerBase
                     m.Id,
                     m.IsDeleted ? "" : m.Content,
                     m.AuthorId,
-                    new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
+                    new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                     m.ChannelId,
                     m.CreatedAt,
                     m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
@@ -77,7 +77,7 @@ public class ChannelsController : ControllerBase
                         m.ReplyToMessage.Id,
                         m.ReplyToMessage.IsDeleted ? "" : m.ReplyToMessage.Content,
                         m.ReplyToMessage.AuthorId,
-                        new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio),
+                        new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                         m.ReplyToMessage.IsDeleted
                     )
                 ))
@@ -101,7 +101,7 @@ public class ChannelsController : ControllerBase
                 m.Id,
                 m.IsDeleted ? "" : m.Content,
                 m.AuthorId,
-                new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
+                new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                 m.ChannelId,
                 m.CreatedAt,
                 m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
@@ -114,7 +114,7 @@ public class ChannelsController : ControllerBase
                     m.ReplyToMessage.Id,
                     m.ReplyToMessage.IsDeleted ? "" : m.ReplyToMessage.Content,
                     m.ReplyToMessage.AuthorId,
-                    new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio),
+                    new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                     m.ReplyToMessage.IsDeleted
                 )
             ))
@@ -169,7 +169,7 @@ public class ChannelsController : ControllerBase
                 m.Id,
                 m.IsDeleted ? "" : m.Content,
                 m.AuthorId,
-                new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
+                new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                 m.ChannelId,
                 m.CreatedAt,
                 m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
@@ -182,7 +182,7 @@ public class ChannelsController : ControllerBase
                     m.ReplyToMessage.Id,
                     m.ReplyToMessage.IsDeleted ? "" : m.ReplyToMessage.Content,
                     m.ReplyToMessage.AuthorId,
-                    new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio),
+                    new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                     m.ReplyToMessage.IsDeleted
                 )
             ))
@@ -221,7 +221,7 @@ public class ChannelsController : ControllerBase
                     pm.Message.Id,
                     pm.Message.Content,
                     pm.Message.AuthorId,
-                    new UserDto(pm.Message.Author.Id, pm.Message.Author.UserName!, pm.Message.Author.DisplayName, pm.Message.Author.AvatarUrl, pm.Message.Author.Status, pm.Message.Author.Bio),
+                    new UserDto(pm.Message.Author.Id, pm.Message.Author.UserName!, pm.Message.Author.DisplayName, pm.Message.Author.AvatarUrl, pm.Message.Author.Status, pm.Message.Author.Bio, pm.Message.Author.PresenceStatus),
                     pm.Message.ChannelId,
                     pm.Message.CreatedAt,
                     pm.Message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
@@ -234,12 +234,12 @@ public class ChannelsController : ControllerBase
                         pm.Message.ReplyToMessage.Id,
                         pm.Message.ReplyToMessage.IsDeleted ? "" : pm.Message.ReplyToMessage.Content,
                         pm.Message.ReplyToMessage.AuthorId,
-                        new UserDto(pm.Message.ReplyToMessage.Author.Id, pm.Message.ReplyToMessage.Author.UserName!, pm.Message.ReplyToMessage.Author.DisplayName, pm.Message.ReplyToMessage.Author.AvatarUrl, pm.Message.ReplyToMessage.Author.Status, pm.Message.ReplyToMessage.Author.Bio),
+                        new UserDto(pm.Message.ReplyToMessage.Author.Id, pm.Message.ReplyToMessage.Author.UserName!, pm.Message.ReplyToMessage.Author.DisplayName, pm.Message.ReplyToMessage.Author.AvatarUrl, pm.Message.ReplyToMessage.Author.Status, pm.Message.ReplyToMessage.Author.Bio, pm.Message.ReplyToMessage.Author.PresenceStatus),
                         pm.Message.ReplyToMessage.IsDeleted
                     )
                 ),
                 pm.PinnedAt,
-                new UserDto(pm.PinnedBy.Id, pm.PinnedBy.UserName!, pm.PinnedBy.DisplayName, pm.PinnedBy.AvatarUrl, pm.PinnedBy.Status, pm.PinnedBy.Bio)
+                new UserDto(pm.PinnedBy.Id, pm.PinnedBy.UserName!, pm.PinnedBy.DisplayName, pm.PinnedBy.AvatarUrl, pm.PinnedBy.Status, pm.PinnedBy.Bio, pm.PinnedBy.PresenceStatus)
             ))
             .ToListAsync();
 

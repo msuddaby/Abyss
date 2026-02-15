@@ -379,7 +379,7 @@ public class ServersController : ControllerBase
         var dtos = members.Select(sm => new ServerMemberDto(
             sm.ServerId,
             sm.UserId,
-            new UserDto(sm.User.Id, sm.User.UserName!, sm.User.DisplayName, sm.User.AvatarUrl, sm.User.Status, sm.User.Bio,
+            new UserDto(sm.User.Id, sm.User.UserName!, sm.User.DisplayName, sm.User.AvatarUrl, sm.User.Status, sm.User.Bio, sm.User.PresenceStatus,
                 cosmeticsMap.GetValueOrDefault(sm.UserId)),
             sm.IsOwner,
             sm.MemberRoles.Select(mr => new ServerRoleDto(mr.Role.Id, mr.Role.Name, mr.Role.Color, mr.Role.Permissions, mr.Role.Position, mr.Role.IsDefault, mr.Role.DisplaySeparately)).ToList(),
@@ -655,7 +655,7 @@ public class ServersController : ControllerBase
             .Select(m => new SearchResultDto(
                 new MessageDto(
                     m.Id, m.Content, m.AuthorId,
-                    new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio),
+                    new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                     m.ChannelId, m.CreatedAt,
                     m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
                     m.EditedAt, m.IsDeleted, m.IsSystem,
@@ -682,7 +682,7 @@ public class ServersController : ControllerBase
                 a.Id,
                 a.Action.ToString(),
                 a.ActorId,
-                new UserDto(a.Actor.Id, a.Actor.UserName!, a.Actor.DisplayName, a.Actor.AvatarUrl, a.Actor.Status, a.Actor.Bio),
+                new UserDto(a.Actor.Id, a.Actor.UserName!, a.Actor.DisplayName, a.Actor.AvatarUrl, a.Actor.Status, a.Actor.Bio, a.Actor.PresenceStatus),
                 a.TargetId,
                 a.TargetName,
                 a.Details,

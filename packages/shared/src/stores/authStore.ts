@@ -18,6 +18,7 @@ interface AuthState {
   initialize: () => Promise<void>;
   updateProfile: (data: { displayName?: string; bio?: string; status?: string }) => Promise<void>;
   updateAvatar: (file: File) => Promise<void>;
+  setPresenceStatus: (status: number) => void;
 }
 
 const getSysadminFromToken = (token: string | null): boolean => {
@@ -132,5 +133,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const user = res.data;
     getStorage().setItem('user', JSON.stringify(user));
     set({ user });
+  },
+
+  setPresenceStatus: (status) => {
+    const user = get().user;
+    if (!user) return;
+    const updatedUser = { ...user, presenceStatus: status };
+    getStorage().setItem('user', JSON.stringify(updatedUser));
+    set({ user: updatedUser });
   },
 }));
