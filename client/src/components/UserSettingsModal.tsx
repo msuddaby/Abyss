@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from "@abyss/shared";
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
+import { Capacitor } from "@capacitor/core";
 import axios from "axios";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
@@ -23,6 +24,13 @@ export default function UserSettingsModal({
 
   const [activeTab, setActiveTab] = useState<ActiveTab>("profile");
 
+  // Check if we're on production web (not localhost, not Capacitor, not Electron)
+  const isProductionWeb = typeof window !== 'undefined' &&
+    !window.location.hostname.includes('localhost') &&
+    !window.location.hostname.includes('127.0.0.1') &&
+    !Capacitor.isNativePlatform() &&
+    typeof window.electron === 'undefined';
+
   const settingsTabs: SettingsTabDef[] = [
     { id: "profile", label: "Profile" },
     { id: "voice", label: "Voice & Audio" },
@@ -30,7 +38,7 @@ export default function UserSettingsModal({
     { id: "keybinds", label: "Keybinds" },
     { id: "cosmetics", label: "Cosmetics" },
     { id: "app", label: "App Settings", visible: isElectron(), separatorBefore: true },
-    { id: "server", label: "Server", separatorBefore: !isElectron() },
+    { id: "server", label: "Server", visible: !isProductionWeb, separatorBefore: !isElectron() },
     { id: "account", label: "Account" },
   ];
 

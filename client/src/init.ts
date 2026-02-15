@@ -44,11 +44,28 @@ hydrateVoiceStore();
 // Hydrate server config store after storage is initialized
 useServerConfigStore.getState()._hydrate();
 
-// Server URL priority: stored config > env var > empty (relative paths)
-// Empty VITE_API_URL = use relative paths (Vite proxy handles /api and /hubs in dev).
+// Auto-configure for production web deployments only (not mobile, not desktop)
+const isProductionWeb = typeof window !== 'undefined' &&
+  !window.location.hostname.includes('localhost') &&
+  !window.location.hostname.includes('127.0.0.1') &&
+  !Capacitor.isNativePlatform() &&
+  typeof window.electron === 'undefined';
 const storedServerUrl = useServerConfigStore.getState().serverUrl;
-const serverUrl = storedServerUrl ?? import.meta.env.VITE_API_URL ?? '';
-setApiBase(serverUrl);
+
+// Production web: auto-configure to use current domain (disable server selection)
+if (isProductionWeb && !storedServerUrl) {
+  // Use empty string for relative paths - automatically uses current domain
+  setApiBase('');
+  // Mark as configured so the setup modal doesn't show
+  useServerConfigStore.setState({ hasConfigured: true });
+} else {
+  // Development, Mobile & Desktop: allow server selection
+  // Server URL priority: stored config > env var > empty (relative paths)
+  // Mobile/Desktop apps use VITE_API_URL as default but allow users to change it
+  const serverUrl = storedServerUrl ?? import.meta.env.VITE_API_URL ?? '';
+  setApiBase(serverUrl);
+}
+
 setOnUnauthorized(() => useAuthStore.getState().logout());
 
 // Listen for OS notification clicks to navigate to the relevant channel
