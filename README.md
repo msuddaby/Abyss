@@ -78,7 +78,7 @@ cp .env.dev.example .env.dev
 | `JWT_ISSUER`        | JWT issuer                           | `Abyss`                                  |
 | `JWT_AUDIENCE`      | JWT audience                         | `Abyss`                                  |
 | `SYSADMIN_USERNAME` | Username granted sysadmin on startup | `admin`                                  |
-| `CORS_ORIGINS`      | Allowed origins (comma-separated)    | `http://localhost:5173`                  |
+| `CORS_ORIGINS`      | Allowed origins (comma-separated)    | `http://localhost:5173` (see note below) |
 | `VITE_API_URL`      | Backend URL (used by web client)     | `http://localhost:5000`                  |
 | `VITE_STUN_URL`     | STUN server for WebRTC               | `stun:stun.l.google.com:19302`           |
 
@@ -109,10 +109,14 @@ cp .env.example .env
 
 Key differences from dev: `POSTGRES_HOST=db` (Docker service name), `POSTGRES_PORT=5432`, strong passwords, HTTPS origins.
 
-The desktop app uses a custom `app://abyss` origin, so production `CORS_ORIGINS` must include it alongside your web origin:
+The desktop and mobile apps use different origins, so production `CORS_ORIGINS` must include them:
+
+- Desktop: `app://abyss`
+- iOS (Capacitor): `capacitor://localhost`
+- Android (Capacitor): `https://localhost`
 
 ```
-CORS_ORIGINS=https://your-domain.com,app://abyss
+CORS_ORIGINS=https://your-domain.com,app://abyss,capacitor://localhost,https://localhost
 ```
 
 ## Development
