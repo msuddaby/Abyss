@@ -26,7 +26,7 @@ import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmC
 const soundCache = new Map<string, any>();
 const normalizedVolumeCache = new Map<string, number>();
 const pendingAnalysis = new Map<string, Promise<number>>();
-const TARGET_RMS = 0.05; // target perceived loudness level (~-26 dB)
+const TARGET_RMS = 0.15; // target perceived loudness level (~-16 dB)
 let analysisCtx: any = null;
 
 function getNormalizedVolume(url: string): Promise<number> {
@@ -68,7 +68,7 @@ function getNormalizedVolume(url: string): Promise<number> {
       normalizedVolumeCache.set(url, volume);
       return volume;
     } catch {
-      return TARGET_RMS;
+      return 0.5;
     } finally {
       pendingAnalysis.delete(url);
     }

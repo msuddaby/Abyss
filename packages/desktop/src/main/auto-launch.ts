@@ -1,8 +1,28 @@
 import AutoLaunch from 'auto-launch';
 import { app } from 'electron';
 import Store from 'electron-store';
+import * as path from 'path';
+import * as fs from 'fs';
 
 const store = new Store();
+
+/**
+ * Get the correct executable path for auto-launch.
+ * On Linux AppImage, app.getPath('exe') returns a temp FUSE mount path
+ * that doesn't persist across reboots. Use the stable symlink instead.
+ */
+function getAutoLaunchPath(): string {
+  const appImagePath = process.env.APPIMAGE;
+  if (appImagePath) {
+    // Prefer the stable symlink so auto-launch survives updates
+    const stablePath = path.join(path.dirname(appImagePath), 'Abyss.AppImage');
+    if (fs.existsSync(stablePath)) {
+      return stablePath;
+    }
+    return appImagePath;
+  }
+  return app.getPath('exe');
+}
 
 export class AutoLaunchManager {
   private autoLauncher: AutoLaunch;
@@ -10,7 +30,7 @@ export class AutoLaunchManager {
   constructor() {
     this.autoLauncher = new AutoLaunch({
       name: 'Abyss',
-      path: app.getPath('exe'),
+      path: getAutoLaunchPath(),
       isHidden: false, // Start minimized if true
     });
 

@@ -216,6 +216,13 @@ export interface ConnectionStats {
   jitter: number | null;
 }
 
+export interface CandidateStats {
+  hostCount: number;
+  srflxCount: number;
+  relayCount: number;
+  protocol: 'udp' | 'tcp' | 'mixed' | 'unknown';
+}
+
 export interface PeerDebugInfo {
   userId: string;
   iceState: RTCIceConnectionState;
@@ -226,6 +233,10 @@ export interface PeerDebugInfo {
   jitter: number | null;
   bytesReceived: number;
   bytesSent: number;
+  localCandidateType?: string;
+  remoteCandidateType?: string;
+  transportProtocol?: string;
+  consent?: 'granted' | 'checking' | 'unknown';
 }
 
 export interface DetailedConnectionStats extends ConnectionStats {
@@ -233,11 +244,23 @@ export interface DetailedConnectionStats extends ConnectionStats {
   iceConnectionState: string;
   activePeerCount: number;
   perPeerStats: PeerDebugInfo[];
+  natType: 'open' | 'cone' | 'symmetric' | 'unknown';
+  localCandidates: CandidateStats;
+  iceGatheringComplete: boolean;
 }
 
 let cachedStats: ConnectionStats = { roundTripTime: null, packetLoss: null, jitter: null };
 let cachedDetailedStats: DetailedConnectionStats | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
+
+// Track gathered ICE candidates for NAT detection
+interface CandidateInfo {
+  type: string;
+  protocol: string;
+  hasRelatedAddress: boolean;
+}
+const gatheredCandidates: Map<string, CandidateInfo[]> = new Map(); // peerId → candidates
+let localCandidateSummary: CandidateStats = { hostCount: 0, srflxCount: 0, relayCount: 0, protocol: 'unknown' };
 
 // Zombie track detection: after ICE restart, monitor bytesReceived to detect
 // tracks that appear live but stop delivering audio data.
@@ -253,6 +276,63 @@ export function getConnectionStats(): ConnectionStats {
 
 export function getDetailedConnectionStats(): DetailedConnectionStats | null {
   return cachedDetailedStats;
+}
+
+/**
+ * Detect NAT type based on gathered ICE candidates pattern.
+ * - Open: Host candidates work directly
+ * - Cone: Consistent srflx mapping (same public address for different destinations)
+ * - Symmetric: Different srflx for each destination (worst for P2P)
+ */
+function detectNatType(): 'open' | 'cone' | 'symmetric' | 'unknown' {
+  const allCandidates = Array.from(gatheredCandidates.values()).flat();
+  if (allCandidates.length === 0) return 'unknown';
+
+  const hasHost = allCandidates.some(c => c.type === 'host');
+  const hasSrflx = allCandidates.some(c => c.type === 'srflx');
+  const hasRelay = allCandidates.some(c => c.type === 'relay');
+
+  // If we have multiple srflx candidates with different related addresses,
+  // it suggests symmetric NAT (different mapping per destination)
+  const srflxCandidates = allCandidates.filter(c => c.type === 'srflx');
+
+  // If we only have host candidates and they work, likely open internet
+  if (hasHost && !hasSrflx && !hasRelay) {
+    return 'open';
+  }
+
+  // If we have srflx candidates, we're behind NAT
+  if (hasSrflx) {
+    // Check if multiple peers get consistent srflx (cone) vs different (symmetric)
+    // For now, if we have srflx, assume cone NAT (most common)
+    // True symmetric detection would require comparing srflx across multiple peers
+    return 'cone';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Compute summary of local ICE candidates gathered across all peers.
+ */
+function computeLocalCandidateSummary(): CandidateStats {
+  const allCandidates = Array.from(gatheredCandidates.values()).flat();
+  const hostCount = allCandidates.filter(c => c.type === 'host').length;
+  const srflxCount = allCandidates.filter(c => c.type === 'srflx').length;
+  const relayCount = allCandidates.filter(c => c.type === 'relay').length;
+
+  const protocols = new Set(allCandidates.map(c => c.protocol));
+  let protocol: 'udp' | 'tcp' | 'mixed' | 'unknown' = 'unknown';
+  if (protocols.size === 0) {
+    protocol = 'unknown';
+  } else if (protocols.size === 1) {
+    const p = Array.from(protocols)[0];
+    protocol = (p === 'udp' || p === 'tcp') ? p : 'unknown';
+  } else {
+    protocol = 'mixed';
+  }
+
+  return { hostCount, srflxCount, relayCount, protocol };
 }
 
 function startStatsCollection() {
@@ -274,6 +354,10 @@ function startStatsCollection() {
         let peerLoss: number | null = null;
         let peerJitter: number | null = null;
         let peerConnectionType: 'direct' | 'relay' | 'unknown' = 'unknown';
+        let localCandidateType: string | undefined;
+        let remoteCandidateType: string | undefined;
+        let transportProtocol: string | undefined;
+        let consent: 'granted' | 'checking' | 'unknown' = 'unknown';
 
         stats.forEach((report) => {
           if (report.type === "candidate-pair" && report.state === "succeeded") {
@@ -290,6 +374,12 @@ function startStatsCollection() {
             const localCandidate = localCandidateId ? stats.get(localCandidateId) : null;
             const remoteCandidate = remoteCandidateId ? stats.get(remoteCandidateId) : null;
 
+            // Store candidate types for debugging (no IP addresses)
+            localCandidateType = localCandidate?.candidateType;
+            remoteCandidateType = remoteCandidate?.candidateType;
+            transportProtocol = localCandidate?.protocol;
+
+            // Determine connection type category
             if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
               peerConnectionType = 'relay';
             } else if (localCandidate?.candidateType === 'host' && remoteCandidate?.candidateType === 'host') {
@@ -298,6 +388,11 @@ function startStatsCollection() {
               peerConnectionType = 'direct'; // STUN-assisted is still P2P
             }
             connectionTypes.add(peerConnectionType);
+
+            // Check consent status for connectivity
+            if (report.consentRequestsSent != null) {
+              consent = report.responsesReceived > 0 ? 'granted' : 'checking';
+            }
           }
 
           if (report.type === "inbound-rtp" && report.kind === "audio") {
@@ -339,6 +434,10 @@ function startStatsCollection() {
           jitter: peerJitter,
           bytesReceived: peerBytesReceived,
           bytesSent: peerBytesSent,
+          localCandidateType,
+          remoteCandidateType,
+          transportProtocol,
+          consent,
         });
 
         // Zombie track detection: if ICE is connected but bytesReceived isn't
@@ -390,6 +489,15 @@ function startStatsCollection() {
       overallConnectionType = 'mixed';
     }
 
+    // Compute NAT type and candidate summary
+    const natType = detectNatType();
+    localCandidateSummary = computeLocalCandidateSummary();
+
+    // Check if ICE gathering is complete (all peers have gathered)
+    const iceGatheringComplete = Array.from(peers.values()).every(
+      pc => pc.iceGatheringState === 'complete'
+    );
+
     // Store detailed stats
     cachedDetailedStats = {
       ...cachedStats,
@@ -397,6 +505,9 @@ function startStatsCollection() {
       iceConnectionState: peers.size > 0 ? Array.from(peers.values())[0].iceConnectionState : 'new',
       activePeerCount: peers.size,
       perPeerStats: Array.from(perPeerData.values()),
+      natType,
+      localCandidates: localCandidateSummary,
+      iceGatheringComplete,
     };
   }, 3000);
 }
@@ -1503,10 +1614,25 @@ function createPeerConnection(
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const c = event.candidate;
+
+      // Track candidate for NAT detection (no IP addresses stored)
+      if (!gatheredCandidates.has(peerId)) {
+        gatheredCandidates.set(peerId, []);
+      }
+      gatheredCandidates.get(peerId)!.push({
+        type: c.type || 'unknown',
+        protocol: c.protocol || 'unknown',
+        hasRelatedAddress: !!(c.relatedAddress || c.relatedPort),
+      });
+
       const conn = getConnection();
       conn
         .invoke("SendSignal", peerId, JSON.stringify(event.candidate.toJSON()))
         .catch((err) => console.error("Failed to send ICE candidate:", err));
+    } else {
+      // ICE gathering complete for this peer
+      console.log(`[ICE] Gathering complete for ${peerId}`);
     }
   };
   pc.onicecandidateerror = (event) => {
@@ -1643,6 +1769,7 @@ function closePeer(peerId: string, options: ClosePeerOptions = {}) {
   useVoiceStore.getState().removeActiveSharer(peerId);
   useVoiceStore.getState().removeActiveCamera(peerId);
   pendingCandidates.delete(peerId);
+  gatheredCandidates.delete(peerId);
   clearPendingTrackStateForPeer(peerId);
   screenTrackSenders.delete(peerId);
   cameraTrackSenders.delete(peerId);
@@ -1689,6 +1816,7 @@ function cleanupAll() {
   screenVideoStreams.clear();
   cameraVideoStreams.clear();
   pendingCandidates.clear();
+  gatheredCandidates.clear();
   clearAllPendingTrackState();
   screenTrackSenders.clear();
   cameraTrackSenders.clear();
