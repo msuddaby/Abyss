@@ -292,10 +292,6 @@ function detectNatType(): 'open' | 'cone' | 'symmetric' | 'unknown' {
   const hasSrflx = allCandidates.some(c => c.type === 'srflx');
   const hasRelay = allCandidates.some(c => c.type === 'relay');
 
-  // If we have multiple srflx candidates with different related addresses,
-  // it suggests symmetric NAT (different mapping per destination)
-  const srflxCandidates = allCandidates.filter(c => c.type === 'srflx');
-
   // If we only have host candidates and they work, likely open internet
   if (hasHost && !hasSrflx && !hasRelay) {
     return 'open';
@@ -303,9 +299,9 @@ function detectNatType(): 'open' | 'cone' | 'symmetric' | 'unknown' {
 
   // If we have srflx candidates, we're behind NAT
   if (hasSrflx) {
-    // Check if multiple peers get consistent srflx (cone) vs different (symmetric)
-    // For now, if we have srflx, assume cone NAT (most common)
-    // True symmetric detection would require comparing srflx across multiple peers
+    // Cone NAT is most common - true symmetric detection would require
+    // comparing srflx candidates across multiple peers to see if the
+    // public address changes per destination
     return 'cone';
   }
 
