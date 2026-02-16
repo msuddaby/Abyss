@@ -9624,6 +9624,7 @@ body.window-hidden *::after {
 .mobile-drawer-overlay { display: none; }
 .left-drawer { display: contents; }
 .right-drawer { display: contents; }
+.right-drawer.hidden { display: none; }
 .context-menu-overlay { display: none; }
 
 /* ===== Mobile Responsive ===== */
@@ -9883,6 +9884,11 @@ body.window-hidden *::after {
     max-height: none;
     flex: 1;
     min-height: 0;
+  }
+
+  /* Notification settings modal: always show content (no sidebar) */
+  .notification-settings-modal .us-content {
+    display: flex;
   }
 
   /* When a tab is drilled into, hide nav, show content */

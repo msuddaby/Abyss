@@ -198,7 +198,7 @@ export default function MainLayout() {
           <WatchPartyPlayer mini={activeChannel?.id !== voiceChannelId || activeChannel?.type !== 'Voice'} />
         )}
       </div>
-      <div className={`right-drawer${rightDrawerOpen ? ' open' : ''}`}>
+      <div className={`right-drawer${rightDrawerOpen ? ' open' : ''}${!memberListVisible && !isMobile() ? ' hidden' : ''}`}>
         {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : <MemberList />)}
       </div>
       {(leftDrawerOpen || rightDrawerOpen) && (

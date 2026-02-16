@@ -12,7 +12,11 @@ export function useIdleDetection() {
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (autoAwayRef.current && presenceStatus !== PresenceStatus.Away) {
+    if (presenceStatus === PresenceStatus.Away && !autoAwayRef.current) {
+      // Server or idle timer set us to Away — adopt as auto-away so that
+      // strong activity (mousemove, keydown, etc.) restores us to Online.
+      autoAwayRef.current = true;
+    } else if (autoAwayRef.current && presenceStatus !== PresenceStatus.Away) {
       autoAwayRef.current = false;
     }
   }, [presenceStatus]);

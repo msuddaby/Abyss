@@ -41,9 +41,16 @@ public class DmController : ControllerBase
             .Where(m => channelIds.Contains(m.ChannelId) && !m.IsDeleted)
             .GroupBy(m => m.ChannelId)
             .Select(g => new { ChannelId = g.Key, Message = g.OrderByDescending(m => m.CreatedAt).First() })
-            .Join(_db.Users, x => x.Message.AuthorId, u => u.Id, (x, u) => new { x.ChannelId, x.Message.Content, AuthorName = u.DisplayName })
             .ToListAsync();
-        var lastMessageMap = lastMessages.ToDictionary(x => x.ChannelId);
+
+        var authorIds = lastMessages.Select(x => x.Message.AuthorId).Distinct().ToList();
+        var authors = await _db.Users
+            .Where(u => authorIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName);
+
+        var lastMessageMap = lastMessages.ToDictionary(
+            x => x.ChannelId,
+            x => new { x.Message.Content, AuthorName = authors.GetValueOrDefault(x.Message.AuthorId, "Unknown") });
 
         var result = channels.Select(c =>
         {

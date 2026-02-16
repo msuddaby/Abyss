@@ -1808,8 +1808,8 @@ async function startScreenShareInternal() {
         video: {
           mandatory: {
             chromeMediaSource: 'desktop',
+            maxFrameRate: screenPreset.frameRate,
           },
-          frameRate: { ideal: screenPreset.frameRate },
         } as any,
         audio: false,
       });
@@ -1918,7 +1918,13 @@ async function startCameraInternal() {
       height: { ideal: camPreset.height },
       frameRate: { ideal: camPreset.frameRate },
     };
-    if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
+
+    // On Capacitor (mobile), use facingMode for reliable front/back switching
+    // On desktop, use deviceId for specific camera selection
+    const isNativeMobile = (await import('@capacitor/core')).Capacitor.isNativePlatform();
+    if (isNativeMobile) {
+      videoConstraints.facingMode = { ideal: voiceState.cameraFacingMode };
+    } else if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
       videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
     }
     try {
@@ -2011,6 +2017,19 @@ async function stopCameraInternal() {
   } finally {
     voiceState.setCameraLoading(false);
   }
+}
+
+async function switchCameraInternal() {
+  const voiceState = useVoiceStore.getState();
+  if (!voiceState.isCameraOn) return;
+
+  // Toggle between front (user) and back (environment) camera
+  const newFacingMode = voiceState.cameraFacingMode === 'user' ? 'environment' : 'user';
+  voiceState.setCameraFacingMode(newFacingMode);
+
+  // Restart camera with new facing mode
+  await stopCameraInternal();
+  await startCameraInternal();
 }
 
 async function addCameraTrackToPeer(
@@ -3231,6 +3250,10 @@ export function useWebRTC() {
     await stopCameraInternal();
   }, []);
 
+  const switchCamera = useCallback(async () => {
+    await switchCameraInternal();
+  }, []);
+
   // Send periodic heartbeat + reconcile WebRTC peers against server state
   useEffect(() => {
     if (!currentChannelId) return;
@@ -3313,5 +3336,5 @@ export function useWebRTC() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
-  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera };
+  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera, switchCamera };
 }

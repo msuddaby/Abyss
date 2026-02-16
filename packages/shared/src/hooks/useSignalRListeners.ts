@@ -230,6 +230,13 @@ export function useSignalRListeners() {
           // If was invisible and now visible, add to online users
           usePresenceStore.getState().setUserOnline(userId);
         }
+        // Keep authStore in sync for the current user — without this,
+        // useIdleDetection and StatusPicker read stale values when the
+        // server changes our status (e.g. PresenceMonitorService auto-away).
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser && userId === currentUser.id) {
+          useAuthStore.getState().setPresenceStatus(presenceStatus);
+        }
       });
 
       conn.on('UserIsTyping', (userId: string, displayName: string) => {

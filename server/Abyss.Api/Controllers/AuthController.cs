@@ -238,6 +238,12 @@ public class AuthController : ControllerBase
         user.PresenceStatus = request.PresenceStatus;
         await _userManager.UpdateAsync(user);
 
+        // Clear server auto-away flag so PresenceMonitorService can re-detect
+        // future idle periods, and refresh the heartbeat since the user is
+        // clearly active (they just made an API call).
+        ChatHub._serverAutoAway.TryRemove(userId, out _);
+        ChatHub._lastHeartbeats[userId] = DateTime.UtcNow;
+
         // Broadcast status change via SignalR
         await BroadcastPresenceChange(userId, request.PresenceStatus);
 
