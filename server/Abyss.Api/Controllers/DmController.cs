@@ -36,11 +36,21 @@ public class DmController : ControllerBase
             .OrderByDescending(c => c.LastMessageAt)
             .ToListAsync();
 
+        var channelIds = channels.Select(c => c.Id).ToList();
+        var lastMessages = await _db.Messages
+            .Where(m => channelIds.Contains(m.ChannelId) && !m.IsDeleted)
+            .GroupBy(m => m.ChannelId)
+            .Select(g => new { ChannelId = g.Key, Message = g.OrderByDescending(m => m.CreatedAt).First() })
+            .Join(_db.Users, x => x.Message.AuthorId, u => u.Id, (x, u) => new { x.ChannelId, x.Message.Content, AuthorName = u.DisplayName })
+            .ToListAsync();
+        var lastMessageMap = lastMessages.ToDictionary(x => x.ChannelId);
+
         var result = channels.Select(c =>
         {
             var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
             var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio, other.PresenceStatus);
-            return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
+            lastMessageMap.TryGetValue(c.Id, out var lastMsg);
+            return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow, lastMsg?.Content, lastMsg?.AuthorName);
         }).ToList();
 
         return Ok(result);

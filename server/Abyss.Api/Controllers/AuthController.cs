@@ -234,11 +234,18 @@ public class AuthController : ControllerBase
         if (request.PresenceStatus < 0 || request.PresenceStatus > 3)
             return BadRequest("Invalid presence status");
 
+        var previousStatus = user.PresenceStatus;
         user.PresenceStatus = request.PresenceStatus;
         await _userManager.UpdateAsync(user);
 
         // Broadcast status change via SignalR
         await BroadcastPresenceChange(userId, request.PresenceStatus);
+
+        // When transitioning to Away, replay recent unread notifications as push
+        if (request.PresenceStatus == 1 && previousStatus != 1)
+        {
+            NotificationDispatchService.EnqueueAwayReplay(userId);
+        }
 
         return Ok();
     }

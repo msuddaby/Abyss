@@ -510,6 +510,12 @@ export function useSignalRListeners() {
       const vcStore = useVoiceChatStore.getState;
       conn.on('ReceiveMessage', (message: Message) => {
         vcStore().addMessage(message);
+        // Update DM channel preview with latest message content
+        const dmState = useDmStore.getState();
+        if (dmState.dmChannels.some((d) => d.id === message.channelId)) {
+          const authorName = message.author?.displayName || message.author?.username || '';
+          dmState.moveDmToTop(message.channelId, message.content, authorName);
+        }
       });
       conn.on('MessageEdited', (messageId: string, content: string, editedAt: string) => {
         vcStore().updateMessage(messageId, content, editedAt);

@@ -290,6 +290,8 @@ export interface DmChannel {
   otherUser: User;
   lastMessageAt?: string;
   createdAt: string;
+  lastMessageContent?: string | null;
+  lastMessageAuthorName?: string | null;
 }
 
 export interface DmUnread {

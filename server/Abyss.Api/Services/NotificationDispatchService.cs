@@ -17,6 +17,10 @@ public class NotificationDispatchService : BackgroundService
         System.Threading.Channels.Channel.CreateUnbounded<string>(
             new UnboundedChannelOptions { SingleReader = true });
 
+    private static readonly Channel<string> _awayReplayQueue =
+        System.Threading.Channels.Channel.CreateUnbounded<string>(
+            new UnboundedChannelOptions { SingleReader = true });
+
     private readonly IServiceProvider _services;
     private readonly ILogger<NotificationDispatchService> _logger;
 
@@ -37,13 +41,23 @@ public class NotificationDispatchService : BackgroundService
         _offlineReplayQueue.Writer.TryWrite(userId);
     }
 
+    /// <summary>
+    /// When a user transitions to Away, replay recent PushStatus.None notifications
+    /// as push notifications (similar to offline replay but without grace period).
+    /// </summary>
+    public static void EnqueueAwayReplay(string userId)
+    {
+        _awayReplayQueue.Writer.TryWrite(userId);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var queueTask = ProcessQueueAsync(stoppingToken);
         var sweepTask = ProcessSweepAsync(stoppingToken);
         var replayTask = ProcessOfflineReplayAsync(stoppingToken);
+        var awayReplayTask = ProcessAwayReplayAsync(stoppingToken);
 
-        await Task.WhenAll(queueTask, sweepTask, replayTask);
+        await Task.WhenAll(queueTask, sweepTask, replayTask, awayReplayTask);
     }
 
     private async Task ProcessQueueAsync(CancellationToken ct)
@@ -229,6 +243,22 @@ public class NotificationDispatchService : BackgroundService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Error processing offline replay for user {UserId}", userId);
+            }
+        }
+    }
+
+    private async Task ProcessAwayReplayAsync(CancellationToken ct)
+    {
+        await foreach (var userId in _awayReplayQueue.Reader.ReadAllAsync(ct))
+        {
+            try
+            {
+                // No grace period needed — the status change already happened
+                await SendOfflineReplayAsync(userId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Error processing away replay for user {UserId}", userId);
             }
         }
     }

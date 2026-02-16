@@ -603,7 +603,10 @@ public class ChatHub : Hub
             await Clients.Group($"user:{recipientId}").SendAsync("NewUnreadMessage", channelId, (string?)null);
 
             // Create DM notification for the recipient
+            // Away users should get push notifications just like offline users
             var isRecipientOffline = !_connections.Values.Contains(recipientId);
+            var recipientUser = await _db.Users.FindAsync(recipientId);
+            var needsPush = isRecipientOffline || recipientUser?.PresenceStatus == 1;
             var dmNotification = new Notification
             {
                 Id = Guid.NewGuid(),
@@ -612,7 +615,7 @@ public class ChatHub : Hub
                 ChannelId = channelGuid,
                 ServerId = null,
                 Type = NotificationType.UserMention,
-                PushStatus = isRecipientOffline ? PushStatus.Pending : PushStatus.None,
+                PushStatus = needsPush ? PushStatus.Pending : PushStatus.None,
                 CreatedAt = DateTime.UtcNow,
             };
             _db.Notifications.Add(dmNotification);
@@ -635,7 +638,14 @@ public class ChatHub : Hub
             }
 
             // Process mentions and send targeted notifications
-            var onlineUserIds = new HashSet<string>(_connections.Values);
+            // Exclude Away users from "online" set so they get push notifications
+            // (also correctly excludes them from @here mentions)
+            var connectedIds = _connections.Values.ToHashSet();
+            var awayIds = await _db.Users
+                .Where(u => connectedIds.Contains(u.Id) && u.PresenceStatus == 1)
+                .Select(u => u.Id)
+                .ToHashSetAsync();
+            var onlineUserIds = new HashSet<string>(connectedIds.Except(awayIds));
             var activeChannelUserIds = GetActiveChannelUserIds(channelGuid);
 
             var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds, activeChannelUserIds);
@@ -1438,11 +1448,21 @@ public class ChatHub : Hub
             .Take(limit)
             .ToListAsync();
 
+        var channelIds = channels.Select(c => c.Id).ToList();
+        var lastMessages = await _db.Messages
+            .Where(m => channelIds.Contains(m.ChannelId) && !m.IsDeleted)
+            .GroupBy(m => m.ChannelId)
+            .Select(g => new { ChannelId = g.Key, Message = g.OrderByDescending(m => m.CreatedAt).First() })
+            .Join(_db.Users, x => x.Message.AuthorId, u => u.Id, (x, u) => new { x.ChannelId, x.Message.Content, AuthorName = u.DisplayName })
+            .ToListAsync();
+        var lastMessageMap = lastMessages.ToDictionary(x => x.ChannelId);
+
         return channels.Select(c =>
         {
             var other = c.DmUser1Id == UserId ? c.DmUser2! : c.DmUser1!;
             var otherDto = new UserDto(other.Id, other.UserName!, other.DisplayName, other.AvatarUrl, other.Status, other.Bio, other.PresenceStatus);
-            return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow);
+            lastMessageMap.TryGetValue(c.Id, out var lastMsg);
+            return new DmChannelDto(c.Id, otherDto, c.LastMessageAt, c.LastMessageAt ?? DateTime.UtcNow, lastMsg?.Content, lastMsg?.AuthorName);
         }).ToList();
     }
 

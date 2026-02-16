@@ -6,6 +6,7 @@ import ConfirmModal from './ConfirmModal';
 export default function FriendsList() {
   const { friends, requests, sendRequest, acceptRequest, declineRequest, removeFriend } = useFriendStore();
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
+  const userStatuses = usePresenceStore((s) => s.userStatuses);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<(User & { friendStatus?: string })[]>([]);
   const [searching, setSearching] = useState(false);
@@ -186,6 +187,8 @@ export default function FriendsList() {
             <span className="friends-section-label">Friends — {friends.length}</span>
             {friends.map((friend) => {
               const isOnline = onlineUsers.has(friend.user.id);
+              const status = userStatuses.get(friend.user.id) ?? 0;
+              const presenceClass = !isOnline || status === 3 ? 'offline' : status === 1 ? 'away' : status === 2 ? 'dnd' : 'online';
               return (
                 <div key={friend.id} className="friend-item">
                   <div className="dm-avatar">
@@ -194,7 +197,7 @@ export default function FriendsList() {
                     ) : (
                       <span>{friend.user.displayName.charAt(0).toUpperCase()}</span>
                     )}
-                    <span className={`presence-dot ${isOnline ? 'online' : 'offline'}`} />
+                    <span className={`presence-dot ${presenceClass}`} />
                   </div>
                   <div className="friend-item-info">
                     <span className="friend-item-name">{friend.user.displayName}</span>

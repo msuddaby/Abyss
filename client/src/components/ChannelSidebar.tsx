@@ -31,6 +31,7 @@ export default function ChannelSidebar() {
   const dmUnreads = useUnreadStore((s) => s.dmUnreads);
   const { isDmMode, dmChannels, activeDmChannel, setActiveDmChannel } = useDmStore();
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
+  const userStatuses = usePresenceStore((s) => s.userStatuses);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -243,6 +244,8 @@ export default function ChannelSidebar() {
                 const hasUnread = unread?.hasUnread && activeDmChannel?.id !== dm.id;
                 const mentionCount = unread?.mentionCount || 0;
                 const isOnline = onlineUsers.has(dm.otherUser.id);
+                const status = userStatuses.get(dm.otherUser.id) ?? 0;
+                const presenceClass = !isOnline || status === 3 ? 'offline' : status === 1 ? 'away' : status === 2 ? 'dnd' : 'online';
 
                 return (
                   <div key={dm.id} className="channel-item-wrapper">
@@ -257,9 +260,14 @@ export default function ChannelSidebar() {
                         ) : (
                           <span>{dm.otherUser.displayName.charAt(0).toUpperCase()}</span>
                         )}
-                        <span className={`presence-dot ${isOnline ? 'online' : 'offline'}`} />
+                        <span className={`presence-dot ${presenceClass}`} />
                       </div>
-                      <span className="dm-channel-name">{dm.otherUser.displayName}</span>
+                      <div className="dm-channel-info">
+                        <span className="dm-channel-name">{dm.otherUser.displayName}</span>
+                        {dm.lastMessageContent && (
+                          <span className="dm-channel-preview">{dm.lastMessageContent}</span>
+                        )}
+                      </div>
                       {mentionCount > 0 && activeDmChannel?.id !== dm.id && (
                         <span className="mention-badge">{mentionCount}</span>
                       )}

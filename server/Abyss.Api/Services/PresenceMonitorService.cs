@@ -105,6 +105,9 @@ public class PresenceMonitorService : BackgroundService
                     .SendAsync("UserPresenceStatusChanged", userId, 1, ct);
             }
 
+            // Replay any recent PushStatus.None notifications as push notifications
+            NotificationDispatchService.EnqueueAwayReplay(userId);
+
             _logger.LogInformation("Auto-set user {UserId} to Away (stale heartbeat)", userId);
         }
     }

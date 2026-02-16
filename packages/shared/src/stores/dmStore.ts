@@ -12,7 +12,7 @@ interface DmState {
   exitDmMode: () => void;
   createOrGetDm: (userId: string) => Promise<DmChannel>;
   addDmChannelLocal: (dm: DmChannel) => void;
-  moveDmToTop: (channelId: string) => void;
+  moveDmToTop: (channelId: string, lastMessageContent?: string, lastMessageAuthorName?: string) => void;
 }
 
 export const useDmStore = create<DmState>((set) => ({
@@ -54,11 +54,14 @@ export const useDmStore = create<DmState>((set) => ({
     });
   },
 
-  moveDmToTop: (channelId) => {
+  moveDmToTop: (channelId, lastMessageContent, lastMessageAuthorName) => {
     set((s) => {
       const idx = s.dmChannels.findIndex((d) => d.id === channelId);
-      if (idx <= 0) return s;
-      const dm = { ...s.dmChannels[idx], lastMessageAt: new Date().toISOString() };
+      if (idx < 0) return s;
+      const updates: Partial<DmChannel> = { lastMessageAt: new Date().toISOString() };
+      if (lastMessageContent !== undefined) updates.lastMessageContent = lastMessageContent;
+      if (lastMessageAuthorName !== undefined) updates.lastMessageAuthorName = lastMessageAuthorName;
+      const dm = { ...s.dmChannels[idx], ...updates };
       const rest = s.dmChannels.filter((_, i) => i !== idx);
       return { dmChannels: [dm, ...rest] };
     });
