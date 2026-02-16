@@ -35,7 +35,7 @@ public class InvitesController : ControllerBase
     public async Task<ActionResult<ServerDto>> Join(string code)
     {
         var invite = await _db.Invites.Include(i => i.Server).FirstOrDefaultAsync(i => i.Code == code);
-        if (invite == null) return NotFound("Invalid invite code");
+        if (invite == null || invite.ServerId == null) return NotFound("Invalid invite code");
 
         if (invite.ExpiresAt.HasValue && invite.ExpiresAt < DateTime.UtcNow)
             return BadRequest("Invite has expired");
@@ -44,20 +44,21 @@ public class InvitesController : ControllerBase
             return BadRequest("Invite has reached max uses");
 
         // Check if banned
-        if (await _perms.IsBannedAsync(invite.ServerId, UserId))
+        if (await _perms.IsBannedAsync(invite.ServerId.Value, UserId))
             return BadRequest("You are banned from this server.");
 
         var alreadyMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == invite.ServerId && sm.UserId == UserId);
         if (alreadyMember)
-            return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
+            return Ok(new ServerDto(invite.Server!.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
 
         _db.ServerMembers.Add(new ServerMember
         {
-            ServerId = invite.ServerId,
+            ServerId = invite.ServerId.Value,
             UserId = UserId,
         });
 
         invite.Uses++;
+        invite.LastUsedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync();
 
         // Broadcast the new member to all connected clients in the server
@@ -65,12 +66,12 @@ public class InvitesController : ControllerBase
         if (user != null)
         {
             var defaultRoles = await _db.ServerRoles
-                .Where(r => r.ServerId == invite.ServerId && r.IsDefault)
+                .Where(r => r.ServerId == invite.ServerId.Value && r.IsDefault)
                 .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault, r.DisplaySeparately))
                 .ToListAsync();
 
             var memberDto = new ServerMemberDto(
-                invite.ServerId,
+                invite.ServerId.Value,
                 UserId,
                 new UserDto(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus),
                 false,
@@ -80,8 +81,8 @@ public class InvitesController : ControllerBase
             await _hub.Clients.Group($"server:{invite.ServerId}").SendAsync("MemberJoined", invite.ServerId.ToString(), memberDto);
         }
 
-        await _systemMessages.SendMemberJoinLeaveAsync(invite.ServerId, UserId, joined: true);
+        await _systemMessages.SendMemberJoinLeaveAsync(invite.ServerId.Value, UserId, joined: true);
 
-        return Ok(new ServerDto(invite.Server.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
+        return Ok(new ServerDto(invite.Server!.Id, invite.Server.Name, invite.Server.IconUrl, invite.Server.OwnerId, invite.Server.JoinLeaveMessagesEnabled, invite.Server.JoinLeaveChannelId, (int)invite.Server.DefaultNotificationLevel));
     }
 }

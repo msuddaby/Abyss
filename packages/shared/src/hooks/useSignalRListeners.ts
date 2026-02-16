@@ -26,7 +26,7 @@ import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmC
 const soundCache = new Map<string, any>();
 const normalizedVolumeCache = new Map<string, number>();
 const pendingAnalysis = new Map<string, Promise<number>>();
-const TARGET_RMS = 0.15; // target perceived loudness level (~-16 dB)
+const TARGET_RMS = 0.02; // target perceived loudness level (~-34 dB) - matched to voice chat levels
 let analysisCtx: any = null;
 
 function getNormalizedVolume(url: string): Promise<number> {

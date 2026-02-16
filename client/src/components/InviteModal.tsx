@@ -5,9 +5,15 @@ import { api } from '@abyss/shared';
 export default function InviteModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const [maxUses, setMaxUses] = useState('');
+  const [expiresAt, setExpiresAt] = useState('');
 
   const generateInvite = async () => {
-    const res = await api.post(`/servers/${serverId}/invites`);
+    const payload: { maxUses?: number; expiresAt?: string } = {};
+    const parsedMax = Number(maxUses);
+    if (!Number.isNaN(parsedMax) && parsedMax > 0) payload.maxUses = parsedMax;
+    if (expiresAt) payload.expiresAt = new Date(expiresAt).toISOString();
+    const res = await api.post(`/servers/${serverId}/invites`, payload);
     setCode(res.data.code);
   };
 
@@ -30,7 +36,23 @@ export default function InviteModal({ serverId, onClose }: { serverId: string; o
             </div>
           </div>
         ) : (
-          <button onClick={generateInvite}>Generate Invite Link</button>
+          <div className="invite-options">
+            <div className="invite-options-row">
+              <input
+                type="number"
+                min={1}
+                placeholder="Max uses (optional)"
+                value={maxUses}
+                onChange={(e) => setMaxUses(e.target.value)}
+              />
+              <input
+                type="datetime-local"
+                value={expiresAt}
+                onChange={(e) => setExpiresAt(e.target.value)}
+              />
+            </div>
+            <button onClick={generateInvite}>Generate Invite Link</button>
+          </div>
         )}
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onClose}>Close</button>

@@ -3538,6 +3538,27 @@ body.window-hidden *::after {
   background: var(--bg-accent-hover);
 }
 
+.invite-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.invite-options-row {
+  display: flex;
+  gap: 8px;
+}
+
+.invite-options-row input {
+  flex: 1;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
 /* Toast */
 .toast-container {
   position: fixed;
@@ -6466,7 +6487,7 @@ body.window-hidden *::after {
 .admin-table-header,
 .admin-table-row {
   display: grid;
-  grid-template-columns: 2fr 2fr 1fr 1fr;
+  grid-template-columns: 2fr 2fr 1fr 1fr 1.5fr 1fr;
   gap: 10px;
   align-items: center;
 }
@@ -6487,11 +6508,11 @@ body.window-hidden *::after {
 }
 
 .admin-table-users {
-  grid-template-columns: 1.5fr 1.2fr 1.6fr 1fr;
+  grid-template-columns: 2fr 2fr 2fr 1.5fr 1fr;
 }
 
 .admin-table-codes {
-  grid-template-columns: 1.4fr 0.8fr 1fr 1fr;
+  grid-template-columns: 2fr 1fr 1.5fr 1.5fr 0.8fr;
 }
 
 .admin-strong {
@@ -6552,6 +6573,121 @@ body.window-hidden *::after {
   color: var(--text-secondary);
 }
 
+/* Sort buttons */
+.admin-sort-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-sort-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.admin-sort-btn:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.admin-sort-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+/* Copy buttons */
+.admin-copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  margin-left: 6px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.admin-copy-btn:hover {
+  opacity: 1;
+}
+
+/* Action buttons */
+.admin-action-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+
+.admin-action-btn:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.admin-actions-cell {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.admin-action-btn.admin-danger {
+  color: #ed4245;
+}
+
+.admin-action-btn.admin-danger:hover {
+  color: #fff;
+  background: #ed4245;
+}
+
+/* Pagination */
+.admin-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.admin-pagination button {
+  padding: 8px 16px;
+  background: var(--bg-tertiary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.admin-pagination button:hover:not(:disabled) {
+  background: var(--bg-modifier-hover);
+}
+
+.admin-pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.admin-pagination span {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Date formatting */
+.admin-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 @media (max-width: 720px) {
   .admin-table-header,
   .admin-table-row {
@@ -6565,6 +6701,15 @@ body.window-hidden *::after {
 
   .admin-code-actions {
     grid-template-columns: 1fr;
+  }
+
+  .admin-pagination {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .admin-sort-row {
+    flex-direction: column;
   }
 }
 

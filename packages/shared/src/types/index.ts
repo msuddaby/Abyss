@@ -241,11 +241,13 @@ export interface Attachment {
 export interface Invite {
   id: string;
   code: string;
-  serverId: string;
-  creatorId: string;
+  serverId?: string;
+  creatorId?: string;
+  createdAt: string;
   expiresAt?: string;
   maxUses?: number;
   uses: number;
+  lastUsedAt?: string;
 }
 
 export interface AuditLog {
@@ -314,8 +316,10 @@ export interface AdminServer {
   id: string;
   name: string;
   ownerId: string;
+  ownerName: string;
   memberCount: number;
   channelCount: number;
+  createdAt: string;
 }
 
 export interface AdminUser {
@@ -325,28 +329,29 @@ export interface AdminUser {
   email?: string;
   status: string;
   avatarUrl?: string | null;
-}
-
-export interface AdminOverview {
-  servers: AdminServer[];
-  users: AdminUser[];
-}
-
-export interface InviteCode {
-  id: string;
-  code: string;
-  createdById?: string;
   createdAt: string;
-  expiresAt?: string;
-  maxUses?: number;
-  uses: number;
-  lastUsedAt?: string;
+}
+
+export interface AdminOverviewStats {
+  serverCount: number;
+  userCount: number;
+  messageCount: number;
+}
+
+export interface AdminServersResponse {
+  servers: AdminServer[];
+  totalCount: number;
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[];
+  totalCount: number;
 }
 
 export interface AdminSettings {
   inviteOnly: boolean;
   maxMessageLength: number;
-  codes: InviteCode[];
+  codes: Invite[];
 }
 
 // Media provider types

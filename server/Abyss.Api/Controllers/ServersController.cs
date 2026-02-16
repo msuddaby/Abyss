@@ -388,7 +388,7 @@ public class ServersController : ControllerBase
     }
 
     [HttpPost("{serverId}/invites")]
-    public async Task<ActionResult<InviteDto>> CreateInvite(Guid serverId)
+    public async Task<ActionResult<InviteDto>> CreateInvite(Guid serverId, [FromBody] CreateServerInviteRequest? request = null)
     {
         var isMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == serverId && sm.UserId == UserId);
         if (!isMember) return Forbid();
@@ -399,11 +399,13 @@ public class ServersController : ControllerBase
             Code = Guid.NewGuid().ToString("N")[..8],
             ServerId = serverId,
             CreatorId = UserId,
+            ExpiresAt = request?.ExpiresAt,
+            MaxUses = request?.MaxUses,
         };
         _db.Invites.Add(invite);
         await _db.SaveChangesAsync();
 
-        return Ok(new InviteDto(invite.Id, invite.Code, invite.ServerId, invite.CreatorId, invite.ExpiresAt, invite.MaxUses, invite.Uses));
+        return Ok(new InviteDto(invite.Id, invite.Code, invite.ServerId, invite.CreatorId, invite.CreatedAt, invite.ExpiresAt, invite.MaxUses, invite.Uses, invite.LastUsedAt));
     }
 
     [HttpPatch("{serverId}/members/{userId}/roles")]

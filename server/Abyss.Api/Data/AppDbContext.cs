@@ -24,7 +24,6 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<CustomEmoji> CustomEmojis => Set<CustomEmoji>();
     public DbSet<DevicePushToken> DevicePushTokens => Set<DevicePushToken>();
     public DbSet<AppConfig> AppConfigs => Set<AppConfig>();
-    public DbSet<InviteCode> InviteCodes => Set<InviteCode>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<PinnedMessage> PinnedMessages => Set<PinnedMessage>();
     public DbSet<ChannelPermissionOverride> ChannelPermissionOverrides => Set<ChannelPermissionOverride>();
@@ -140,12 +139,15 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<Invite>()
             .HasOne(i => i.Server)
             .WithMany()
-            .HasForeignKey(i => i.ServerId);
+            .HasForeignKey(i => i.ServerId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<Invite>()
             .HasOne(i => i.Creator)
             .WithMany()
-            .HasForeignKey(i => i.CreatorId);
+            .HasForeignKey(i => i.CreatorId)
+            .OnDelete(DeleteBehavior.SetNull);
 
         builder.Entity<AuditLog>()
             .HasOne(a => a.Server)
@@ -296,16 +298,6 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<RefreshToken>()
             .HasIndex(rt => new { rt.UserId, rt.ExpiresAt });
-
-        builder.Entity<InviteCode>()
-            .HasIndex(i => i.Code)
-            .IsUnique();
-
-        builder.Entity<InviteCode>()
-            .HasOne(i => i.CreatedBy)
-            .WithMany()
-            .HasForeignKey(i => i.CreatedById)
-            .OnDelete(DeleteBehavior.SetNull);
 
         // PinnedMessage
         builder.Entity<PinnedMessage>()
