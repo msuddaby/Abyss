@@ -78,10 +78,8 @@ export function useIdleDetection() {
       });
     }
 
-    // Web browser fallback: track activity events with a 10-minute timeout.
-    // Also handles restoring from auto-away on activity in Electron.
-    const handleActivity = () => {
-      void restoreIfAutoAway();
+    // Reset the idle timer (any activity signal, including weak ones like scroll/focus).
+    const resetIdleTimer = () => {
       if (!hasMainProcessIdle) {
         if (idleTimerRef.current) {
           clearTimeout(idleTimerRef.current);
@@ -92,9 +90,24 @@ export function useIdleDetection() {
       }
     };
 
-    const events = ['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'];
-    events.forEach(event => window.addEventListener(event, handleActivity, { passive: true }));
-    window.addEventListener('focus', handleActivity);
+    // Strong activity: real user interaction — restores from auto-away AND resets timer.
+    const handleStrongActivity = () => {
+      void restoreIfAutoAway();
+      resetIdleTimer();
+    };
+
+    // Weak activity: can fire without user interaction (programmatic scroll,
+    // OS-level focus changes, new messages causing auto-scroll) — only resets
+    // the idle timer, never restores from auto-away.
+    const handleWeakActivity = () => {
+      resetIdleTimer();
+    };
+
+    const strongEvents = ['mousemove', 'keydown', 'mousedown', 'touchstart'];
+    const weakEvents = ['scroll'];
+    strongEvents.forEach(event => window.addEventListener(event, handleStrongActivity, { passive: true }));
+    weakEvents.forEach(event => window.addEventListener(event, handleWeakActivity, { passive: true }));
+    window.addEventListener('focus', handleWeakActivity);
 
     // On SignalR reconnect (e.g. after waking from sleep), if the server
     // auto-set us to Away while we were disconnected, adopt that as auto-away
@@ -117,8 +130,9 @@ export function useIdleDetection() {
 
     return () => {
       disposed = true;
-      events.forEach(event => window.removeEventListener(event, handleActivity));
-      window.removeEventListener('focus', handleActivity);
+      strongEvents.forEach(event => window.removeEventListener(event, handleStrongActivity));
+      weakEvents.forEach(event => window.removeEventListener(event, handleWeakActivity));
+      window.removeEventListener('focus', handleWeakActivity);
 
       if (idleTimerRef.current) {
         clearTimeout(idleTimerRef.current);
