@@ -31,6 +31,9 @@ public class VoiceStateService
     // channelId -> {userId -> displayName} of active camera users
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, string>> _activeCameras = new();
 
+    // channelId -> set of userIds using SFU relay
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> _relayUsers = new();
+
     public void JoinChannel(Guid channelId, string userId, string displayName, bool isMuted, bool isDeafened, string connectionId)
     {
         var users = _voiceChannels.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, VoiceUserState>());
@@ -65,6 +68,7 @@ public class VoiceStateService
         // Remove this user from screen sharers if they were sharing
         RemoveScreenSharer(channelId, userId);
         RemoveCameraUser(channelId, userId);
+        RemoveRelayUser(channelId, userId);
     }
 
     public void LeaveAll(string userId)
@@ -78,6 +82,7 @@ public class VoiceStateService
             // Remove this user from screen sharers and camera if they were active
             RemoveScreenSharer(channelId, userId);
             RemoveCameraUser(channelId, userId);
+            RemoveRelayUser(channelId, userId);
         }
 
         _voiceConnections.TryRemove(userId, out _);
@@ -273,6 +278,29 @@ public class VoiceStateService
         return result;
     }
 
+    public void AddRelayUser(Guid channelId, string userId)
+    {
+        var users = _relayUsers.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, byte>());
+        users[userId] = 0;
+    }
+
+    public bool RemoveRelayUser(Guid channelId, string userId)
+    {
+        if (_relayUsers.TryGetValue(channelId, out var users))
+        {
+            var removed = users.TryRemove(userId, out _);
+            if (users.IsEmpty)
+                _relayUsers.TryRemove(channelId, out _);
+            return removed;
+        }
+        return false;
+    }
+
+    public bool ChannelHasRelayUsers(Guid channelId)
+    {
+        return _relayUsers.TryGetValue(channelId, out var users) && !users.IsEmpty;
+    }
+
     /// <summary>
     /// Refresh the LastSeen timestamp for a user (called on voice activity like signaling).
     /// </summary>
@@ -305,6 +333,7 @@ public class VoiceStateService
                     _userChannels.TryRemove(userId, out _);
                     RemoveScreenSharer(channelId, userId);
                     RemoveCameraUser(channelId, userId);
+                    RemoveRelayUser(channelId, userId);
                     removed.Add((channelId, userId));
                 }
             }

@@ -128,6 +128,11 @@ public class ChatHub : Hub
             await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
         }
 
+        if (_voiceState.ChannelHasRelayUsers(channelGuid))
+        {
+            await Clients.Caller.SendAsync("ChannelRelayActive");
+        }
+
         var watchParty = _watchPartyService.GetParty(channelGuid);
         if (watchParty != null)
         {
@@ -1401,6 +1406,16 @@ public class ChatHub : Hub
                 await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
             }
         }
+    }
+
+    // Relay mode notification
+    public async Task NotifyRelayMode(string channelId)
+    {
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (!_voiceState.IsUserInChannel(channelGuid, UserId)) return;
+
+        _voiceState.AddRelayUser(channelGuid, UserId);
+        await Clients.OthersInGroup($"voice:{channelId}").SendAsync("ChannelRelayActive");
     }
 
     // Get camera users for all voice channels in a server (for sidebar indicators)

@@ -64,6 +64,8 @@ let initialParticipantsTimeout: ReturnType<typeof setTimeout> | null = null;
 const bufferedUserJoinedVoiceEvents: Map<string, string> = new Map();
 // Flag indicating SignalR reconnected while tab was hidden and voice must be rejoined on visibility
 let pendingVisibilityRejoin = false;
+// Flag set when the server reports relay users in the channel during join
+let channelRelayDetected = false;
 // Guard to prevent concurrent visibility-triggered rejoins
 let rejoinInProgress = false;
 
@@ -166,6 +168,10 @@ async function fallbackToSFU(reason: string): Promise<void> {
 
     // Connect via LiveKit SFU (sets mode to 'sfu' on success)
     await connectToLiveKit(channelId);
+
+    // Notify other peers in the channel that relay is active
+    const conn = getConnection();
+    conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
     useToastStore.getState().addToast('Switched to relay mode', 'info');
 
@@ -2050,6 +2056,7 @@ function cleanupAll() {
   iceNewStateTimers.clear();
   cancelInitialParticipantWait();
   stopStatsCollection();
+  channelRelayDetected = false;
   const vs = useVoiceStore.getState();
   vs.setConnectionState("disconnected");
   vs.setNeedsAudioUnlock(false);
@@ -2839,6 +2846,17 @@ function setupSignalRListeners() {
     closePeer(userId);
   });
 
+  conn.on("ChannelRelayActive", () => {
+    console.log('[relay] Channel has relay users');
+    channelRelayDetected = true;
+
+    // If already fully connected in P2P, upgrade immediately (cascade)
+    const vs = useVoiceStore.getState();
+    if (vs.connectionMode === 'p2p') {
+      void fallbackToSFU('Channel peers are using relay');
+    }
+  });
+
   conn.on("ReceiveSignal", async (fromUserId: string, signal: string) => {
     // Ignore signals if we're not in a voice channel — prevents a non-voice
     // browser tab from creating broken peer connections that interfere with
@@ -3620,6 +3638,7 @@ export function useWebRTC() {
 
         // Reset failure tracking for new session
         p2pFailedPeers.clear();
+        channelRelayDetected = false;
         useVoiceStore.getState().resetP2PFailures();
         useVoiceStore.getState().setFallbackReason(null);
 
@@ -3636,6 +3655,9 @@ export function useWebRTC() {
 
           // Connect via LiveKit
           await connectToLiveKit(channelId);
+
+          // Notify other peers in the channel that relay is active
+          conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
           voiceState.setConnectionState('connected');
           lastVoiceJoinTime = Date.now();
@@ -3728,6 +3750,24 @@ export function useWebRTC() {
           voiceState.setConnectionState("disconnected");
           useVoiceChatStore.getState().clear();
           useToastStore.getState().addToast("Failed to join voice channel.", "error");
+          return;
+        }
+
+        // Yield to event loop so queued SignalR events (ChannelRelayActive) can process
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        // If relay users exist in this channel, skip P2P and connect via SFU
+        if (channelRelayDetected) {
+          console.log('[join] Channel has relay users, connecting via SFU');
+          cleanupP2PConnections();
+          setCurrentChannel(channelId);
+          await connectToLiveKit(channelId);
+          conn.invoke('NotifyRelayMode', channelId).catch(() => {});
+          voiceState.setConnectionState('connected');
+          lastVoiceJoinTime = Date.now();
+          startStatsCollection();
+          const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+          useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
           return;
         }
 
