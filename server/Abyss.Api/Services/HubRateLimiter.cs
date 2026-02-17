@@ -24,7 +24,7 @@ public class HubRateLimiter
         [Category.Streaming]  = new(20, TimeSpan.FromSeconds(5)),
         [Category.WatchParty] = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Soundboard] = new(20,  TimeSpan.FromSeconds(5)),
-        [Category.Query]      = new(30, TimeSpan.FromSeconds(10)),
+        [Category.Query]      = new(100, TimeSpan.FromSeconds(10)),
         [Category.Navigation] = new(30, TimeSpan.FromSeconds(5)),
     };
 
