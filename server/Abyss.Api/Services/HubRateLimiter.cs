@@ -14,18 +14,18 @@ public class HubRateLimiter
 
     private static readonly Dictionary<Category, Limit> Limits = new()
     {
-        [Category.Message]    = new(5,  TimeSpan.FromSeconds(5)),
-        [Category.Edit]       = new(5,  TimeSpan.FromSeconds(5)),
-        [Category.Reaction]   = new(5,  TimeSpan.FromSeconds(3)),
-        [Category.Pin]        = new(3,  TimeSpan.FromSeconds(5)),
-        [Category.Typing]     = new(5,  TimeSpan.FromSeconds(10)),
-        [Category.Presence]   = new(3,  TimeSpan.FromSeconds(10)),
-        [Category.VoiceState] = new(3,  TimeSpan.FromSeconds(5)),
-        [Category.Streaming]  = new(3,  TimeSpan.FromSeconds(5)),
-        [Category.WatchParty] = new(5,  TimeSpan.FromSeconds(5)),
-        [Category.Soundboard] = new(3,  TimeSpan.FromSeconds(5)),
+        [Category.Message]    = new(10,  TimeSpan.FromSeconds(5)),
+        [Category.Edit]       = new(20,  TimeSpan.FromSeconds(5)),
+        [Category.Reaction]   = new(20,  TimeSpan.FromSeconds(3)),
+        [Category.Pin]        = new(20,  TimeSpan.FromSeconds(5)),
+        [Category.Typing]     = new(30,  TimeSpan.FromSeconds(10)),
+        [Category.Presence]   = new(20,  TimeSpan.FromSeconds(10)),
+        [Category.VoiceState] = new(30, TimeSpan.FromSeconds(5)),
+        [Category.Streaming]  = new(20, TimeSpan.FromSeconds(5)),
+        [Category.WatchParty] = new(20,  TimeSpan.FromSeconds(5)),
+        [Category.Soundboard] = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Query]      = new(30, TimeSpan.FromSeconds(10)),
-        [Category.Navigation] = new(10, TimeSpan.FromSeconds(5)),
+        [Category.Navigation] = new(30, TimeSpan.FromSeconds(5)),
     };
 
     private static readonly Dictionary<string, Category> MethodCategories = new()
