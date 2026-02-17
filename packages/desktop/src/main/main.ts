@@ -280,6 +280,10 @@ function createWindow() {
 
   // Send focus/blur events to renderer for animation pausing
   mainWindow.on('focus', () => {
+    // Window focus is a clear signal of user activity — reset idle validation
+    suspiciousJumpCount = 0;
+    lastIdleValue = 0;
+    wasIdle = false;
     mainWindow?.webContents.send('window-focus-changed', true);
   });
 
@@ -301,15 +305,63 @@ function createWindow() {
     probeLinuxIdle().then((found) => { useDbusIdle = found; });
   }
 
+  // Windows idle detection validation state
+  let lastIdleValue = 0;
+  let lastPollTime = Date.now();
+  let suspiciousJumpCount = 0;
+  const MAX_SUSPICIOUS_JUMPS = 2;
+
   const getIdleSeconds = async (): Promise<number> => {
     const electronIdle = powerMonitor.getSystemIdleTime();
-    // If Electron returns a meaningful value, use it
-    if (electronIdle > 0) return electronIdle;
+    const now = Date.now();
+    const timeSinceLastPoll = (now - lastPollTime) / 1000;
+    lastPollTime = now;
+
+    // If Electron returns a meaningful value, validate it (especially on Windows)
+    if (electronIdle > 0) {
+      // On Windows, powerMonitor.getSystemIdleTime() can return incorrect values
+      // when games or other apps are active but the Electron window is minimized.
+      // Validate by checking if idle time increases naturally over time.
+      if (process.platform === 'win32' && lastIdleValue > 0) {
+        const expectedIncrease = timeSinceLastPoll;
+        const actualIncrease = electronIdle - lastIdleValue;
+
+        // Idle time should increase by ~timeSinceLastPoll when truly idle.
+        // If it jumps suspiciously (user went from active to 10+ min idle instantly),
+        // or decreases while we haven't seen activity, the API is unreliable.
+        const isJump = Math.abs(actualIncrease - expectedIncrease) > 120; // 2 min tolerance
+        const isSuspiciouslyHigh = electronIdle >= IDLE_THRESHOLD_S && lastIdleValue < 60;
+
+        if ((isJump && isSuspiciouslyHigh) || (electronIdle < lastIdleValue - 30)) {
+          suspiciousJumpCount++;
+          console.log(`[Idle] Suspicious Windows idle value: ${electronIdle}s (was ${lastIdleValue}s, Δt=${timeSinceLastPoll.toFixed(1)}s)`);
+
+          if (suspiciousJumpCount >= MAX_SUSPICIOUS_JUMPS) {
+            // Windows idle API appears broken — return 0 to fall back to renderer timer
+            console.log('[Idle] Windows idle API appears unreliable, using renderer fallback');
+            lastIdleValue = 0;
+            return 0;
+          }
+        } else if (electronIdle < 60) {
+          // User is active — reset suspicious jump counter
+          suspiciousJumpCount = 0;
+        }
+      }
+
+      lastIdleValue = electronIdle;
+      return electronIdle;
+    }
+
     // On Linux Wayland, try D-Bus
     if (useDbusIdle) {
       const dbusIdle = await getLinuxIdleSeconds();
-      if (dbusIdle !== null) return dbusIdle;
+      if (dbusIdle !== null) {
+        lastIdleValue = dbusIdle;
+        return dbusIdle;
+      }
     }
+
+    lastIdleValue = 0;
     return 0;
   };
 
@@ -335,6 +387,9 @@ function createWindow() {
   powerMonitor.on('unlock-screen', () => {
     // Don't restore immediately — let the next poll check actual idle time.
     // The user may have unlocked but not interacted yet.
+    // But reset validation state since lock/unlock can cause spurious readings.
+    suspiciousJumpCount = 0;
+    lastIdleValue = 0;
   });
 
   mainWindow.on('closed', () => {

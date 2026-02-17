@@ -8,6 +8,11 @@ import { getLinuxIdleSeconds } from './linux-idle';
 
 const store = new Store();
 
+// Shared idle validation state for Windows
+let lastReportedIdle = 0;
+let lastIdleCheckTime = Date.now();
+let consecutiveSuspiciousReads = 0;
+
 export function setupIpcHandlers(
   window: BrowserWindow,
   shortcutManager: GlobalShortcutManager,
@@ -54,12 +59,59 @@ export function setupIpcHandlers(
 
   // Get system-wide idle time in seconds (with D-Bus fallback on Linux Wayland)
   ipcMain.handle('get-system-idle-time', async () => {
+    const now = Date.now();
+    const timeSinceLastCheck = (now - lastIdleCheckTime) / 1000;
+    lastIdleCheckTime = now;
+
     const electronIdle = powerMonitor.getSystemIdleTime();
-    if (electronIdle > 0) return electronIdle;
+
+    if (electronIdle > 0) {
+      // On Windows, validate idle time to detect when the API is unreliable
+      // (e.g., when games are active but window is minimized)
+      if (process.platform === 'win32' && lastReportedIdle > 0) {
+        const expectedIncrease = Math.min(timeSinceLastCheck, 600); // Cap at 10 min
+        const actualIncrease = electronIdle - lastReportedIdle;
+
+        // Check for suspicious patterns:
+        // 1. Idle time jumped from <60s to 600+s without gradual increase
+        // 2. Idle time decreased unexpectedly (should only happen on user input)
+        const isSuspiciousJump = (
+          lastReportedIdle < 60 &&
+          electronIdle >= 600 &&
+          timeSinceLastCheck < 120
+        );
+        const isNegativeChange = electronIdle < lastReportedIdle - 30;
+
+        if (isSuspiciousJump || isNegativeChange) {
+          consecutiveSuspiciousReads++;
+          console.log(`[Idle] Suspicious idle reading on Windows: ${electronIdle}s (was ${lastReportedIdle}s after ${timeSinceLastCheck.toFixed(1)}s)`);
+
+          // If we see multiple suspicious readings, the API is unreliable
+          if (consecutiveSuspiciousReads >= 2) {
+            console.log('[Idle] Windows idle detection appears unreliable, returning 0');
+            lastReportedIdle = 0;
+            return 0;
+          }
+        } else if (electronIdle < 60) {
+          // Reset counter when we see genuine activity
+          consecutiveSuspiciousReads = 0;
+        }
+      }
+
+      lastReportedIdle = electronIdle;
+      return electronIdle;
+    }
+
+    // Linux D-Bus fallback
     if (process.platform === 'linux') {
       const dbusIdle = await getLinuxIdleSeconds();
-      if (dbusIdle !== null) return dbusIdle;
+      if (dbusIdle !== null) {
+        lastReportedIdle = dbusIdle;
+        return dbusIdle;
+      }
     }
+
+    lastReportedIdle = 0;
     return 0;
   });
 

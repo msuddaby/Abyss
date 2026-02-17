@@ -41,7 +41,10 @@ export function useIdleDetection() {
     // Track whether Electron's getSystemIdleTime() actually works.
     // On Linux Wayland it always returns 0 — we detect this and fall back
     // to the web timer. Once we see a value >= 5s, we know it works.
+    // On Windows, it can return incorrect values when games are active.
     let systemIdleApiWorks = false;
+    let lastIdleReadTime = Date.now();
+    let lastIdleValue = 0;
 
     // Returns true if the API call succeeded (or was a no-op).
     const updatePresence = async (status: number): Promise<boolean> => {
@@ -71,10 +74,42 @@ export function useIdleDetection() {
 
       // In Electron, check system-wide idle time before marking away.
       // This prevents false-away when the user is active in another app
-      // (e.g. gaming). Skip the check if the API appears broken (Wayland).
+      // (e.g. gaming). Skip the check if the API appears broken (Wayland/Windows issues).
       if (systemIdleApiWorks && typeof window.electron?.getSystemIdleTime === 'function') {
         try {
+          const now = Date.now();
+          const timeSinceLastRead = (now - lastIdleReadTime) / 1000;
           const sysIdleSec = await window.electron.getSystemIdleTime();
+          lastIdleReadTime = now;
+
+          // Validate the idle reading, especially on Windows where the API can be
+          // unreliable when games are running and the window is minimized
+          if (window.electron.platform === 'win32' && lastIdleValue > 0) {
+            const idleIncrease = sysIdleSec - lastIdleValue;
+            const expectedIncrease = Math.min(timeSinceLastRead, IDLE_TIMEOUT_S);
+
+            // If idle time jumped from active (<60s) to idle threshold (600s+) within
+            // a short period, the reading is suspicious — likely a Windows idle bug
+            const isSuspiciousJump = (
+              lastIdleValue < 60 &&
+              sysIdleSec >= IDLE_TIMEOUT_S &&
+              timeSinceLastRead < 120
+            );
+
+            if (isSuspiciousJump) {
+              console.warn(
+                `[Idle] Ignoring suspicious Windows idle jump: ${lastIdleValue}s → ${sysIdleSec}s ` +
+                `(Δt=${timeSinceLastRead.toFixed(1)}s). User likely active in another app.`
+              );
+              lastIdleValue = sysIdleSec;
+              resetIdleTimer();
+              sendActivityHeartbeat();
+              return;
+            }
+          }
+
+          lastIdleValue = sysIdleSec;
+
           if (sysIdleSec < IDLE_TIMEOUT_S) {
             // System is active — user is doing something else. Reset timer
             // and send a heartbeat so the server doesn't mark us away either.
@@ -122,7 +157,8 @@ export function useIdleDetection() {
       }
     };
 
-    // On macOS and Windows, powerMonitor.getSystemIdleTime() always works.
+    // On macOS, powerMonitor.getSystemIdleTime() is reliable.
+    // On Windows, it can be unreliable when games are active and window is minimized.
     // On Linux Wayland it always returns 0 — we probe to detect this and
     // fall back to the web timer. We probe a few times over 2 minutes;
     // if we ever see >= 5s, we know it works.
@@ -131,8 +167,12 @@ export function useIdleDetection() {
     let probeInterval: ReturnType<typeof setInterval> | null = null;
 
     if (typeof window.electron?.getSystemIdleTime === 'function') {
-      if (window.electron.platform !== 'linux') {
-        // macOS / Windows: API always works, no probe needed
+      if (window.electron.platform === 'darwin') {
+        // macOS: API is reliable, no probe needed
+        systemIdleApiWorks = true;
+      } else if (window.electron.platform === 'win32') {
+        // Windows: API usually works, but can be unreliable with games.
+        // Enable it initially but rely on runtime validation in markAwayIfEligible.
         systemIdleApiWorks = true;
       } else {
         // Linux: probe needed because Wayland may always return 0
