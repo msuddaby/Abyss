@@ -1,0 +1,19 @@
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  port_range_start: 50000
+  port_range_end: 50100
+  tcp_port: 7881
+  # Set to true in production so LiveKit advertises the server's public IP
+  # in ICE candidates. Leave false for local development.
+  use_external_ip: false
+
+room:
+  empty_timeout: 300
+  max_participants: 50
+
+logging:
+  level: info
+  sample: false

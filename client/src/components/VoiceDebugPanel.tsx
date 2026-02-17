@@ -1,69 +1,124 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getDetailedConnectionStats } from '../hooks/useWebRTC';
 import type { DetailedConnectionStats } from '../hooks/useWebRTC';
 import { useVoiceStore } from '@abyss/shared/stores/voiceStore';
+import { getLiveKitRoom } from '@abyss/shared';
+
+interface SfuDebugInfo {
+  roomName: string;
+  connectionState: string;
+  e2eeEnabled: boolean;
+  localParticipant: string;
+  remoteParticipants: { identity: string; name: string; audioPublished: boolean }[];
+}
+
+function getSfuDebugInfo(): SfuDebugInfo | null {
+  const room = getLiveKitRoom();
+  if (!room) return null;
+
+  const remoteParticipants = Array.from(room.remoteParticipants.values()).map(p => ({
+    identity: p.identity,
+    name: p.name || p.identity,
+    audioPublished: Array.from(p.trackPublications.values()).some(
+      t => t.kind === 'audio' && t.isSubscribed,
+    ),
+  }));
+
+  return {
+    roomName: room.name || 'unknown',
+    connectionState: room.state,
+    e2eeEnabled: room.isE2EEEnabled,
+    localParticipant: room.localParticipant?.identity || 'unknown',
+    remoteParticipants,
+  };
+}
 
 export function VoiceDebugPanel() {
   const [expanded, setExpanded] = useState(false);
   const [detailedView, setDetailedView] = useState(false);
   const [stats, setStats] = useState<DetailedConnectionStats | null>(null);
+  const [sfuInfo, setSfuInfo] = useState<SfuDebugInfo | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
   const currentChannelId = useVoiceStore(s => s.currentChannelId);
   const participants = useVoiceStore(s => s.participants);
+  const connectionMode = useVoiceStore(s => s.connectionMode);
+  const sfuFallbackReason = useVoiceStore(s => s.sfuFallbackReason);
+  const p2pFailureCount = useVoiceStore(s => s.p2pFailureCount);
+
+  const isSfu = connectionMode === 'sfu' || connectionMode === 'attempting-sfu';
+
+  const refresh = useCallback(() => {
+    if (isSfu) {
+      setSfuInfo(getSfuDebugInfo());
+    } else {
+      setStats(getDetailedConnectionStats());
+    }
+    setLastUpdate(new Date());
+  }, [isSfu]);
 
   // Auto-refresh when expanded
   useEffect(() => {
     if (!expanded || !currentChannelId) return;
-
-    const refresh = () => {
-      const newStats = getDetailedConnectionStats();
-      setStats(newStats);
-      setLastUpdate(new Date());
-    };
-
-    refresh(); // Initial load
+    refresh();
     const interval = setInterval(refresh, 3000);
     return () => clearInterval(interval);
-  }, [expanded, currentChannelId]);
+  }, [expanded, currentChannelId, refresh]);
 
   const handleCopyStats = () => {
-    const output = {
-      timestamp: new Date().toISOString(),
-      summary: {
-        activePeers: stats?.activePeerCount ?? 0,
-        connectionType: stats?.connectionType ?? 'unknown',
-        natType: stats?.natType ?? 'unknown',
-        iceConnectionState: stats?.iceConnectionState ?? 'new',
-        iceGatheringComplete: stats?.iceGatheringComplete ?? false,
-        avgRoundTripTime: stats?.roundTripTime,
-        avgPacketLoss: stats?.packetLoss,
-        avgJitter: stats?.jitter,
-      },
-      localCandidates: stats?.localCandidates ?? {
-        hostCount: 0,
-        srflxCount: 0,
-        relayCount: 0,
-        protocol: 'unknown',
-      },
-      peers: stats?.perPeerStats.map(peer => ({
-        userId: peer.userId,
-        displayName: participants.get(peer.userId) ?? 'Unknown',
-        iceState: peer.iceState,
-        signalingState: peer.signalingState,
-        connectionType: peer.connectionType,
-        localCandidateType: peer.localCandidateType,
-        remoteCandidateType: peer.remoteCandidateType,
-        transportProtocol: peer.transportProtocol,
-        consent: peer.consent,
-        roundTripTime: peer.roundTripTime,
-        packetLoss: peer.packetLoss,
-        jitter: peer.jitter,
-        bytesReceived: peer.bytesReceived,
-        bytesSent: peer.bytesSent,
-      })) ?? [],
-    };
+    let output: object;
+
+    if (isSfu && sfuInfo) {
+      output = {
+        timestamp: new Date().toISOString(),
+        mode: 'sfu',
+        sfuFallbackReason,
+        p2pFailureCount,
+        room: {
+          name: sfuInfo.roomName,
+          state: sfuInfo.connectionState,
+          e2ee: sfuInfo.e2eeEnabled,
+          localParticipant: sfuInfo.localParticipant,
+        },
+        remoteParticipants: sfuInfo.remoteParticipants,
+      };
+    } else {
+      output = {
+        timestamp: new Date().toISOString(),
+        mode: 'p2p',
+        p2pFailureCount,
+        summary: {
+          activePeers: stats?.activePeerCount ?? 0,
+          connectionType: stats?.connectionType ?? 'unknown',
+          natType: stats?.natType ?? 'unknown',
+          iceConnectionState: stats?.iceConnectionState ?? 'new',
+          iceGatheringComplete: stats?.iceGatheringComplete ?? false,
+          avgRoundTripTime: stats?.roundTripTime,
+          avgPacketLoss: stats?.packetLoss,
+          avgJitter: stats?.jitter,
+        },
+        localCandidates: stats?.localCandidates ?? {
+          hostCount: 0, srflxCount: 0, relayCount: 0, protocol: 'unknown',
+        },
+        peers: stats?.perPeerStats.map(peer => ({
+          userId: peer.userId,
+          displayName: participants.get(peer.userId) ?? 'Unknown',
+          iceState: peer.iceState,
+          signalingState: peer.signalingState,
+          connectionType: peer.connectionType,
+          localCandidateType: peer.localCandidateType,
+          remoteCandidateType: peer.remoteCandidateType,
+          transportProtocol: peer.transportProtocol,
+          consent: peer.consent,
+          roundTripTime: peer.roundTripTime,
+          packetLoss: peer.packetLoss,
+          jitter: peer.jitter,
+          bytesReceived: peer.bytesReceived,
+          bytesSent: peer.bytesSent,
+        })) ?? [],
+      };
+    }
     navigator.clipboard.writeText(JSON.stringify(output, null, 2));
     setCopyFeedback(true);
     setTimeout(() => setCopyFeedback(false), 2000);
@@ -109,53 +164,134 @@ export function VoiceDebugPanel() {
           ) : (
             <>
               <div className="voice-debug-actions">
-                <button
-                  type="button"
-                  className="btn-small"
-                  onClick={() => {
-                    const newStats = getDetailedConnectionStats();
-                    setStats(newStats);
-                    setLastUpdate(new Date());
-                  }}
-                >
+                <button type="button" className="btn-small" onClick={refresh}>
                   Refresh
                 </button>
-                <button
-                  type="button"
-                  className="btn-small"
-                  onClick={() => setDetailedView(!detailedView)}
-                >
-                  {detailedView ? 'Simple View' : 'Detailed View'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-small"
-                  onClick={handleCopyStats}
-                >
+                {!isSfu && (
+                  <button
+                    type="button"
+                    className="btn-small"
+                    onClick={() => setDetailedView(!detailedView)}
+                  >
+                    {detailedView ? 'Simple View' : 'Detailed View'}
+                  </button>
+                )}
+                <button type="button" className="btn-small" onClick={handleCopyStats}>
                   {copyFeedback ? 'Copied!' : 'Copy Debug Info'}
                 </button>
               </div>
 
-              {stats && (
+              {/* Mode indicator */}
+              <div className="voice-debug-metrics">
+                <div className="voice-debug-metric">
+                  <div className="voice-debug-metric-label">Mode</div>
+                  <div className="voice-debug-metric-value">
+                    {connectionMode === 'sfu' && 'SFU Relay'}
+                    {connectionMode === 'attempting-sfu' && 'Connecting to Relay...'}
+                    {connectionMode === 'p2p' && 'Peer-to-Peer'}
+                  </div>
+                </div>
+
+                {p2pFailureCount > 0 && (
+                  <div className="voice-debug-metric">
+                    <div className="voice-debug-metric-label">P2P Failures</div>
+                    <div className="voice-debug-metric-value">{p2pFailureCount}</div>
+                  </div>
+                )}
+
+                {sfuFallbackReason && (
+                  <div className="voice-debug-metric" style={{ gridColumn: '1 / -1' }}>
+                    <div className="voice-debug-metric-label">Fallback Reason</div>
+                    <div className="voice-debug-metric-value" style={{ fontSize: '0.85em' }}>
+                      {sfuFallbackReason}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* SFU-specific stats */}
+              {isSfu && sfuInfo && (
+                <>
+                  <div className="voice-debug-metrics">
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">Room State</div>
+                      <div className="voice-debug-metric-value">{sfuInfo.connectionState}</div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">E2EE</div>
+                      <div className="voice-debug-metric-value">
+                        {sfuInfo.e2eeEnabled ? 'Enabled' : 'Disabled'}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">Room</div>
+                      <div className="voice-debug-metric-value" style={{ fontSize: '0.85em' }}>
+                        {sfuInfo.roomName}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">Local Identity</div>
+                      <div className="voice-debug-metric-value" style={{ fontSize: '0.85em' }}>
+                        {sfuInfo.localParticipant}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">Remote Participants</div>
+                      <div className="voice-debug-metric-value">
+                        {sfuInfo.remoteParticipants.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  {sfuInfo.remoteParticipants.length > 0 && (
+                    <div className="voice-debug-peer-list">
+                      {sfuInfo.remoteParticipants.map((p) => (
+                        <div key={p.identity} className="voice-debug-peer-card">
+                          <div className="voice-debug-peer-header">
+                            {p.name}
+                          </div>
+                          <div className="voice-debug-peer-metrics">
+                            <div>
+                              <div className="label">Identity</div>
+                              <div style={{ fontSize: '0.85em' }}>{p.identity}</div>
+                            </div>
+                            <div>
+                              <div className="label">Audio</div>
+                              <div>{p.audioPublished ? 'Subscribed' : 'No audio'}</div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* P2P-specific stats */}
+              {!isSfu && stats && (
                 <>
                   <div className="voice-debug-metrics">
                     <div className="voice-debug-metric">
                       <div className="voice-debug-metric-label">Connection Type</div>
                       <div className="voice-debug-metric-value">
-                        {stats.connectionType === 'direct' && '🔗 P2P Direct'}
-                        {stats.connectionType === 'relay' && '🔀 TURN Relay'}
-                        {stats.connectionType === 'mixed' && '🔀 Mixed'}
-                        {stats.connectionType === 'unknown' && '❓ Unknown'}
+                        {stats.connectionType === 'direct' && 'P2P Direct'}
+                        {stats.connectionType === 'relay' && 'TURN Relay'}
+                        {stats.connectionType === 'mixed' && 'Mixed'}
+                        {stats.connectionType === 'unknown' && 'Unknown'}
                       </div>
                     </div>
 
                     <div className="voice-debug-metric">
                       <div className="voice-debug-metric-label">NAT Type</div>
                       <div className="voice-debug-metric-value">
-                        {stats.natType === 'open' && '🌐 Open Internet'}
-                        {stats.natType === 'cone' && '🔶 Cone NAT'}
-                        {stats.natType === 'symmetric' && '⚠️ Symmetric NAT'}
-                        {stats.natType === 'unknown' && '❓ Detecting...'}
+                        {stats.natType === 'open' && 'Open Internet'}
+                        {stats.natType === 'cone' && 'Cone NAT'}
+                        {stats.natType === 'symmetric' && 'Symmetric NAT'}
+                        {stats.natType === 'unknown' && 'Detecting...'}
                       </div>
                     </div>
 
@@ -200,7 +336,7 @@ export function VoiceDebugPanel() {
                       <div className="voice-debug-metric-label">ICE State</div>
                       <div className="voice-debug-metric-value">
                         {stats.iceConnectionState}
-                        {stats.iceGatheringComplete && ' ✓'}
+                        {stats.iceGatheringComplete && ' (complete)'}
                       </div>
                     </div>
 
@@ -229,9 +365,9 @@ export function VoiceDebugPanel() {
                               </div>
                             </div>
                             <div>
-                              <div className="label">Local → Remote</div>
+                              <div className="label">Local / Remote</div>
                               <div style={{ fontSize: '0.85em' }}>
-                                {peer.localCandidateType || '?'} → {peer.remoteCandidateType || '?'}
+                                {peer.localCandidateType || '?'} / {peer.remoteCandidateType || '?'}
                               </div>
                             </div>
                             <div>
@@ -249,9 +385,9 @@ export function VoiceDebugPanel() {
                             <div>
                               <div className="label">Consent</div>
                               <div>
-                                {peer.consent === 'granted' && '✓ Active'}
-                                {peer.consent === 'checking' && '⏳ Checking'}
-                                {peer.consent === 'unknown' && '❓'}
+                                {peer.consent === 'granted' && 'Active'}
+                                {peer.consent === 'checking' && 'Checking'}
+                                {peer.consent === 'unknown' && '?'}
                               </div>
                             </div>
                             <div>
@@ -283,13 +419,13 @@ export function VoiceDebugPanel() {
                       ))}
                     </div>
                   )}
-
-                  {lastUpdate && (
-                    <div className="voice-debug-timestamp">
-                      Last updated: {lastUpdate.toLocaleTimeString()}
-                    </div>
-                  )}
                 </>
+              )}
+
+              {lastUpdate && (
+                <div className="voice-debug-timestamp">
+                  Last updated: {lastUpdate.toLocaleTimeString()}
+                </div>
               )}
             </>
           )}

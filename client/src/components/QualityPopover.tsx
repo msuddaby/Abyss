@@ -7,6 +7,7 @@ const CAMERA_OPTIONS: { value: CameraQuality; label: string; detail: string }[] 
   { value: 'low', label: 'Low', detail: '360p 15fps' },
   { value: 'medium', label: 'Medium', detail: '480p 30fps' },
   { value: 'high', label: 'High', detail: '720p 30fps' },
+  { value: 'very-high', label: 'Ultra', detail: '1080p 30fps' },
 ];
 
 const SCREEN_OPTIONS: { value: ScreenShareQuality; label: string; detail: string }[] = [

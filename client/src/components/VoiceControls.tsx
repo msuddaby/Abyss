@@ -33,6 +33,7 @@ export default function VoiceControls() {
   const { currentChannelId, isScreenSharing, isCameraOn, voiceMode, isPttActive, pttKey, setVoiceMode, needsAudioUnlock } = useVoiceStore();
   const isCameraLoading = useVoiceStore((s) => s.isCameraLoading);
   const isScreenShareLoading = useVoiceStore((s) => s.isScreenShareLoading);
+  const connectionMode = useVoiceStore((s) => s.connectionMode);
   const channels = useServerStore((s) => s.channels);
   const { leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera } = useWebRTC();
   const toggleMute = useVoiceStore((s) => s.toggleMute);
@@ -135,6 +136,9 @@ export default function VoiceControls() {
           <span className="voice-connected-label">
             <span className={`voice-quality-dot ${qualityLevel}`} title={qualityTitle} />
             Voice Connected
+            {(connectionMode === 'sfu' || connectionMode === 'attempting-sfu') && (
+              <span className="connection-mode-badge sfu" title="Connected via relay server (E2EE)">Relay</span>
+            )}
           </span>
           {channel && <span className="voice-channel-name">{channel.name}</span>}
           {isPtt && (

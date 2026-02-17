@@ -12,6 +12,22 @@ import {
   useVoiceChatStore,
   useToastStore,
   useWatchPartyStore,
+  connectToLiveKit,
+  disconnectFromLiveKit,
+  sfuToggleMute,
+  sfuSetDeafened,
+  sfuSetInputDevice,
+  sfuPublishScreenShare,
+  sfuUnpublishScreenShare,
+  sfuPublishCamera,
+  sfuUnpublishCamera,
+  getSfuScreenStream,
+  getSfuCameraStream,
+  getSfuLocalCameraStream,
+  getSfuLocalScreenStream,
+  sfuUpdateScreenShareQuality,
+  sfuUpdateCameraQuality,
+  isInSfuMode,
 } from "@abyss/shared";
 import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
@@ -56,12 +72,70 @@ let rejoinInProgress = false;
 let voiceSessionId = 0;
 
 // ──────────────────────────────────────────────────────────────────────────────
+// SFU fallback detection
+// ──────────────────────────────────────────────────────────────────────────────
+const p2pFailedPeers = new Set<string>();
+const P2P_FAILURE_THRESHOLD = 1; // Fall back after first ICE failure
+
+function shouldFallbackToSFU(): boolean {
+  const voiceState = useVoiceStore.getState();
+  if (voiceState.connectionMode === 'sfu' || voiceState.connectionMode === 'attempting-sfu') return false;
+  if (voiceState.forceSfuMode) return true;
+  // Use cumulative failure count (not unique peer count) so a single peer
+  // failing twice (e.g. after ICE restart) still triggers the fallback.
+  if (voiceState.p2pFailureCount >= P2P_FAILURE_THRESHOLD) return true;
+  if (voiceState.participants.size > 8) return true;
+  return false;
+}
+
+async function fallbackToSFU(reason: string): Promise<void> {
+  const voiceState = useVoiceStore.getState();
+  const channelId = voiceState.currentChannelId;
+  if (!channelId) return;
+
+  console.warn(`[fallback] Switching to SFU mode: ${reason}`);
+  voiceState.setFallbackReason(reason);
+
+  try {
+    // Close all P2P connections
+    cleanupAll();
+
+    // Notify server we're leaving P2P (will re-join via SFU-side SignalR)
+    try {
+      const conn = getConnection();
+      await conn.invoke('LeaveVoiceChannel', channelId);
+    } catch { /* ignore */ }
+
+    // Connect via LiveKit SFU
+    voiceState.setCurrentChannel(channelId);
+    await connectToLiveKit(channelId);
+
+    // Re-join SignalR voice group so sidebar/state updates still work
+    try {
+      const conn = getConnection();
+      await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
+    } catch { /* ignore */ }
+
+    useToastStore.getState().addToast(`Switched to relay mode: ${reason}`, 'info');
+
+    p2pFailedPeers.clear();
+    voiceState.resetP2PFailures();
+  } catch (err) {
+    console.error('[fallback] SFU connection failed:', err);
+    voiceState.setConnectionState('disconnected');
+    voiceState.setConnectionMode('p2p');
+    useToastStore.getState().addToast('Connection failed. Please try again.', 'error');
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Video quality presets
 // ──────────────────────────────────────────────────────────────────────────────
 const CAMERA_QUALITY_CONSTRAINTS: Record<CameraQuality, { width: number; height: number; frameRate: number; maxBitrate: number }> = {
-  low:    { width: 640,  height: 360, frameRate: 15, maxBitrate: 400_000 },
-  medium: { width: 640,  height: 480, frameRate: 30, maxBitrate: 800_000 },
-  high:   { width: 1280, height: 720, frameRate: 30, maxBitrate: 1_500_000 },
+  low:       { width: 640,  height: 360,  frameRate: 15, maxBitrate: 400_000 },
+  medium:    { width: 640,  height: 480,  frameRate: 30, maxBitrate: 800_000 },
+  high:      { width: 1280, height: 720,  frameRate: 30, maxBitrate: 1_500_000 },
+  'very-high': { width: 1920, height: 1080, frameRate: 30, maxBitrate: 3_000_000 },
 };
 
 const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, { frameRate: number; maxBitrate: number }> = {
@@ -537,6 +611,9 @@ function stopStatsCollection() {
 
 // ICE reconnection timers per peer
 const iceReconnectTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+// Timers for peers stuck at ICE "new" state (offer sent but never answered)
+const iceNewStateTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+const ICE_NEW_STATE_TIMEOUT_MS = 10_000;
 
 /**
  * Determine the established local DTLS role from a peer connection.
@@ -1067,18 +1144,32 @@ function cleanupAnalysers() {
 
 // Module-level exports for ScreenShareView to access
 export function getScreenVideoStream(userId: string): MediaStream | undefined {
+  // Check SFU streams first (when in relay mode)
+  if (isInSfuMode()) {
+    return getSfuScreenStream(userId);
+  }
   return screenVideoStreams.get(userId);
 }
 
 export function getLocalScreenStream(): MediaStream | null {
+  if (isInSfuMode()) {
+    return getSfuLocalScreenStream();
+  }
   return screenStream;
 }
 
 export function getCameraVideoStream(userId: string): MediaStream | undefined {
+  // Check SFU streams first (when in relay mode)
+  if (isInSfuMode()) {
+    return getSfuCameraStream(userId);
+  }
   return cameraVideoStreams.get(userId);
 }
 
 export function getLocalCameraStream(): MediaStream | null {
+  if (isInSfuMode()) {
+    return getSfuLocalCameraStream();
+  }
   return cameraStream;
 }
 
@@ -1669,6 +1760,12 @@ function createPeerConnection(
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
     const voiceState = useVoiceStore.getState();
 
+    // Clear "new state" timer once ICE progresses past "new"
+    if (pc.iceConnectionState !== 'new') {
+      const newTimer = iceNewStateTimers.get(peerId);
+      if (newTimer) { clearTimeout(newTimer); iceNewStateTimers.delete(peerId); }
+    }
+
     if (pc.iceConnectionState === "checking") {
       // Browsers (especially Firefox) can stall at "checking" without ever
       // reaching "failed". Set a hard timeout so we don't wait forever.
@@ -1676,10 +1773,16 @@ function createPeerConnection(
         const timer = setTimeout(() => {
           iceReconnectTimers.delete(peerId);
           if (pc.iceConnectionState === "checking") {
-            console.warn(`ICE stuck at checking for ${peerId}, restarting...`);
+            console.warn(`ICE stuck at checking for ${peerId}`);
+            p2pFailedPeers.add(peerId);
+            voiceState.incrementP2PFailures();
+            if (shouldFallbackToSFU()) {
+              void fallbackToSFU('ICE stuck at checking (likely blocked by VPN/firewall)');
+              return;
+            }
             restartIceForPeer(peerId, { reason: "checking-timeout" });
           }
-        }, 30_000);
+        }, 10_000);
         iceReconnectTimers.set(peerId, timer);
       }
     } else if (pc.iceConnectionState === "disconnected") {
@@ -1696,7 +1799,16 @@ function createPeerConnection(
       }, 5000);
       iceReconnectTimers.set(peerId, timer);
     } else if (pc.iceConnectionState === "failed") {
-      console.warn(`ICE failed for ${peerId}, attempting restart...`);
+      console.warn(`ICE failed for ${peerId}`);
+      p2pFailedPeers.add(peerId);
+      voiceState.incrementP2PFailures();
+      if (shouldFallbackToSFU()) {
+        const reason = voiceState.p2pFailureCount >= P2P_FAILURE_THRESHOLD
+          ? `P2P connection failed (${voiceState.p2pFailureCount} attempts, likely VPN/firewall)`
+          : `Room too large (${voiceState.participants.size} participants)`;
+        void fallbackToSFU(reason);
+        return;
+      }
       voiceState.setConnectionState("reconnecting");
       useToastStore.getState().addToast("Connection issue detected. Reconnecting...", "error");
       restartIceForPeer(peerId, { force: true, reason: "ice-failed" });
@@ -1752,6 +1864,26 @@ function createPeerConnection(
     queuePendingRemoteTrack(peerId, track, stream);
   };
 
+  // Start a "new state" timer — if ICE never progresses past "new" (e.g. the
+  // remote peer is in SFU mode and ignores our offer), trigger SFU fallback.
+  const existingNewTimer = iceNewStateTimers.get(peerId);
+  if (existingNewTimer) clearTimeout(existingNewTimer);
+  const newStateTimer = setTimeout(() => {
+    iceNewStateTimers.delete(peerId);
+    if (pc.iceConnectionState === 'new' && peers.get(peerId) === pc) {
+      console.warn(`[ice] Peer ${peerId} stuck at "new" for ${ICE_NEW_STATE_TIMEOUT_MS}ms (offer likely unanswered)`);
+      p2pFailedPeers.add(peerId);
+      useVoiceStore.getState().incrementP2PFailures();
+      if (shouldFallbackToSFU()) {
+        void fallbackToSFU('P2P offer unanswered (remote peer may be using relay mode)');
+        return;
+      }
+      // If not falling back, close the dead peer
+      closePeer(peerId);
+    }
+  }, ICE_NEW_STATE_TIMEOUT_MS);
+  iceNewStateTimers.set(peerId, newStateTimer);
+
   return pc;
 }
 
@@ -1761,9 +1893,19 @@ interface ClosePeerOptions {
 
 function closePeer(peerId: string, options: ClosePeerOptions = {}) {
   const { preserveZombieRecreateCooldown = false } = options;
+  // Clear "new state" timer
+  const newTimer = iceNewStateTimers.get(peerId);
+  if (newTimer) { clearTimeout(newTimer); iceNewStateTimers.delete(peerId); }
   const pc = peers.get(peerId);
   if (pc) {
     console.log(`[peer] Closing peer ${peerId} (connectionState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
+    // If the peer never made it past "checking", count it as a P2P failure
+    // so the fallback threshold accumulates even when peers leave/rejoin
+    if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'new') {
+      p2pFailedPeers.add(peerId);
+      useVoiceStore.getState().incrementP2PFailures();
+      console.log(`[closePeer] Counted as P2P failure (iceState=${pc.iceConnectionState}, failureCount=${useVoiceStore.getState().p2pFailureCount})`);
+    }
     pc.close();
     peers.delete(peerId);
   }
@@ -1853,6 +1995,8 @@ function cleanupAll() {
   // Clear ICE reconnect timers
   iceReconnectTimers.forEach((t) => clearTimeout(t));
   iceReconnectTimers.clear();
+  iceNewStateTimers.forEach((t) => clearTimeout(t));
+  iceNewStateTimers.clear();
   cancelInitialParticipantWait();
   stopStatsCollection();
   const vs = useVoiceStore.getState();
@@ -1949,6 +2093,20 @@ async function startScreenShareInternal() {
 
   voiceState.setScreenShareLoading(true);
   try {
+    if (isInSfuMode()) {
+      // SFU mode: LiveKit handles capture + publish
+      const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
+      await sfuPublishScreenShare({
+        maxFramerate: screenPreset.frameRate,
+        maxBitrate: screenPreset.maxBitrate,
+      });
+      voiceState.setScreenSharing(true);
+      voiceState.bumpScreenStreamVersion();
+      const conn = getConnection();
+      await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, true);
+      return;
+    }
+
     const isLinuxElectron = window.electron?.platform === 'linux';
     const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
 
@@ -2001,6 +2159,17 @@ async function stopScreenShareInternal() {
   const voiceState = useVoiceStore.getState();
   voiceState.setScreenShareLoading(true);
   try {
+    if (isInSfuMode()) {
+      // SFU mode: LiveKit handles track removal
+      await sfuUnpublishScreenShare();
+      voiceState.setScreenSharing(false);
+      if (voiceState.currentChannelId) {
+        const conn = getConnection();
+        await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, false);
+      }
+      return;
+    }
+
     const conn = getConnection();
 
     // Mark as not sharing BEFORE renegotiation so queued addVideoTrackForViewer calls bail out
@@ -2064,6 +2233,23 @@ async function startCameraInternal() {
 
   voiceState.setCameraLoading(true);
   try {
+    if (isInSfuMode()) {
+      // SFU mode: LiveKit handles capture + publish
+      const camPreset = CAMERA_QUALITY_CONSTRAINTS[voiceState.cameraQuality];
+      await sfuPublishCamera({
+        deviceId: voiceState.cameraDeviceId,
+        frameRate: camPreset.frameRate,
+        maxBitrate: camPreset.maxBitrate,
+        width: camPreset.width,
+        height: camPreset.height,
+      });
+      voiceState.setCameraOn(true);
+      voiceState.bumpCameraStreamVersion();
+      const conn = getConnection();
+      await conn.invoke("NotifyCamera", voiceState.currentChannelId, true);
+      return;
+    }
+
     const camPreset = CAMERA_QUALITY_CONSTRAINTS[voiceState.cameraQuality];
     const videoConstraints: MediaTrackConstraints = {
       width: { ideal: camPreset.width },
@@ -2123,6 +2309,17 @@ async function stopCameraInternal() {
   const voiceState = useVoiceStore.getState();
   voiceState.setCameraLoading(true);
   try {
+    if (isInSfuMode()) {
+      // SFU mode: LiveKit handles track removal
+      await sfuUnpublishCamera();
+      voiceState.setCameraOn(false);
+      if (voiceState.currentChannelId) {
+        const conn = getConnection();
+        await conn.invoke("NotifyCamera", voiceState.currentChannelId, false);
+      }
+      return;
+    }
+
     const conn = getConnection();
 
     // Remove camera track from all peers and renegotiate
@@ -2316,6 +2513,13 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
 
 // Exported for ScreenShareView to call
 export async function requestWatch(sharerUserId: string) {
+  if (isInSfuMode()) {
+    // SFU mode: tracks are auto-subscribed, just set watching state
+    useVoiceStore.getState().setWatching(sharerUserId);
+    useVoiceStore.getState().bumpScreenStreamVersion();
+    return;
+  }
+
   const conn = getConnection();
   useVoiceStore.getState().setWatching(sharerUserId);
   await conn.invoke("RequestWatchStream", sharerUserId);
@@ -2334,6 +2538,13 @@ export async function stopWatching() {
   const store = useVoiceStore.getState();
   const sharerUserId = store.watchingUserId;
   if (!sharerUserId) return;
+
+  if (isInSfuMode()) {
+    // SFU mode: just clear watching state (track stays subscribed)
+    store.setWatching(null);
+    store.bumpScreenStreamVersion();
+    return;
+  }
 
   const conn = getConnection();
   await conn.invoke("StopWatchingStream", sharerUserId);
@@ -2542,6 +2753,22 @@ function setupSignalRListeners() {
   conn.on("UserJoinedVoice", (userId: string, displayName: string) => {
     console.log(`UserJoinedVoice: ${displayName} (${userId})`);
 
+    // In SFU mode, just track the participant — LiveKit handles the media
+    if (isInSfuMode() || useVoiceStore.getState().connectionMode === 'sfu' || useVoiceStore.getState().connectionMode === 'attempting-sfu') {
+      useVoiceStore.getState().addParticipant(userId, displayName);
+      return;
+    }
+
+    // If we've already accumulated enough P2P failures, go straight to SFU
+    // instead of creating another doomed peer connection
+    const vs = useVoiceStore.getState();
+    console.log(`[UserJoinedVoice] Fallback check: mode=${vs.connectionMode} forceSfu=${vs.forceSfuMode} failureCount=${vs.p2pFailureCount} participants=${vs.participants.size} isInSfu=${isInSfuMode()}`);
+    if (shouldFallbackToSFU()) {
+      vs.addParticipant(userId, displayName);
+      void fallbackToSFU('P2P connection failed (peer reconnected but previous attempts failed)');
+      return;
+    }
+
     // Buffer joins until we get initial VoiceChannelUsers, then replay.
     if (waitingForInitialParticipants) {
       console.log(`Buffering UserJoinedVoice for ${displayName} while waiting for initial participants`);
@@ -2566,6 +2793,10 @@ function setupSignalRListeners() {
     // browser tab from creating broken peer connections that interfere with
     // the real voice session on another client (e.g. Electron).
     if (!useVoiceStore.getState().currentChannelId) return;
+
+    // Skip P2P signaling when in SFU mode (or transitioning to it)
+    const sigMode = useVoiceStore.getState().connectionMode;
+    if (isInSfuMode() || sigMode === 'sfu' || sigMode === 'attempting-sfu') return;
 
     const data = JSON.parse(signal);
 
@@ -2800,25 +3031,33 @@ function setupSignalRListeners() {
     console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
 
     // Reconcile WebRTC peers against authoritative participant list
-    const currentUser = useAuthStore.getState().user;
-    const myId = currentUser?.id;
-    // Close peers for users no longer in the channel
-    for (const peerId of peers.keys()) {
-      if (!authoritative.has(peerId)) {
-        console.log(`Reconciliation: closing stale peer ${peerId}`);
-        closePeer(peerId);
+    // Skip P2P peer creation/management when in SFU mode
+    if (isInSfuMode() || useVoiceStore.getState().connectionMode === 'sfu' || useVoiceStore.getState().connectionMode === 'attempting-sfu') {
+      console.log('[reconcile] Skipping P2P reconciliation (SFU mode)');
+    } else if (shouldFallbackToSFU()) {
+      console.log('[reconcile] P2P failure threshold reached, falling back to SFU');
+      void fallbackToSFU('P2P connection failed (accumulated failures across peer reconnects)');
+    } else {
+      const currentUser = useAuthStore.getState().user;
+      const myId = currentUser?.id;
+      // Close peers for users no longer in the channel
+      for (const peerId of peers.keys()) {
+        if (!authoritative.has(peerId)) {
+          console.log(`Reconciliation: closing stale peer ${peerId}`);
+          closePeer(peerId);
+        }
       }
-    }
-    // Create peers for users present on server but missing locally (not during initial join —
-    // those are handled by buffered join replay above)
-    if (localStream) {
-      for (const [userId, displayName] of authoritative) {
-        if (userId === myId) continue;
-        if (!peers.has(userId) && !pendingFromBuffer.has(userId)) {
-          console.log(`Reconciliation: creating missing peer for ${userId}`);
-          void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
-            console.warn(`Reconciliation: failed to create peer for ${userId}:`, err);
-          });
+      // Create peers for users present on server but missing locally (not during initial join —
+      // those are handled by buffered join replay above)
+      if (localStream) {
+        for (const [userId, displayName] of authoritative) {
+          if (userId === myId) continue;
+          if (!peers.has(userId) && !pendingFromBuffer.has(userId)) {
+            console.log(`Reconciliation: creating missing peer for ${userId}`);
+            void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
+              console.warn(`Reconciliation: failed to create peer for ${userId}:`, err);
+            });
+          }
         }
       }
     }
@@ -2929,7 +3168,11 @@ export function useWebRTC() {
 
   // Mute/unmute local tracks (accounts for PTT mode)
   useEffect(() => {
-    if (localStream) {
+    if (isInSfuMode()) {
+      // In SFU mode, delegate to LiveKit
+      const shouldMute = voiceMode === "push-to-talk" ? (isMuted || !isPttActive) : isMuted;
+      void sfuToggleMute(shouldMute);
+    } else if (localStream) {
       if (voiceMode === "push-to-talk") {
         const enabled = !isMuted && isPttActive;
         localStream.getAudioTracks().forEach((track) => {
@@ -2946,6 +3189,9 @@ export function useWebRTC() {
 
   // Deafen - mute all remote audio (mic + screen audio)
   useEffect(() => {
+    if (isInSfuMode()) {
+      sfuSetDeafened(isDeafened);
+    }
     audioElements.forEach((audio) => {
       audio.muted = isDeafened;
     });
@@ -3016,6 +3262,11 @@ export function useWebRTC() {
   useEffect(() => {
     if (!currentChannelId) return;
     if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) {
+      return;
+    }
+    // In SFU mode, delegate device switching to LiveKit
+    if (isInSfuMode()) {
+      void sfuSetInputDevice(inputDeviceId);
       return;
     }
     let cancelled = false;
@@ -3145,10 +3396,22 @@ export function useWebRTC() {
     const unsub = useVoiceStore.subscribe((state) => {
       if (state.cameraQuality === prevQuality) return;
       prevQuality = state.cameraQuality;
-      if (!cameraStream) return;
+      if (!state.isCameraOn) return;
       const preset = CAMERA_QUALITY_CONSTRAINTS[state.cameraQuality];
       (async () => {
         try {
+          if (isInSfuMode()) {
+            await sfuUpdateCameraQuality({
+              width: preset.width,
+              height: preset.height,
+              frameRate: preset.frameRate,
+              maxBitrate: preset.maxBitrate,
+            });
+            useVoiceStore.getState().bumpCameraStreamVersion();
+            console.log(`[cameraQuality] SFU: Switched to ${state.cameraQuality} (${preset.width}x${preset.height}@${preset.frameRate}fps)`);
+            return;
+          }
+          if (!cameraStream) return;
           const voiceState = useVoiceStore.getState();
           const videoConstraints: MediaTrackConstraints = {
             width: { ideal: preset.width },
@@ -3190,10 +3453,19 @@ export function useWebRTC() {
     const unsub = useVoiceStore.subscribe((state) => {
       if (state.screenShareQuality === prevQuality) return;
       prevQuality = state.screenShareQuality;
-      if (!screenStream) return;
+      if (!state.isScreenSharing) return;
       const preset = SCREEN_SHARE_QUALITY_CONSTRAINTS[state.screenShareQuality];
       (async () => {
         try {
+          if (isInSfuMode()) {
+            await sfuUpdateScreenShareQuality({
+              maxFramerate: preset.frameRate,
+              maxBitrate: preset.maxBitrate,
+            });
+            console.log(`[screenShareQuality] SFU: Switched to ${state.screenShareQuality} (${preset.frameRate}fps, ${preset.maxBitrate / 1000}kbps)`);
+            return;
+          }
+          if (!screenStream) return;
           // Apply frameRate constraint to the existing video track
           const videoTrack = screenStream?.getVideoTracks()[0];
           if (videoTrack) {
@@ -3285,17 +3557,48 @@ export function useWebRTC() {
       pendingVisibilityRejoin = false;
       rejoinInProgress = false;
       try {
-        await initializeTurn();
-
-        // Reset device resolution flag so each voice session gets a fresh attempt
-        deviceResolutionFailed = false;
-
-        // Leave current if any
+        // Leave current if any (both P2P and SFU)
         if (currentChannelId) {
+          if (isInSfuMode()) {
+            await disconnectFromLiveKit();
+          }
           const conn = getConnection();
           await conn.invoke("LeaveVoiceChannel", currentChannelId);
           cleanupAll();
         }
+
+        // Reset failure tracking for new session
+        p2pFailedPeers.clear();
+        useVoiceStore.getState().resetP2PFailures();
+        useVoiceStore.getState().setFallbackReason(null);
+
+        // Check if user wants SFU mode
+        if (useVoiceStore.getState().forceSfuMode) {
+          console.log('[join] User preference: using SFU relay mode');
+          setCurrentChannel(channelId);
+          useVoiceStore.getState().setConnectionMode('attempting-sfu');
+
+          // Join SignalR voice group first (for sidebar/state updates)
+          const conn = getConnection();
+          const voiceState = useVoiceStore.getState();
+          await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
+
+          // Connect via LiveKit
+          await connectToLiveKit(channelId);
+
+          voiceState.setConnectionState('connected');
+          lastVoiceJoinTime = Date.now();
+          startStatsCollection();
+          const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
+          useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
+          return;
+        }
+
+        await initializeTurn();
+
+        // Reset device resolution flag so each voice session gets a fresh attempt
+        deviceResolutionFailed = false;
+        useVoiceStore.getState().setConnectionMode('attempting-p2p');
 
         try {
           const audioConstraints = await buildAudioConstraintsResolved();
@@ -3378,6 +3681,7 @@ export function useWebRTC() {
         }
 
         voiceState.setConnectionState("connected");
+        voiceState.setConnectionMode("p2p");
         // Prevent the input device effect from re-obtaining a stream
         // — joinVoice already has the right stream
         lastVoiceJoinTime = Date.now();
@@ -3398,6 +3702,10 @@ export function useWebRTC() {
 
   const leaveVoice = useCallback(async () => {
     try {
+      // Disconnect from LiveKit if in SFU mode
+      if (isInSfuMode()) {
+        await disconnectFromLiveKit();
+      }
       if (currentChannelId) {
         const conn = getConnection();
         await conn.invoke("LeaveVoiceChannel", currentChannelId);
@@ -3408,6 +3716,7 @@ export function useWebRTC() {
       pendingVisibilityRejoin = false;
       rejoinInProgress = false;
       cleanupAll();
+      p2pFailedPeers.clear();
       setCurrentChannel(null);
       setParticipants(new Map());
       useVoiceStore.getState().setScreenSharing(false);
@@ -3417,6 +3726,9 @@ export function useWebRTC() {
       useVoiceStore.getState().setActiveCameras(new Map());
       useVoiceStore.getState().setFocusedUserId(null);
       useVoiceStore.getState().setVoiceChatOpen(false);
+      useVoiceStore.getState().setConnectionMode('p2p');
+      useVoiceStore.getState().setFallbackReason(null);
+      useVoiceStore.getState().resetP2PFailures();
       useVoiceChatStore.getState().clear();
       useWatchPartyStore.getState().setActiveParty(null);
     }

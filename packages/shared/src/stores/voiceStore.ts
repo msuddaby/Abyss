@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { getStorage } from '../storage.js';
 
 type VoiceMode = 'voice-activity' | 'push-to-talk';
-export type CameraQuality = 'low' | 'medium' | 'high';
+export type CameraQuality = 'low' | 'medium' | 'high' | 'very-high';
 export type ScreenShareQuality = 'quality' | 'balanced' | 'motion' | 'high-motion';
+export type ConnectionMode = 'p2p' | 'sfu' | 'attempting-p2p' | 'attempting-sfu';
 
 interface VoiceState {
   currentChannelId: string | null;
@@ -93,6 +94,16 @@ interface VoiceState {
   setKeybindToggleMute: (bind: string) => void;
   setKeybindToggleDeafen: (bind: string) => void;
   setKeybindDisconnect: (bind: string) => void;
+  // LiveKit SFU connection mode
+  connectionMode: ConnectionMode;
+  sfuFallbackReason: string | null;
+  p2pFailureCount: number;
+  forceSfuMode: boolean;
+  setConnectionMode: (mode: ConnectionMode) => void;
+  setFallbackReason: (reason: string | null) => void;
+  incrementP2PFailures: () => void;
+  resetP2PFailures: () => void;
+  setForceSfuMode: (force: boolean) => void;
 }
 
 export const useVoiceStore = create<VoiceState>((set) => ({
@@ -352,6 +363,19 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     getStorage().setItem('keybindDisconnect', bind);
     set({ keybindDisconnect: bind });
   },
+  // LiveKit SFU connection mode
+  connectionMode: 'p2p' as ConnectionMode,
+  sfuFallbackReason: null,
+  p2pFailureCount: 0,
+  forceSfuMode: false,
+  setConnectionMode: (mode) => set({ connectionMode: mode }),
+  setFallbackReason: (reason) => set({ sfuFallbackReason: reason }),
+  incrementP2PFailures: () => set((s) => ({ p2pFailureCount: s.p2pFailureCount + 1 })),
+  resetP2PFailures: () => set({ p2pFailureCount: 0 }),
+  setForceSfuMode: (force) => {
+    getStorage().setItem('forceSfuMode', force ? 'true' : 'false');
+    set({ forceSfuMode: force });
+  },
 }));
 
 /**
@@ -384,5 +408,6 @@ export function hydrateVoiceStore() {
     keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',
     keybindToggleDeafen: s.getItem('keybindToggleDeafen') || 'mod+shift+d',
     keybindDisconnect: s.getItem('keybindDisconnect') || 'mod+shift+e',
+    forceSfuMode: boolOr('forceSfuMode', false),
   });
 }

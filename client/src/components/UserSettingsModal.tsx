@@ -68,6 +68,8 @@ export default function UserSettingsModal({
   const pttKey = useVoiceStore((s) => s.pttKey);
   const setVoiceMode = useVoiceStore((s) => s.setVoiceMode);
   const setPttKey = useVoiceStore((s) => s.setPttKey);
+  const forceSfuMode = useVoiceStore((s) => s.forceSfuMode);
+  const setForceSfuMode = useVoiceStore((s) => s.setForceSfuMode);
   const inputDeviceId = useVoiceStore((s) => s.inputDeviceId);
   const outputDeviceId = useVoiceStore((s) => s.outputDeviceId);
   const setInputDeviceId = useVoiceStore((s) => s.setInputDeviceId);
@@ -888,6 +890,22 @@ export default function UserSettingsModal({
                     />
                     Auto Gain Control
                   </label>
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Connection</div>
+                  <label className="settings-toggle">
+                    <input
+                      type="checkbox"
+                      checked={forceSfuMode}
+                      onChange={(e) => setForceSfuMode(e.target.checked)}
+                    />
+                    Always use relay mode
+                  </label>
+                  <div className="settings-help">
+                    Routes voice through a relay server instead of direct peer-to-peer connections.
+                    Audio is still end-to-end encrypted. Useful if you have connectivity issues.
+                  </div>
                 </div>
 
                 <div className="us-card">

@@ -25,5 +25,21 @@ services:
       - ./turnserver.conf:/etc/turnserver.conf:ro
     restart: unless-stopped
 
+  livekit:
+    image: livekit/livekit-server:v1.9
+    container_name: abyss-livekit
+    profiles: ["livekit"]
+    command: --config /etc/livekit.yaml --dev
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    restart: unless-stopped
+
 volumes:
   pgdata:

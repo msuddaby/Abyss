@@ -17,14 +17,16 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 - Custom emojis
 - Pin messages
 - Chat search
-- Voice chat
-- Webcam and screen sharing with audio
-- Watch parties (connect your Plex server to a server or YouTube) - keeps everyone in sync
+- Voice chat (peer-to-peer with automatic SFU relay fallback)
+- End-to-end encrypted voice relay (AES-GCM-256 via PBKDF2)
+- Webcam and screen sharing with audio, quality presets (up to 1080p)
+- Watch parties (connect your Plex server to a server or YouTube) — keeps everyone in sync
 - Soundboard
 - Cosmetics
 - Online, away, DnD status
 - Friend system
 - Direct messages
+- Push notifications (mobile, via Firebase)
 - System administrator control panel
 
 ## Tech Stack
@@ -34,7 +36,8 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 - **Mobile App**: Capacitor (iOS & Android) — shares the same React codebase as the web client
 - **Desktop App**: Electron (Linux, macOS, Windows) with auto-updates
 - **Shared**: TypeScript package (`@abyss/shared`) for types, stores, and services
-- **Voice/Video**: WebRTC with coturn TURN server for NAT traversal
+- **Voice/Video**: WebRTC peer-to-peer with automatic LiveKit SFU relay fallback
+- **NAT Traversal**: coturn TURN server for P2P, LiveKit SFU for relay mode
 
 ## Project Structure
 
@@ -48,77 +51,16 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 │   └── desktop/            # Electron desktop app
 ├── docker-compose.yml      # Production deployment
 ├── docker-compose.dev.yml  # Development (DB + TURN only)
+├── Caddyfile.example       # Reverse proxy config (copy to Caddyfile)
+├── livekit.yaml            # LiveKit SFU server config
+├── turnserver.conf         # coturn config (not committed)
 ├── .env                    # All configuration (not committed)
-└── turnserver.conf         # coturn config (not committed)
+└── .env.dev                # Dev configuration (not committed)
 ```
 
-## Configuration
+---
 
-All configuration is done through environment variables in a `.env` file at the project root. Both the backend and frontend read from this file.
-
-For production builds (especially mobile apps), create a `.env.production` file which Vite will automatically use instead of `.env` during `npm run build`.
-
-### Development Setup
-
-Copy the example and edit:
-
-```sh
-cp .env.dev.example .env.dev
-```
-
-| Variable            | Description                          | Example                                  |
-| ------------------- | ------------------------------------ | ---------------------------------------- |
-| `POSTGRES_USER`     | Database user                        | `abyss`                                  |
-| `POSTGRES_PASSWORD` | Database password                    | `changeme`                               |
-| `POSTGRES_DB`       | Database name                        | `abyss`                                  |
-| `POSTGRES_HOST`     | Database host                        | `localhost`                              |
-| `POSTGRES_PORT`     | Database port                        | `5433` (dev docker maps to 5433)         |
-| `JWT_KEY`           | JWT signing key (min 64 chars)       | `dev-only-key-replace-in-production-...` |
-| `JWT_ISSUER`        | JWT issuer                           | `Abyss`                                  |
-| `JWT_AUDIENCE`      | JWT audience                         | `Abyss`                                  |
-| `SYSADMIN_USERNAME` | Username granted sysadmin on startup | `admin`                                  |
-| `CORS_ORIGINS`      | Allowed origins (comma-separated)    | `http://localhost:5173` (see note below) |
-| `VITE_API_URL`      | Backend URL (used by web client)     | `http://localhost:5000`                  |
-| `VITE_STUN_URL`     | STUN server for WebRTC               | `stun:stun.l.google.com:19302`           |
-
-#### TURN Server (optional, needed for voice across NATs)
-
-| Variable           | Description                 | Example                                   |
-| ------------------ | --------------------------- | ----------------------------------------- |
-| `TURN_EXTERNAL_IP` | Your public IP              | `203.0.113.1`                             |
-| `TURN_PORT`        | TURN listening port         | `3478`                                    |
-| `TURN_REALM`       | TURN realm                  | `abyss`                                   |
-| `TURN_AUTH_SECRET` | Shared secret for TURN auth | `changeme`                                |
-| `TURN_URLS`        | TURN URLs (comma-separated) | `turn:IP:3478,turn:IP:3478?transport=tcp` |
-| `TURN_TTL_SECONDS` | TURN credential TTL         | `3600`                                    |
-
-Also copy and edit the TURN server config:
-
-```sh
-cp turnserver.conf.example turnserver.conf
-```
-
-### Production Setup
-
-Copy the production example instead:
-
-```sh
-cp .env.example .env
-```
-
-Key differences from dev: `POSTGRES_HOST=db` (Docker service name), `POSTGRES_PORT=5432`, strong passwords, HTTPS origins.
-
-The desktop and mobile apps use different origins, so production `CORS_ORIGINS` must include them:
-
-- Desktop: `app://abyss`
-- iOS (Capacitor): `capacitor://localhost`
-- Android (Capacitor): `https://localhost`
-
-```
-CORS_ORIGINS=https://your-domain.com,app://abyss,capacitor://localhost,https://localhost
-```
-
-## Development
+## Development Setup
 
 ### Prerequisites
 
@@ -126,35 +68,60 @@ CORS_ORIGINS=https://your-domain.com,app://abyss,capacitor://localhost,https://l
 - [Node.js](https://nodejs.org/) (LTS)
 - [Docker](https://www.docker.com/) (for PostgreSQL and coturn)
 - [ffmpeg](https://ffmpeg.org/) (for media processing, must be on PATH)
+- [LiveKit server](https://docs.livekit.io/home/self-hosting/local/) (for voice relay — optional, see step 5)
 
-### 1. Start the Database
+### 1. Configure Environment
+
+Copy the dev example and edit with your values:
 
 ```sh
-docker compose -f docker-compose.dev.yml up -d
+cp .env.dev.example .env.dev
+```
+
+At minimum you need to set the database credentials and JWT key. The defaults work out of the box for local development.
+
+| Variable | Description | Default |
+|---|---|---|
+| `POSTGRES_USER` | Database user | `abyss` |
+| `POSTGRES_PASSWORD` | Database password | `changeme` |
+| `POSTGRES_DB` | Database name | `abyss` |
+| `POSTGRES_HOST` | Database host | `localhost` |
+| `POSTGRES_PORT` | Database port (dev docker maps to 5433) | `5433` |
+| `JWT_KEY` | JWT signing key (min 64 chars) | dev placeholder |
+| `JWT_ISSUER` | JWT issuer | `Abyss` |
+| `JWT_AUDIENCE` | JWT audience | `Abyss` |
+| `SYSADMIN_USERNAME` | Username granted sysadmin on startup | `admin` |
+| `CORS_ORIGINS` | Allowed origins (comma-separated) | `http://localhost:5173,...` |
+| `VITE_API_URL` | Backend URL (used by web client) | `http://localhost:5000` |
+| `VITE_STUN_URL` | STUN server for WebRTC | `stun:stun.l.google.com:19302` |
+| `VITE_GIPHY_API_KEY` | Giphy API key (optional) | — |
+
+### 2. Start the Database
+
+```sh
+docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
 ```
 
 This starts PostgreSQL on port **5433** and optionally coturn for TURN.
 
-### 2. Install Dependencies
+### 3. Install Dependencies
 
-From the project root:
+From the project root (installs all workspaces — `client`, `packages/shared`):
 
 ```sh
 npm install
 ```
 
-This installs all workspaces (`client`, `packages/shared`).
-
-### 3. Run the Backend
+### 4. Run the Backend
 
 ```sh
 cd server/Abyss.Api
 dotnet run
 ```
 
-The backend starts on `http://localhost:5000`. It automatically applies EF Core migrations on startup.
+The backend starts on `http://localhost:5000`. It automatically applies EF Core migrations on startup — no manual migration step needed.
 
-### 4. Run the Web Client
+### 5. Run the Web Client
 
 ```sh
 cd client
@@ -163,18 +130,83 @@ npm run dev
 
 The web client starts on `http://localhost:5173`. It reads `VITE_*` variables from the root `.env.dev` file (via Vite's `envDir` config).
 
-### 5. Run the Mobile App (optional)
+At this point you have a working instance with text chat, voice (P2P), and all core features. The following steps are optional.
+
+### 6. LiveKit SFU Relay (Optional)
+
+LiveKit provides a relay server for voice when peer-to-peer fails (restrictive firewalls, VPNs, symmetric NAT). Voice calls automatically fall back to relay mode after two P2P failures. Users can also force relay mode in Settings > Voice & Audio.
+
+All relay traffic is end-to-end encrypted — the server never sees plaintext audio.
+
+**Generate credentials and uncomment the LiveKit section in `.env.dev`:**
+
+```sh
+openssl rand -hex 16       # → LIVEKIT_API_KEY
+openssl rand -base64 32    # → LIVEKIT_API_SECRET
+```
+
+```
+LIVEKIT_API_KEY=your_generated_key
+LIVEKIT_API_SECRET=your_generated_secret
+LIVEKIT_URL=ws://localhost:7880
+VITE_LIVEKIT_URL=ws://localhost:7880
+```
+
+**Run LiveKit — choose one method:**
+
+**Option A: Native (recommended for macOS)**
+
+```sh
+brew install livekit
+source <(grep '^LIVEKIT_' .env.dev) && LIVEKIT_KEYS="$LIVEKIT_API_KEY: $LIVEKIT_API_SECRET" livekit-server --config livekit.yaml --dev
+```
+
+This reads `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` from your `.env.dev` file automatically.
+
+> Docker Desktop on macOS has UDP port forwarding issues that break WebRTC. Run natively instead.
+
+**Option B: Docker (Linux)**
+
+```sh
+docker compose -f docker-compose.dev.yml --env-file .env.dev --profile livekit up -d livekit
+```
+
+**Verify it's running:**
+
+```sh
+curl http://localhost:7880/
+```
+
+Without LiveKit configured, the app works normally — voice uses peer-to-peer only, and the backend logs "SFU relay disabled" on startup.
+
+### 7. TURN Server (Optional)
+
+TURN is needed for P2P voice calls when both users are behind NAT/firewalls that block direct connections.
+
+Copy and edit the coturn config:
+
+```sh
+cp turnserver.conf.example turnserver.conf
+```
+
+Update `external-ip` and `static-auth-secret` to match your `.env.dev` values, then add these to `.env.dev`:
+
+| Variable | Description | Example |
+|---|---|---|
+| `TURN_EXTERNAL_IP` | Your public IP | `203.0.113.1` |
+| `TURN_PORT` | TURN listening port | `3478` |
+| `TURN_REALM` | TURN realm (must match coturn) | `abyss` |
+| `TURN_AUTH_SECRET` | Shared secret (must match coturn) | `changeme` |
+| `TURN_URLS` | TURN URLs (comma-separated) | `turn:IP:3478,turn:IP:3478?transport=tcp` |
+| `TURN_TTL_SECONDS` | TURN credential TTL | `3600` |
+
+The dev Docker Compose includes a coturn service that reads `turnserver.conf`.
+
+### 8. Mobile App (Optional)
 
 The mobile app uses Capacitor to wrap the same React web client for iOS and Android.
 
-#### Environment Configuration
-
-Mobile builds automatically use different environment variables than development:
-
-- **Development** (`npm run dev`): Uses `.env` → `VITE_API_URL=http://localhost:5000`
-- **Production Build** (`npm run build:mobile`): Uses `.env.production` → `VITE_API_URL=https://your-domain.com`
-
-Create a `.env.production` file at the project root with production values:
+**Environment:** Mobile builds use `.env.production` (at the project root) so the app connects to your production server. Create it with production values:
 
 ```sh
 # .env.production
@@ -185,9 +217,7 @@ VITE_TURN_USERNAME=username
 VITE_TURN_CREDENTIAL=password
 ```
 
-Vite automatically selects `.env.production` during production builds, so your mobile app will connect to the production server instead of localhost.
-
-#### Building and Running
+**Build and run:**
 
 ```sh
 cd client
@@ -205,9 +235,9 @@ npx cap open ios
 npx cap open android
 ```
 
-For development, you can point the Capacitor dev server to your local Vite instance by uncommenting the `server.url` in `client/capacitor.config.ts`.
+For local development, you can point Capacitor's dev server to your local Vite instance by uncommenting `server.url` in `client/capacitor.config.ts`.
 
-### 6. Run the Desktop App (optional)
+### 9. Desktop App (Optional)
 
 The Electron desktop app lives in `packages/desktop/`.
 
@@ -222,34 +252,153 @@ To build a distributable package:
 npm run make:full
 ```
 
+---
+
 ## Production Deployment
 
-### Docker Compose
+### 1. Configure Environment
+
+Copy the production example:
+
+```sh
+cp .env.example .env
+```
+
+**Required changes from the defaults:**
+
+- `POSTGRES_PASSWORD` — use a strong random password
+- `JWT_KEY` — generate with `openssl rand -base64 48`
+- `SYSADMIN_USERNAME` — your admin account username
+- `CORS_ORIGINS` — your domain + app origins (see below)
+- `VITE_API_URL` — your public domain (`https://your-domain.com`)
+- TURN server variables — your public IP and a strong auth secret
+- LiveKit variables — generated API key/secret and `wss://` URL
+
+**Full variable reference:**
+
+| Variable | Description | Example |
+|---|---|---|
+| `POSTGRES_USER` | Database user | `abyss` |
+| `POSTGRES_PASSWORD` | Database password | **strong random** |
+| `POSTGRES_DB` | Database name | `abyss` |
+| `POSTGRES_HOST` | Database host (Docker service name) | `db` |
+| `POSTGRES_PORT` | Database port (internal) | `5432` |
+| `JWT_KEY` | JWT signing key (min 64 chars) | `openssl rand -base64 48` |
+| `JWT_ISSUER` | JWT issuer | `Abyss` |
+| `JWT_AUDIENCE` | JWT audience | `Abyss` |
+| `SYSADMIN_USERNAME` | Username granted sysadmin on startup | `admin` |
+| `CORS_ORIGINS` | Allowed origins (comma-separated) | see below |
+| `VITE_API_URL` | Public backend URL | `https://your-domain.com` |
+| `VITE_STUN_URL` | STUN server | `stun:stun.l.google.com:19302` |
+| `VITE_GIPHY_API_KEY` | Giphy API key (optional) | — |
+| `TURN_EXTERNAL_IP` | Your server's public IP | `203.0.113.1` |
+| `TURN_PORT` | TURN listening port | `3478` |
+| `TURN_REALM` | TURN realm | `abyss` |
+| `TURN_AUTH_SECRET` | TURN shared secret | **strong random** |
+| `TURN_URLS` | TURN URLs for clients | `turn:IP:3478,turn:IP:3478?transport=tcp` |
+| `TURN_TTL_SECONDS` | TURN credential TTL | `3600` |
+| `LIVEKIT_API_KEY` | LiveKit API key | `openssl rand -hex 16` |
+| `LIVEKIT_API_SECRET` | LiveKit API secret | `openssl rand -base64 32` |
+| `LIVEKIT_URL` | LiveKit server URL (backend) | `ws://livekit:7880` |
+| `VITE_LIVEKIT_URL` | LiveKit server URL (client, via Caddy) | `wss://your-domain.com/lk` |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Firebase service account JSON path | `/app/firebase-service-account.json` |
+
+**CORS origins** must include all clients that will connect:
+
+```
+CORS_ORIGINS=https://your-domain.com,app://abyss,capacitor://localhost,https://localhost
+```
+
+- `https://your-domain.com` — web client
+- `app://abyss` — Electron desktop app
+- `capacitor://localhost` — iOS (Capacitor)
+- `https://localhost` — Android (Capacitor)
+
+### 2. Configure TURN Server
+
+```sh
+cp turnserver.conf.example turnserver.conf
+```
+
+Edit `turnserver.conf` and set `external-ip` to your server's public IP and `static-auth-secret` to match your `.env` `TURN_AUTH_SECRET`.
+
+### 3. Configure LiveKit
+
+The `LIVEKIT_KEYS` environment variable is set automatically from your `.env` by Docker Compose.
+
+For production, edit `livekit.yaml` and set `use_external_ip: true` so LiveKit advertises your server's public IP in ICE candidates:
+
+```yaml
+rtc:
+  use_external_ip: true
+```
+
+LiveKit WebSocket signaling is proxied through Caddy (see step 6) for TLS. The WebRTC media ports must be opened directly in your firewall:
+
+| Port | Protocol | Service |
+|---|---|---|
+| 80, 443 | TCP | Caddy (HTTP + HTTPS) |
+| 3478 | TCP + UDP | coturn TURN |
+| 7881 | TCP | LiveKit WebRTC TCP fallback |
+| 50000–50100 | UDP | LiveKit WebRTC media |
+
+### 4. Deploy
 
 ```sh
 docker compose up -d --build
 ```
 
-This starts three services:
+This starts four services:
 
-- **db**: PostgreSQL 16
-- **api**: ASP.NET backend (port 5000)
-- **coturn**: TURN server (host networking)
+| Service | Description |
+|---|---|
+| `db` | PostgreSQL 16 |
+| `api` | ASP.NET backend (port 5000) |
+| `coturn` | TURN server (host networking) |
+| `livekit` | LiveKit SFU relay server |
 
-The API container creates upload directories automatically on startup.
+The API container creates upload directories automatically on startup and applies database migrations.
 
-### Building the Web Client
+### 5. Build the Web Client
 
 ```sh
 cd client
+npm install
 npm run build
 ```
 
-Output goes to `client/dist/`. Serve with any static file server, or put behind a reverse proxy.
+Output goes to `client/dist/`.
+
+### 6. Reverse Proxy (Caddy)
+
+You need a reverse proxy to handle TLS and route traffic. [Caddy](https://caddyserver.com/docs/install) is recommended — it auto-provisions HTTPS via Let's Encrypt with zero config.
+
+Copy and edit the example:
+
+```sh
+cp Caddyfile.example Caddyfile
+```
+
+Replace `your.domain.com` with your actual domain and update the `root` path to point to your built `client/dist/` directory. The Caddyfile handles:
+
+- `/api/*` and `/hubs/*` — proxied to the backend on port 5000
+- `/uploads/*` — proxied to the backend for uploaded files
+- `/lk/*` — proxied to LiveKit on port 7880 (TLS termination for WebSocket signaling)
+- Everything else — served as static files from the web client build, with SPA fallback
+
+Start Caddy:
+
+```sh
+sudo caddy start --config /path/to/Caddyfile
+```
+
+Caddy automatically obtains and renews TLS certificates. Make sure ports 80 and 443 are open and your domain's DNS points to the server.
+
+---
 
 ## Push Notifications (Mobile)
 
-Push notifications are delivered via Firebase Cloud Messaging (FCM). Because FCM tokens are scoped to a Firebase project, each server operator who publishes their own iOS/Android app needs their own Firebase project, and will need to distribute their own app to app stores. This will change in the future with a central relay, probably.
+Push notifications are delivered via Firebase Cloud Messaging (FCM). Each server operator who publishes their own iOS/Android app needs their own Firebase project.
 
 ### 1. Create a Firebase Project
 
@@ -272,33 +421,44 @@ Also enable these capabilities in Xcode under your app target:
 
 ### 3. Configure the Server
 
-Generate a Firebase Admin SDK service account key (Firebase Console > Project Settings > Service Accounts > Generate New Private Key). Place the JSON file on the server and set the path via environment variable:
+Generate a Firebase Admin SDK service account key (Firebase Console > Project Settings > Service Accounts > Generate New Private Key). Place the JSON file in the project root as `firebase-service-account.json`.
 
-| Variable | Description | Default |
-|---|---|---|
-| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to Firebase service account JSON | `firebase-service-account.json` |
+Set the path in `.env`:
 
-If the file is not present, push notifications are silently disabled — everything else works normally.
+```
+FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json
+```
 
-### 4. Android Notification Channel
+The Docker Compose file mounts this file into the container. If the file is not present, push notifications are silently disabled — everything else works normally.
 
-FCM messages are sent with channel ID `messages`. Android 8+ requires a notification channel to be created in the app. Capacitor's push plugin handles this automatically on first notification, but if you want to customize the channel (name, importance, sound), do so in `client/android/app/src/main/java/.../MainActivity.java`.
-
-### How It Works
+### 4. How Push Notifications Work
 
 1. On login, the mobile app requests push permission and registers the FCM token with the server (`POST /api/notifications/register-device`)
-2. When a user is offline (no active SignalR connection), the server sends push notifications for: mentions, DMs, and replies
+2. When a user is offline (no active SignalR connection), the server sends push notifications for mentions, DMs, and replies
 3. Tapping a notification navigates to the relevant channel/DM
 4. On logout, the token is unregistered (`DELETE /api/notifications/unregister-device`)
-5. Stale tokens (app uninstalled) are automatically cleaned up when FCM reports them as unregistered
+5. Stale tokens are automatically cleaned up when FCM reports them as unregistered
+
+---
+
+## Voice Architecture
+
+Voice chat uses a hybrid approach:
+
+1. **Peer-to-peer (default):** Direct WebRTC connections between users. Lowest latency, no server involvement in media.
+2. **SFU relay (automatic fallback):** If P2P ICE negotiation fails twice (or a user enables "Always use relay mode" in settings), voice transparently switches to a LiveKit SFU server. This handles restrictive firewalls, VPNs, and symmetric NAT.
+3. **End-to-end encryption:** All relay traffic is encrypted with AES-GCM-256 keys derived via PBKDF2 from a channel-specific passphrase. The relay server never sees plaintext audio or video.
+4. **Capacity:** P2P voice supports small groups (up to ~8 users). Beyond 8 participants, the call automatically upgrades to SFU relay mode. LiveKit rooms support up to 50 participants.
+
+Screen sharing and camera feeds work in both P2P and SFU modes with configurable quality presets (360p to 1080p for camera, quality/balanced/motion/high-motion for screen share).
+
+---
 
 ## Backend Development
 
 ### EF Core Migrations
 
-The backend auto-migrates on startup. This behavior will change (at some point) as it is [not recommended by Microsoft](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying?tabs=dotnet-core-cli#apply-migrations-at-runtime)
-
-To create a new migration:
+The backend auto-migrates on startup. To create a new migration:
 
 ```sh
 cd server/Abyss.Api
@@ -307,13 +467,14 @@ dotnet ef migrations add MigrationName
 
 ### Key Services
 
-| Service               | Purpose                                            |
-| --------------------- | -------------------------------------------------- |
-| `TokenService`        | JWT generation and TURN credential generation      |
-| `PermissionService`   | Bitfield permission checks against server roles    |
-| `VoiceStateService`   | Tracks voice channel membership and screen sharers |
-| `NotificationService` | Push notification dispatch                         |
-| `ChatHub`             | Single SignalR hub for all real-time communication |
+| Service | Purpose |
+|---|---|
+| `TokenService` | JWT generation and TURN credential generation |
+| `PermissionService` | Bitfield permission checks against server roles |
+| `VoiceStateService` | Tracks voice channel membership and screen sharers |
+| `LiveKitService` | LiveKit token generation for SFU relay |
+| `NotificationService` | Push notification dispatch via Firebase |
+| `ChatHub` | Single SignalR hub for all real-time communication |
 
 ### Upload Directories
 

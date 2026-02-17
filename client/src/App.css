@@ -2995,6 +2995,23 @@ body.window-hidden *::after {
   background: var(--danger);
 }
 
+/* Connection mode badge (P2P vs Relay) */
+.connection-mode-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.connection-mode-badge.sfu {
+  background: rgba(88, 101, 242, 0.2);
+  color: #8b9fff;
+}
+
 /* Loading state for voice buttons */
 .vc-btn.loading {
   opacity: 0.6;

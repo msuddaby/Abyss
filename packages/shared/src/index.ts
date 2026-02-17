@@ -9,6 +9,8 @@ export * from './types/index.js';
 export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken, ensureFreshToken } from './services/api.js';
 export { getConnection, startConnection, ensureConnected, stopConnection, suspendConnection, resetConnection, onReconnected } from './services/signalr.js';
 export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
+export { connectToLiveKit, disconnectFromLiveKit, sfuToggleMute, sfuSetDeafened, sfuSetUserVolume, sfuSetInputDevice, sfuPublishScreenShare, sfuUnpublishScreenShare, sfuPublishCamera, sfuUnpublishCamera, getSfuScreenStream, getSfuCameraStream, getSfuLocalCameraStream, getSfuLocalScreenStream, sfuUpdateScreenShareQuality, sfuUpdateCameraQuality, getLiveKitRoom, isInSfuMode } from './services/livekitService.js';
+export { deriveChannelKey, exportKeyBytes, clearChannelKey, clearAllKeys } from './services/e2eeKeyManager.js';
 export type { TurnCredentials } from './services/turn.js';
 export { showDesktopNotification, isElectron, navigateToNotification, setupNotificationClickListener } from './services/electronNotifications.js';
 
@@ -17,7 +19,7 @@ export { useAuthStore } from './stores/authStore.js';
 export { useServerStore } from './stores/serverStore.js';
 export { useMessageStore } from './stores/messageStore.js';
 export { useVoiceStore, hydrateVoiceStore } from './stores/voiceStore.js';
-export type { CameraQuality, ScreenShareQuality } from './stores/voiceStore.js';
+export type { CameraQuality, ScreenShareQuality, ConnectionMode } from './stores/voiceStore.js';
 export { usePresenceStore } from './stores/presenceStore.js';
 export { useUnreadStore } from './stores/unreadStore.js';
 export { useDmStore } from './stores/dmStore.js';

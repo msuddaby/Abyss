@@ -1,4 +1,4 @@
-# Abyss Caddyfile — adjust your.domain.com to your actual domain
+# Abyss Caddyfile — replace your.domain.com with your actual domain
 #
 # Caddy auto-provisions HTTPS via Let's Encrypt.
 # Build the frontend first: cd client && npm ci && npm run build
@@ -12,7 +12,7 @@ your.domain.com {
 		reverse_proxy localhost:5000
 	}
 
-	# SignalR hub (WebSocket upgrade handled automatically)
+	# SignalR hub (WebSocket upgrade handled automatically by Caddy)
 	handle /hubs/* {
 		reverse_proxy localhost:5000
 	}
@@ -20,6 +20,12 @@ your.domain.com {
 	# Uploaded files
 	handle /uploads/* {
 		reverse_proxy localhost:5000
+	}
+
+	# LiveKit WebSocket signaling (TLS terminated by Caddy)
+	handle /lk/* {
+		uri strip_prefix /lk
+		reverse_proxy localhost:7880
 	}
 
 	# Frontend SPA — serve built files with fallback to index.html
