@@ -483,11 +483,19 @@ public class ChatHub : Hub
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{channelId}");
     }
 
-    // Lightweight health check for clients — also serves as a presence heartbeat.
+    // Lightweight connection health check — does NOT refresh presence heartbeat
+    // so that PresenceMonitorService can detect idle users on all platforms.
     public string Ping()
     {
-        _lastHeartbeats[UserId] = DateTime.UtcNow;
         return "pong";
+    }
+
+    // Explicit presence heartbeat — clients call this when the user is actively
+    // interacting (mouse, keyboard, touch). Keeps the user's heartbeat fresh so
+    // PresenceMonitorService doesn't mark them as Away.
+    public void ActivityHeartbeat()
+    {
+        _lastHeartbeats[UserId] = DateTime.UtcNow;
     }
 
     public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)

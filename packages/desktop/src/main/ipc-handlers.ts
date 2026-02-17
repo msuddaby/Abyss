@@ -4,6 +4,7 @@ import { GlobalShortcutManager } from './global-shortcuts';
 import { AutoLaunchManager } from './auto-launch';
 import { showNotification } from './notifications';
 import { UpdateManager } from './update-manager';
+import { getLinuxIdleSeconds } from './linux-idle';
 
 const store = new Store();
 
@@ -51,9 +52,15 @@ export function setupIpcHandlers(
     return window.isFocused();
   });
 
-  // Get system-wide idle time in seconds
-  ipcMain.handle('get-system-idle-time', () => {
-    return powerMonitor.getSystemIdleTime();
+  // Get system-wide idle time in seconds (with D-Bus fallback on Linux Wayland)
+  ipcMain.handle('get-system-idle-time', async () => {
+    const electronIdle = powerMonitor.getSystemIdleTime();
+    if (electronIdle > 0) return electronIdle;
+    if (process.platform === 'linux') {
+      const dbusIdle = await getLinuxIdleSeconds();
+      if (dbusIdle !== null) return dbusIdle;
+    }
+    return 0;
   });
 
   // Show window (from tray or notification)

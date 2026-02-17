@@ -7,6 +7,7 @@ import { setupAppMenu } from './app-menu';
 import { UpdateManager } from './update-manager';
 import { AutoLaunchManager } from './auto-launch';
 import { installDesktopEntry } from './linux-desktop-integration';
+import { probeLinuxIdle, getLinuxIdleSeconds } from './linux-idle';
 import Store from 'electron-store';
 
 // Legacy Squirrel.Windows handler — only relevant if the app was installed via
@@ -274,9 +275,28 @@ function createWindow() {
   const IDLE_THRESHOLD_S = 10 * 60; // 10 minutes
   const IDLE_POLL_S = 30;
   let wasIdle = false;
+  let useDbusIdle = false;
 
-  const checkIdle = () => {
-    const idleSeconds = powerMonitor.getSystemIdleTime();
+  // On Linux, Electron's powerMonitor.getSystemIdleTime() often returns 0
+  // on Wayland. Probe for D-Bus idle interfaces (KDE/GNOME) as a fallback.
+  if (process.platform === 'linux') {
+    probeLinuxIdle().then((found) => { useDbusIdle = found; });
+  }
+
+  const getIdleSeconds = async (): Promise<number> => {
+    const electronIdle = powerMonitor.getSystemIdleTime();
+    // If Electron returns a meaningful value, use it
+    if (electronIdle > 0) return electronIdle;
+    // On Linux Wayland, try D-Bus
+    if (useDbusIdle) {
+      const dbusIdle = await getLinuxIdleSeconds();
+      if (dbusIdle !== null) return dbusIdle;
+    }
+    return 0;
+  };
+
+  const checkIdle = async () => {
+    const idleSeconds = await getIdleSeconds();
     const isIdle = idleSeconds >= IDLE_THRESHOLD_S;
     if (isIdle !== wasIdle) {
       wasIdle = isIdle;
@@ -284,8 +304,8 @@ function createWindow() {
     }
   };
 
-  const idleInterval = setInterval(checkIdle, IDLE_POLL_S * 1000);
-  checkIdle();
+  const idleInterval = setInterval(() => void checkIdle(), IDLE_POLL_S * 1000);
+  void checkIdle();
 
   // Screen lock is an immediate idle signal (don't wait for the next poll)
   powerMonitor.on('lock-screen', () => {

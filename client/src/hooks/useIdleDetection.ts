@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { useAuthStore, api, getApiBase, PresenceStatus, onReconnected } from '@abyss/shared';
+import { useAuthStore, api, getApiBase, PresenceStatus, onReconnected, getConnection } from '@abyss/shared';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+const IDLE_TIMEOUT_S = IDLE_TIMEOUT_MS / 1000;
+// How often to send ActivityHeartbeat to the server when user is active.
+// This keeps _lastHeartbeats fresh so PresenceMonitorService doesn't mark
+// the user as Away. Must be well under the server's 10-minute idle threshold.
+const HEARTBEAT_THROTTLE_MS = 5 * 60 * 1000;
 
 export function useIdleDetection() {
   const userId = useAuthStore((s) => s.user?.id);
@@ -32,6 +37,11 @@ export function useIdleDetection() {
     }
 
     let disposed = false;
+    let lastHeartbeatSent = 0;
+    // Track whether Electron's getSystemIdleTime() actually works.
+    // On Linux Wayland it always returns 0 — we detect this and fall back
+    // to the web timer. Once we see a value >= 5s, we know it works.
+    let systemIdleApiWorks = false;
 
     const updatePresence = async (status: number) => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
@@ -55,6 +65,25 @@ export function useIdleDetection() {
     const markAwayIfEligible = async () => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
       if (currentStatus !== PresenceStatus.Online) return;
+
+      // In Electron, check system-wide idle time before marking away.
+      // This prevents false-away when the user is active in another app
+      // (e.g. gaming). Skip the check if the API appears broken (Wayland).
+      if (systemIdleApiWorks && typeof window.electron?.getSystemIdleTime === 'function') {
+        try {
+          const sysIdleSec = await window.electron.getSystemIdleTime();
+          if (sysIdleSec < IDLE_TIMEOUT_S) {
+            // System is active — user is doing something else. Reset timer
+            // and send a heartbeat so the server doesn't mark us away either.
+            resetIdleTimer();
+            sendActivityHeartbeat();
+            return;
+          }
+        } catch {
+          // Fall through to mark away
+        }
+      }
+
       autoAwayRef.current = true;
       await updatePresence(PresenceStatus.Away);
     };
@@ -65,6 +94,50 @@ export function useIdleDetection() {
       autoAwayRef.current = false;
       await updatePresence(PresenceStatus.Online);
     };
+
+    // Send a presence heartbeat to the server so PresenceMonitorService knows
+    // the user is active. Throttled to avoid spamming on every mouse move.
+    const sendActivityHeartbeat = () => {
+      const now = Date.now();
+      if (now - lastHeartbeatSent < HEARTBEAT_THROTTLE_MS) return;
+      lastHeartbeatSent = now;
+      try {
+        const conn = getConnection();
+        if (conn.state === 'Connected') {
+          conn.invoke('ActivityHeartbeat').catch(() => {});
+        }
+      } catch {
+        // Connection not ready — ignore
+      }
+    };
+
+    // Probe whether Electron's getSystemIdleTime() works. On working systems
+    // (X11, macOS, Windows) it returns seconds since last input to ANY app.
+    // On broken systems (Wayland) it always returns 0. We probe a few times
+    // over 2 minutes — if we ever see >= 5s, we know it works.
+    let probeCount = 0;
+    const MAX_PROBES = 4;
+    let probeInterval: ReturnType<typeof setInterval> | null = null;
+
+    if (typeof window.electron?.getSystemIdleTime === 'function') {
+      probeInterval = setInterval(async () => {
+        if (disposed) { clearInterval(probeInterval!); return; }
+        probeCount++;
+        try {
+          const secs = await window.electron!.getSystemIdleTime();
+          if (secs >= 5) {
+            systemIdleApiWorks = true;
+            clearInterval(probeInterval!);
+            probeInterval = null;
+          }
+        } catch { /* ignore */ }
+        if (probeCount >= MAX_PROBES && !systemIdleApiWorks) {
+          // API appears broken — web timer will be the sole idle mechanism
+          clearInterval(probeInterval!);
+          probeInterval = null;
+        }
+      }, 30_000);
+    }
 
     // Electron: idle detection runs in the main process (immune to renderer
     // throttling from macOS App Nap / screen lock). We just listen for its signal.
@@ -84,20 +157,20 @@ export function useIdleDetection() {
 
     // Reset the idle timer (any activity signal, including weak ones like scroll/focus).
     const resetIdleTimer = () => {
-      if (!hasMainProcessIdle) {
-        if (idleTimerRef.current) {
-          clearTimeout(idleTimerRef.current);
-        }
-        idleTimerRef.current = setTimeout(() => {
-          void markAwayIfEligible();
-        }, IDLE_TIMEOUT_MS);
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
       }
+      idleTimerRef.current = setTimeout(() => {
+        void markAwayIfEligible();
+      }, IDLE_TIMEOUT_MS);
     };
 
-    // Strong activity: real user interaction — restores from auto-away AND resets timer.
+    // Strong activity: real user interaction — restores from auto-away,
+    // resets idle timer, and sends a heartbeat to the server.
     const handleStrongActivity = () => {
       void restoreIfAutoAway();
       resetIdleTimer();
+      sendActivityHeartbeat();
     };
 
     // Weak activity: can fire without user interaction (programmatic scroll,
@@ -124,13 +197,16 @@ export function useIdleDetection() {
       }
     });
 
-    // Start the web idle timer (no-op path for Electron since handleActivity
-    // skips the timer when hasMainProcessIdle is true)
-    if (!hasMainProcessIdle) {
-      idleTimerRef.current = setTimeout(() => {
-        void markAwayIfEligible();
-      }, IDLE_TIMEOUT_MS);
-    }
+    // Always start the web idle timer. On Electron with working powerMonitor
+    // (macOS/Windows/X11), markAwayIfEligible checks system idle time and
+    // resets the timer if the system is still active. On broken platforms
+    // (Wayland) or in the browser, this timer is the primary idle mechanism.
+    idleTimerRef.current = setTimeout(() => {
+      void markAwayIfEligible();
+    }, IDLE_TIMEOUT_MS);
+
+    // Send an initial heartbeat so the server knows we're active right now
+    sendActivityHeartbeat();
 
     return () => {
       disposed = true;
@@ -142,6 +218,7 @@ export function useIdleDetection() {
         clearTimeout(idleTimerRef.current);
         idleTimerRef.current = null;
       }
+      if (probeInterval) clearInterval(probeInterval);
       unsubIdle?.();
       unsubReconnect();
     };
