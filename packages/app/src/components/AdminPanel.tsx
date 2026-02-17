@@ -4,7 +4,7 @@ import {
   ActivityIndicator, StyleSheet, type ViewStyle, type TextStyle,
 } from 'react-native';
 import { useAuthStore, useAppConfigStore, api } from '@abyss/shared';
-import type { AdminOverview, AdminServer, AdminUser, AdminSettings, InviteCode } from '@abyss/shared';
+import type { AdminOverview, AdminServer, AdminUser, AdminSettings, Invite } from '@abyss/shared';
 import Modal from './Modal';
 import { useUiStore } from '../stores/uiStore';
 import { colors, spacing, borderRadius, fontSize } from '../theme/tokens';
@@ -134,7 +134,7 @@ export default function AdminPanel() {
     }
   };
 
-  const createInviteCode = async () => {
+  const createInvite = async () => {
     setCreatingCode(true);
     setError(null);
     setNewCode(null);
@@ -143,7 +143,7 @@ export default function AdminPanel() {
       const parsedMax = Number(maxUses);
       if (!Number.isNaN(parsedMax) && parsedMax > 0) payload.maxUses = parsedMax;
       const res = await api.post('/admin/invite-codes', payload);
-      const created: InviteCode = res.data;
+      const created: Invite = res.data;
       setSettings((prev) =>
         prev ? { ...prev, codes: [created, ...prev.codes] } : prev,
       );
@@ -198,7 +198,7 @@ export default function AdminPanel() {
     </View>
   );
 
-  const renderCodeItem = ({ item }: { item: InviteCode }) => (
+  const renderCodeItem = ({ item }: { item: Invite }) => (
     <View style={styles.codeItem}>
       <View style={{ flex: 1 }}>
         <Text style={styles.codeText} selectable>{item.code}</Text>
@@ -381,7 +381,7 @@ export default function AdminPanel() {
               />
               <Pressable
                 style={[styles.btnPrimary, creatingCode && styles.btnDisabled]}
-                onPress={createInviteCode}
+                onPress={createInvite}
                 disabled={creatingCode}
               >
                 <Text style={styles.btnPrimaryText}>

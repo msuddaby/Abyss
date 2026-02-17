@@ -216,6 +216,13 @@ export interface ConnectionStats {
   jitter: number | null;
 }
 
+export interface CandidateStats {
+  hostCount: number;
+  srflxCount: number;
+  relayCount: number;
+  protocol: 'udp' | 'tcp' | 'mixed' | 'unknown';
+}
+
 export interface PeerDebugInfo {
   userId: string;
   iceState: RTCIceConnectionState;
@@ -226,6 +233,10 @@ export interface PeerDebugInfo {
   jitter: number | null;
   bytesReceived: number;
   bytesSent: number;
+  localCandidateType?: string;
+  remoteCandidateType?: string;
+  transportProtocol?: string;
+  consent?: 'granted' | 'checking' | 'unknown';
 }
 
 export interface DetailedConnectionStats extends ConnectionStats {
@@ -233,11 +244,23 @@ export interface DetailedConnectionStats extends ConnectionStats {
   iceConnectionState: string;
   activePeerCount: number;
   perPeerStats: PeerDebugInfo[];
+  natType: 'open' | 'cone' | 'symmetric' | 'unknown';
+  localCandidates: CandidateStats;
+  iceGatheringComplete: boolean;
 }
 
 let cachedStats: ConnectionStats = { roundTripTime: null, packetLoss: null, jitter: null };
 let cachedDetailedStats: DetailedConnectionStats | null = null;
 let statsInterval: ReturnType<typeof setInterval> | null = null;
+
+// Track gathered ICE candidates for NAT detection
+interface CandidateInfo {
+  type: string;
+  protocol: string;
+  hasRelatedAddress: boolean;
+}
+const gatheredCandidates: Map<string, CandidateInfo[]> = new Map(); // peerId → candidates
+let localCandidateSummary: CandidateStats = { hostCount: 0, srflxCount: 0, relayCount: 0, protocol: 'unknown' };
 
 // Zombie track detection: after ICE restart, monitor bytesReceived to detect
 // tracks that appear live but stop delivering audio data.
@@ -253,6 +276,59 @@ export function getConnectionStats(): ConnectionStats {
 
 export function getDetailedConnectionStats(): DetailedConnectionStats | null {
   return cachedDetailedStats;
+}
+
+/**
+ * Detect NAT type based on gathered ICE candidates pattern.
+ * - Open: Host candidates work directly
+ * - Cone: Consistent srflx mapping (same public address for different destinations)
+ * - Symmetric: Different srflx for each destination (worst for P2P)
+ */
+function detectNatType(): 'open' | 'cone' | 'symmetric' | 'unknown' {
+  const allCandidates = Array.from(gatheredCandidates.values()).flat();
+  if (allCandidates.length === 0) return 'unknown';
+
+  const hasHost = allCandidates.some(c => c.type === 'host');
+  const hasSrflx = allCandidates.some(c => c.type === 'srflx');
+  const hasRelay = allCandidates.some(c => c.type === 'relay');
+
+  // If we only have host candidates and they work, likely open internet
+  if (hasHost && !hasSrflx && !hasRelay) {
+    return 'open';
+  }
+
+  // If we have srflx candidates, we're behind NAT
+  if (hasSrflx) {
+    // Cone NAT is most common - true symmetric detection would require
+    // comparing srflx candidates across multiple peers to see if the
+    // public address changes per destination
+    return 'cone';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Compute summary of local ICE candidates gathered across all peers.
+ */
+function computeLocalCandidateSummary(): CandidateStats {
+  const allCandidates = Array.from(gatheredCandidates.values()).flat();
+  const hostCount = allCandidates.filter(c => c.type === 'host').length;
+  const srflxCount = allCandidates.filter(c => c.type === 'srflx').length;
+  const relayCount = allCandidates.filter(c => c.type === 'relay').length;
+
+  const protocols = new Set(allCandidates.map(c => c.protocol));
+  let protocol: 'udp' | 'tcp' | 'mixed' | 'unknown' = 'unknown';
+  if (protocols.size === 0) {
+    protocol = 'unknown';
+  } else if (protocols.size === 1) {
+    const p = Array.from(protocols)[0];
+    protocol = (p === 'udp' || p === 'tcp') ? p : 'unknown';
+  } else {
+    protocol = 'mixed';
+  }
+
+  return { hostCount, srflxCount, relayCount, protocol };
 }
 
 function startStatsCollection() {
@@ -274,6 +350,10 @@ function startStatsCollection() {
         let peerLoss: number | null = null;
         let peerJitter: number | null = null;
         let peerConnectionType: 'direct' | 'relay' | 'unknown' = 'unknown';
+        let localCandidateType: string | undefined;
+        let remoteCandidateType: string | undefined;
+        let transportProtocol: string | undefined;
+        let consent: 'granted' | 'checking' | 'unknown' = 'unknown';
 
         stats.forEach((report) => {
           if (report.type === "candidate-pair" && report.state === "succeeded") {
@@ -290,6 +370,12 @@ function startStatsCollection() {
             const localCandidate = localCandidateId ? stats.get(localCandidateId) : null;
             const remoteCandidate = remoteCandidateId ? stats.get(remoteCandidateId) : null;
 
+            // Store candidate types for debugging (no IP addresses)
+            localCandidateType = localCandidate?.candidateType;
+            remoteCandidateType = remoteCandidate?.candidateType;
+            transportProtocol = localCandidate?.protocol;
+
+            // Determine connection type category
             if (localCandidate?.candidateType === 'relay' || remoteCandidate?.candidateType === 'relay') {
               peerConnectionType = 'relay';
             } else if (localCandidate?.candidateType === 'host' && remoteCandidate?.candidateType === 'host') {
@@ -298,6 +384,11 @@ function startStatsCollection() {
               peerConnectionType = 'direct'; // STUN-assisted is still P2P
             }
             connectionTypes.add(peerConnectionType);
+
+            // Check consent status for connectivity
+            if (report.consentRequestsSent != null) {
+              consent = report.responsesReceived > 0 ? 'granted' : 'checking';
+            }
           }
 
           if (report.type === "inbound-rtp" && report.kind === "audio") {
@@ -339,6 +430,10 @@ function startStatsCollection() {
           jitter: peerJitter,
           bytesReceived: peerBytesReceived,
           bytesSent: peerBytesSent,
+          localCandidateType,
+          remoteCandidateType,
+          transportProtocol,
+          consent,
         });
 
         // Zombie track detection: if ICE is connected but bytesReceived isn't
@@ -349,15 +444,27 @@ function startStatsCollection() {
         prevBytesReceived.set(peerId, peerBytesReceived);
 
         if ((iceState === "connected" || iceState === "completed") && prev != null && peerBytesReceived === prev) {
+          // Check if remote user is muted — no data is expected, so skip zombie detection
+          const zombieChannelId = useVoiceStore.getState().currentChannelId;
+          if (zombieChannelId) {
+            const channelUsers = useServerStore.getState().voiceChannelUsers.get(zombieChannelId);
+            const peerVoiceState = channelUsers?.get(peerId);
+            if (peerVoiceState && (peerVoiceState.isMuted || peerVoiceState.isDeafened || peerVoiceState.isServerMuted || peerVoiceState.isServerDeafened)) {
+              // Remote user is muted/deafened — bytesReceived stall is expected, not a zombie
+              zombieStaleCount.delete(peerId);
+              continue;
+            }
+          }
+
           const count = (zombieStaleCount.get(peerId) ?? 0) + 1;
           zombieStaleCount.set(peerId, count);
           if (count >= ZOMBIE_STALE_THRESHOLD) {
             const lastRecreate = lastZombieRecreate.get(peerId) ?? 0;
             if (Date.now() - lastRecreate < ZOMBIE_COOLDOWN_MS) {
-              console.warn(`[zombie] Skipping recreation for ${peerId}, cooldown active`);
+              console.warn(`[zombie] Skipping recreation for ${peerId}, cooldown active (${Math.round((ZOMBIE_COOLDOWN_MS - (Date.now() - lastRecreate)) / 1000)}s remaining)`);
               zombieStaleCount.delete(peerId);
             } else {
-              console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer`);
+              console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer | bytesReceived=${peerBytesReceived} bytesSent=${peerBytesSent} connectionType=${peerConnectionType} local=${localCandidateType} remote=${remoteCandidateType} proto=${transportProtocol}`);
               zombieStaleCount.delete(peerId);
               prevBytesReceived.delete(peerId);
               lastZombieRecreate.set(peerId, Date.now());
@@ -368,6 +475,12 @@ function startStatsCollection() {
           }
         } else {
           zombieStaleCount.delete(peerId);
+          // Log recovery after a zombie recreation so we can confirm the fix worked
+          if (lastZombieRecreate.has(peerId) && prev != null && peerBytesReceived > prev) {
+            const elapsed = Math.round((Date.now() - lastZombieRecreate.get(peerId)!) / 1000);
+            console.log(`[zombie] Audio recovered for ${peerId} — ${peerBytesReceived - prev} new bytes received ${elapsed}s after recreation`);
+            lastZombieRecreate.delete(peerId);
+          }
         }
       } catch {
         // peer may have closed
@@ -390,6 +503,15 @@ function startStatsCollection() {
       overallConnectionType = 'mixed';
     }
 
+    // Compute NAT type and candidate summary
+    const natType = detectNatType();
+    localCandidateSummary = computeLocalCandidateSummary();
+
+    // Check if ICE gathering is complete (all peers have gathered)
+    const iceGatheringComplete = Array.from(peers.values()).every(
+      pc => pc.iceGatheringState === 'complete'
+    );
+
     // Store detailed stats
     cachedDetailedStats = {
       ...cachedStats,
@@ -397,6 +519,9 @@ function startStatsCollection() {
       iceConnectionState: peers.size > 0 ? Array.from(peers.values())[0].iceConnectionState : 'new',
       activePeerCount: peers.size,
       perPeerStats: Array.from(perPeerData.values()),
+      natType,
+      localCandidates: localCandidateSummary,
+      iceGatheringComplete,
     };
   }, 3000);
 }
@@ -1072,6 +1197,16 @@ async function recreatePeer(peerId: string) {
   const hadScreenTracks = screenTrackSenders.has(peerId);
   await enqueueSignaling(peerId, async () => {
     console.warn(`[recreate] Recreating peer connection for ${peerId} (hadScreenTracks=${hadScreenTracks}, hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream}, hasScreenStream=${!!screenStream})`);
+    // Tell the remote peer to close their existing PC so they create a fresh
+    // one when our offer arrives.  Without this, the remote side renegotiates
+    // on a stale PC whose DTLS/SRTP pipeline may not restart properly,
+    // causing one-directional audio (zombie audio that never resolves).
+    const preConn = getConnection();
+    await preConn.invoke(
+      "SendSignal",
+      peerId,
+      JSON.stringify({ type: "peer-reset" }),
+    );
     const pc = createPeerConnection(peerId, { preserveZombieRecreateCooldown: true });
     const outStream = getPeerStream();
     if (outStream) {
@@ -1503,10 +1638,25 @@ function createPeerConnection(
 
   pc.onicecandidate = (event) => {
     if (event.candidate) {
+      const c = event.candidate;
+
+      // Track candidate for NAT detection (no IP addresses stored)
+      if (!gatheredCandidates.has(peerId)) {
+        gatheredCandidates.set(peerId, []);
+      }
+      gatheredCandidates.get(peerId)!.push({
+        type: c.type || 'unknown',
+        protocol: c.protocol || 'unknown',
+        hasRelatedAddress: !!(c.relatedAddress || c.relatedPort),
+      });
+
       const conn = getConnection();
       conn
         .invoke("SendSignal", peerId, JSON.stringify(event.candidate.toJSON()))
         .catch((err) => console.error("Failed to send ICE candidate:", err));
+    } else {
+      // ICE gathering complete for this peer
+      console.log(`[ICE] Gathering complete for ${peerId}`);
     }
   };
   pc.onicecandidateerror = (event) => {
@@ -1643,6 +1793,7 @@ function closePeer(peerId: string, options: ClosePeerOptions = {}) {
   useVoiceStore.getState().removeActiveSharer(peerId);
   useVoiceStore.getState().removeActiveCamera(peerId);
   pendingCandidates.delete(peerId);
+  gatheredCandidates.delete(peerId);
   clearPendingTrackStateForPeer(peerId);
   screenTrackSenders.delete(peerId);
   cameraTrackSenders.delete(peerId);
@@ -1689,6 +1840,7 @@ function cleanupAll() {
   screenVideoStreams.clear();
   cameraVideoStreams.clear();
   pendingCandidates.clear();
+  gatheredCandidates.clear();
   clearAllPendingTrackState();
   screenTrackSenders.clear();
   cameraTrackSenders.clear();
@@ -1808,8 +1960,8 @@ async function startScreenShareInternal() {
         video: {
           mandatory: {
             chromeMediaSource: 'desktop',
+            maxFrameRate: screenPreset.frameRate,
           },
-          frameRate: { ideal: screenPreset.frameRate },
         } as any,
         audio: false,
       });
@@ -1918,7 +2070,13 @@ async function startCameraInternal() {
       height: { ideal: camPreset.height },
       frameRate: { ideal: camPreset.frameRate },
     };
-    if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
+
+    // On Capacitor (mobile), use facingMode for reliable front/back switching
+    // On desktop, use deviceId for specific camera selection
+    const isNativeMobile = (await import('@capacitor/core')).Capacitor.isNativePlatform();
+    if (isNativeMobile) {
+      videoConstraints.facingMode = { ideal: voiceState.cameraFacingMode };
+    } else if (voiceState.cameraDeviceId && voiceState.cameraDeviceId !== "default") {
       videoConstraints.deviceId = { exact: voiceState.cameraDeviceId };
     }
     try {
@@ -2011,6 +2169,19 @@ async function stopCameraInternal() {
   } finally {
     voiceState.setCameraLoading(false);
   }
+}
+
+async function switchCameraInternal() {
+  const voiceState = useVoiceStore.getState();
+  if (!voiceState.isCameraOn) return;
+
+  // Toggle between front (user) and back (environment) camera
+  const newFacingMode = voiceState.cameraFacingMode === 'user' ? 'environment' : 'user';
+  voiceState.setCameraFacingMode(newFacingMode);
+
+  // Restart camera with new facing mode
+  await stopCameraInternal();
+  await startCameraInternal();
 }
 
 async function addCameraTrackToPeer(
@@ -2398,6 +2569,17 @@ function setupSignalRListeners() {
 
     const data = JSON.parse(signal);
 
+    if (data.type === "peer-reset") {
+      // Remote peer is about to recreate their PeerConnection (e.g. zombie
+      // recovery).  Close our existing PC so the incoming offer creates a
+      // fresh one on both sides — prevents stale DTLS/SRTP state that causes
+      // one-directional audio.
+      const existingPc = peers.get(fromUserId);
+      console.log(`[peer-reset] ${fromUserId} requested peer reset, closing existing PC (exists=${!!existingPc}${existingPc ? ` connectionState=${existingPc.connectionState} iceState=${existingPc.iceConnectionState} senders=${existingPc.getSenders().length} receivers=${existingPc.getReceivers().length}` : ""})`);
+      closePeer(fromUserId);
+      return;
+    }
+
     if (data.type === "track-info") {
       if (
         data.trackType !== "camera" &&
@@ -2435,6 +2617,7 @@ function setupSignalRListeners() {
         let pc = peers.get(fromUserId);
         if (pc && pc.signalingState !== "closed") {
           // Glare detection: both sides sent offers simultaneously
+          let didRollback = false;
           if (pc.signalingState === "have-local-offer") {
             // Deterministic tiebreaker — "polite" peer yields its offer
             const isPolite = currentUser!.id > fromUserId;
@@ -2446,6 +2629,7 @@ function setupSignalRListeners() {
             console.log(`[glare] Rolling back our offer, will answer remote offer instead`);
             await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
             console.log(`[glare] Rollback complete, signalingState=${pc.signalingState}`);
+            didRollback = true;
           }
 
           // Renegotiation: reuse existing connection — flush stale candidates
@@ -2467,6 +2651,29 @@ function setupSignalRListeners() {
               fromUserId,
               JSON.stringify({ type: "answer", sdp: answer.sdp }),
             );
+
+            // After glare rollback, our rolled-back offer may have contained
+            // camera/screen tracks that the remote offer didn't include.
+            // Re-offer so those senders get negotiated.
+            if (didRollback) {
+              const hasScreenSenders = screenTrackSenders.has(fromUserId);
+              const hasCameraSender = cameraTrackSenders.has(fromUserId);
+              if (hasScreenSenders || hasCameraSender) {
+                console.log(`[glare] Scheduling renegotiation for ${fromUserId} to restore tracks lost in rollback (screen=${hasScreenSenders}, camera=${hasCameraSender})`);
+                void enqueueSignaling(fromUserId, async () => {
+                  const rePc = peers.get(fromUserId);
+                  if (!rePc || rePc.signalingState !== "stable") return;
+                  const reOffer = await rePc.createOffer();
+                  await rePc.setLocalDescription(reOffer);
+                  await conn.invoke(
+                    "SendSignal",
+                    fromUserId,
+                    JSON.stringify({ type: "offer", sdp: reOffer.sdp }),
+                  );
+                  console.log(`[glare] Renegotiation offer sent to ${fromUserId}`);
+                }).catch(console.error);
+              }
+            }
           } catch (err) {
             console.warn(`Renegotiation failed for ${fromUserId}, recreating:`, err);
             // SDP state is likely corrupt — rebuild with a fresh connection
@@ -3231,6 +3438,10 @@ export function useWebRTC() {
     await stopCameraInternal();
   }, []);
 
+  const switchCamera = useCallback(async () => {
+    await switchCameraInternal();
+  }, []);
+
   // Send periodic heartbeat + reconcile WebRTC peers against server state
   useEffect(() => {
     if (!currentChannelId) return;
@@ -3313,5 +3524,5 @@ export function useWebRTC() {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, []);
 
-  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera };
+  return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera, switchCamera };
 }

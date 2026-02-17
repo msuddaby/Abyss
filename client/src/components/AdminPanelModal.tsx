@@ -1,16 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from '@abyss/shared';
-import type { AdminOverview, AdminServer, AdminUser, AdminSettings, InviteCode, CosmeticItem, UserCosmetic as UserCosmeticT } from '@abyss/shared';
+import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, useToastStore } from '@abyss/shared';
+import type { AdminOverviewStats, AdminServer, AdminUser, AdminSettings, Invite, CosmeticItem, UserCosmetic as UserCosmeticT } from '@abyss/shared';
 import SettingsModal from './SettingsModal';
 import type { SettingsTab } from './SettingsModal';
+import ConfirmModal from './ConfirmModal';
 
 type TabKey = 'overview' | 'servers' | 'users' | 'settings' | 'cosmetics';
+
+const PAGE_SIZE = 50;
 
 export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const isSysadmin = useAuthStore((s) => s.isSysadmin);
   const [tab, setTab] = useState<TabKey>('overview');
-  const [data, setData] = useState<AdminOverview | null>(null);
+  const [stats, setStats] = useState<AdminOverviewStats | null>(null);
+  const [servers, setServers] = useState<AdminServer[]>([]);
+  const [serversTotalCount, setServersTotalCount] = useState(0);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [usersTotalCount, setUsersTotalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serverQuery, setServerQuery] = useState('');
@@ -24,6 +31,18 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [savingMaxMessageLength, setSavingMaxMessageLength] = useState(false);
   const [maxMessageLengthInput, setMaxMessageLengthInput] = useState<string>('');
   const setMaxMessageLength = useAppConfigStore((s) => s.setMaxMessageLength);
+
+  // Pagination state
+  const [serverPage, setServerPage] = useState(0);
+  const [userPage, setUserPage] = useState(0);
+  const [serverSort, setServerSort] = useState<{ field: string; order: 'asc' | 'desc' }>({
+    field: 'name',
+    order: 'asc',
+  });
+  const [userSort, setUserSort] = useState<{ field: string; order: 'asc' | 'desc' }>({
+    field: 'username',
+    order: 'asc',
+  });
 
   // Cosmetics state
   const [cosmeticItems, setCosmeticItems] = useState<CosmeticItem[]>([]);
@@ -40,6 +59,17 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [userCosmeticResults, setUserCosmeticResults] = useState<UserCosmeticT[]>([]);
   const [userCosmeticTarget, setUserCosmeticTarget] = useState<AdminUser | null>(null);
 
+  // Delete confirmations
+  const [serverToDelete, setServerToDelete] = useState<AdminServer | null>(null);
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
+  const [codeToDelete, setCodeToDelete] = useState<Invite | null>(null);
+
+  // Transfer ownership
+  const [transferOwnershipServer, setTransferOwnershipServer] = useState<AdminServer | null>(null);
+  const [ownershipSearchQuery, setOwnershipSearchQuery] = useState('');
+  const [ownershipSearchResults, setOwnershipSearchResults] = useState<AdminUser[]>([]);
+  const [ownershipDropdownOpen, setOwnershipDropdownOpen] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -48,11 +78,55 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
         api.get('/admin/overview'),
         api.get('/admin/settings'),
       ]);
-      setData(overviewRes.data);
+      setStats(overviewRes.data);
       setSettings(settingsRes.data);
       setMaxMessageLengthInput(String(settingsRes.data.maxMessageLength ?? 4000));
     } catch (err: any) {
       setError(err?.response?.data || 'Failed to load admin overview.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadServers = async (page: number, search?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        offset: String(page * PAGE_SIZE),
+        limit: String(PAGE_SIZE),
+        sortBy: serverSort.field,
+        sortOrder: serverSort.order,
+      });
+      if (search) params.set('search', search);
+
+      const res = await api.get(`/admin/servers?${params}`);
+      setServers(res.data.servers);
+      setServersTotalCount(res.data.totalCount);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to load servers.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadUsers = async (page: number, search?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        offset: String(page * PAGE_SIZE),
+        limit: String(PAGE_SIZE),
+        sortBy: userSort.field,
+        sortOrder: userSort.order,
+      });
+      if (search) params.set('search', search);
+
+      const res = await api.get(`/admin/users?${params}`);
+      setUsers(res.data.users);
+      setUsersTotalCount(res.data.totalCount);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to load users.');
     } finally {
       setLoading(false);
     }
@@ -64,24 +138,45 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
     }
   }, [isSysadmin]);
 
-  const filteredServers = useMemo(() => {
-    if (!data?.servers) return [] as AdminServer[];
-    const q = serverQuery.trim().toLowerCase();
-    if (!q) return data.servers;
-    return data.servers.filter((s) => s.name.toLowerCase().includes(q) || s.id.toLowerCase().includes(q) || s.ownerId.toLowerCase().includes(q));
-  }, [data, serverQuery]);
+  useEffect(() => {
+    if (tab === 'servers') loadServers(serverPage, serverQuery);
+  }, [tab, serverPage, serverSort]);
 
-  const filteredUsers = useMemo(() => {
-    if (!data?.users) return [] as AdminUser[];
-    const q = userQuery.trim().toLowerCase();
-    if (!q) return data.users;
-    return data.users.filter((u) => {
-      return u.username.toLowerCase().includes(q)
-        || u.displayName.toLowerCase().includes(q)
-        || u.id.toLowerCase().includes(q)
-        || (u.email || '').toLowerCase().includes(q);
+  useEffect(() => {
+    if (tab === 'users') loadUsers(userPage, userQuery);
+  }, [tab, userPage, userSort]);
+
+  // Debounced search
+  useEffect(() => {
+    if (tab !== 'servers') return;
+    const timer = setTimeout(() => {
+      setServerPage(0);
+      loadServers(0, serverQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [serverQuery]);
+
+  useEffect(() => {
+    if (tab !== 'users') return;
+    const timer = setTimeout(() => {
+      setUserPage(0);
+      loadUsers(0, userQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [userQuery]);
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    useToastStore.getState().addToast(`${label} copied`, 'success', 2000);
+  };
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
     });
-  }, [data, userQuery]);
+  };
 
   const updateInviteOnly = async (enabled: boolean) => {
     if (!settings) return;
@@ -97,7 +192,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const createInviteCode = async () => {
+  const createInvite = async () => {
     setCreatingCode(true);
     setError(null);
     setNewCode(null);
@@ -107,7 +202,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       if (!Number.isNaN(parsedMax) && parsedMax > 0) payload.maxUses = parsedMax;
       if (expiresAt) payload.expiresAt = new Date(expiresAt).toISOString();
       const res = await api.post('/admin/invite-codes', payload);
-      const created: InviteCode = res.data;
+      const created: Invite = res.data;
       setSettings((prev) => prev ? { ...prev, codes: [created, ...prev.codes] } : prev);
       setNewCode(created.code);
       setMaxUses('');
@@ -254,15 +349,94 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
     } catch { setUserCosmeticResults([]); }
   };
 
-  const handleSearchUserCosmetics = () => {
+  const handleSearchUserCosmetics = async () => {
     const q = userCosmeticSearch.trim().toLowerCase();
-    if (!q || !data?.users) return;
-    const found = data.users.find((u) => u.username.toLowerCase() === q || u.id === q || u.displayName.toLowerCase() === q);
+    if (!q) return;
+
+    // Search in current users list first
+    const found = users.find((u) => u.username.toLowerCase() === q || u.id === q || u.displayName.toLowerCase() === q);
     if (found) {
       setUserCosmeticTarget(found);
       loadUserCosmetics(found.id);
-    } else {
+      return;
+    }
+
+    // If not found, search via API
+    try {
+      const res = await api.get(`/admin/users?search=${encodeURIComponent(q)}&limit=1`);
+      if (res.data.users && res.data.users.length > 0) {
+        setUserCosmeticTarget(res.data.users[0]);
+        loadUserCosmetics(res.data.users[0].id);
+      } else {
+        setError('User not found.');
+      }
+    } catch {
       setError('User not found.');
+    }
+  };
+
+  const handleDeleteServer = async (server: AdminServer) => {
+    setError(null);
+    try {
+      await api.delete(`/admin/servers/${server.id}`);
+      useToastStore.getState().addToast('Server deleted successfully', 'success');
+      setServerToDelete(null);
+      loadServers(serverPage, serverQuery);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to delete server.');
+    }
+  };
+
+  const handleDeleteUser = async (user: AdminUser) => {
+    setError(null);
+    try {
+      await api.delete(`/admin/users/${user.id}`);
+      useToastStore.getState().addToast('User deleted successfully', 'success');
+      setUserToDelete(null);
+      loadUsers(userPage, userQuery);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to delete user.');
+    }
+  };
+
+  const handleDeleteInvite = async (code: Invite) => {
+    setError(null);
+    try {
+      await api.delete(`/admin/invite-codes/${code.id}`);
+      useToastStore.getState().addToast('Invite code deleted', 'success');
+      setSettings((prev) => prev ? { ...prev, codes: prev.codes.filter(c => c.id !== code.id) } : prev);
+      setCodeToDelete(null);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to delete code.');
+    }
+  };
+
+  const handleTransferOwnership = async (newOwnerId: string) => {
+    if (!transferOwnershipServer) return;
+    setError(null);
+    try {
+      await api.post(`/admin/servers/${transferOwnershipServer.id}/transfer-owner`, { newOwnerId });
+      useToastStore.getState().addToast('Ownership transferred', 'success');
+      setTransferOwnershipServer(null);
+      setOwnershipSearchQuery('');
+      setOwnershipSearchResults([]);
+      loadServers(serverPage, serverQuery);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to transfer ownership.');
+    }
+  };
+
+  const searchUsersForOwnership = async (query: string) => {
+    if (!query.trim()) {
+      setOwnershipSearchResults([]);
+      return;
+    }
+
+    try {
+      const res = await api.get(`/admin/users?search=${encodeURIComponent(query)}&limit=10`);
+      setOwnershipSearchResults(res.data.users || []);
+    } catch {
+      setOwnershipSearchResults([]);
     }
   };
 
@@ -278,6 +452,18 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
     }
   }, [selectedCosmetic?.id]);
 
+  // Debounced user search for ownership transfer
+  useEffect(() => {
+    if (!ownershipSearchQuery.trim()) {
+      setOwnershipSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      searchUsersForOwnership(ownershipSearchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [ownershipSearchQuery]);
+
   const filteredCosmetics = useMemo(() => {
     let items = cosmeticItems;
     if (cosmeticTypeFilter >= 0) items = items.filter((c) => c.type === cosmeticTypeFilter);
@@ -288,11 +474,11 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
 
   const assignUserResults = useMemo(() => {
     const q = assignUserQuery.trim().toLowerCase();
-    if (!q || !data?.users) return [];
-    return data.users.filter((u) =>
+    if (!q || users.length === 0) return [];
+    return users.filter((u) =>
       u.username.toLowerCase().includes(q) || u.displayName.toLowerCase().includes(q)
     ).slice(0, 8);
-  }, [data, assignUserQuery]);
+  }, [users, assignUserQuery]);
 
   const renderCosmeticPreview = (cssData: string, type: number, name?: string) => {
     if (type === CosmeticType.Nameplate) {
@@ -349,89 +535,231 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       headerExtra={<button className="btn-secondary" onClick={load} disabled={loading} style={{ padding: '6px 12px', fontSize: 13 }}>Refresh</button>}
     >
           {error && <div className="admin-error">{error}</div>}
-            {loading && !data && (
+            {loading && !stats && (
               <div className="admin-loading">Loading admin data...</div>
             )}
 
-            {!loading && data && tab === 'overview' && (
+            {!loading && stats && tab === 'overview' && (
               <div className="admin-overview">
                 <div className="us-card admin-metric">
                   <div className="us-card-title">Servers</div>
-                  <div className="admin-metric-value">{data.servers.length}</div>
+                  <div className="admin-metric-value">{stats.serverCount}</div>
                 </div>
                 <div className="us-card admin-metric">
                   <div className="us-card-title">Users</div>
-                  <div className="admin-metric-value">{data.users.length}</div>
+                  <div className="admin-metric-value">{stats.userCount}</div>
+                </div>
+                <div className="us-card admin-metric">
+                  <div className="us-card-title">Messages</div>
+                  <div className="admin-metric-value">{stats.messageCount}</div>
                 </div>
               </div>
             )}
 
-            {!loading && data && tab === 'servers' && (
+            {!loading && tab === 'servers' && (
               <div className="admin-section">
                 <div className="us-card">
                   <div className="admin-search">
                     <input
                       type="text"
-                      placeholder="Search servers by name, id, owner id"
+                      placeholder="Search servers by name, owner, id..."
                       value={serverQuery}
                       onChange={(e) => setServerQuery(e.target.value)}
                     />
-                    <span className="admin-count">{filteredServers.length} results</span>
+                    <span className="admin-count">{serversTotalCount} total</span>
+                  </div>
+
+                  <div className="admin-sort-row">
+                    {[
+                      { field: 'name', label: 'Name' },
+                      { field: 'members', label: 'Members' },
+                      { field: 'channels', label: 'Channels' },
+                      { field: 'created', label: 'Created' },
+                    ].map((sort) => (
+                      <button
+                        key={sort.field}
+                        className={`admin-sort-btn ${serverSort.field === sort.field ? 'active' : ''}`}
+                        onClick={() => {
+                          setServerSort({
+                            field: sort.field,
+                            order:
+                              serverSort.field === sort.field && serverSort.order === 'asc'
+                                ? 'desc'
+                                : 'asc',
+                          });
+                        }}
+                      >
+                        {sort.label}{' '}
+                        {serverSort.field === sort.field && (serverSort.order === 'asc' ? '↑' : '↓')}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
                 <div className="admin-table">
                   <div className="admin-table-header">
                     <span>Name</span>
                     <span>Owner</span>
                     <span>Members</span>
                     <span>Channels</span>
+                    <span>Created</span>
+                    <span>Actions</span>
                   </div>
-                  {filteredServers.map((s) => (
+                  {servers.map((s) => (
                     <div key={s.id} className="admin-table-row">
                       <span className="admin-strong">{s.name}</span>
-                      <span className="admin-mono">{s.ownerId}</span>
+                      <span>
+                        {s.ownerName}
+                        <button
+                          className="admin-copy-btn"
+                          onClick={() => copyToClipboard(s.ownerId, 'Owner ID')}
+                          title="Copy owner ID"
+                        >
+                          📋
+                        </button>
+                      </span>
                       <span>{s.memberCount}</span>
                       <span>{s.channelCount}</span>
+                      <span className="admin-date">{formatDate(s.createdAt)}</span>
+                      <span className="admin-actions-cell">
+                        <button
+                          className="admin-action-btn"
+                          onClick={() => copyToClipboard(s.id, 'Server ID')}
+                          title="Copy server ID"
+                        >
+                          📋
+                        </button>
+                        <button
+                          className="admin-action-btn"
+                          onClick={() => setTransferOwnershipServer(s)}
+                          title="Transfer ownership"
+                        >
+                          👑
+                        </button>
+                        <button
+                          className="admin-action-btn admin-danger"
+                          onClick={() => setServerToDelete(s)}
+                          title="Delete server"
+                        >
+                          🗑️
+                        </button>
+                      </span>
                     </div>
                   ))}
-                  {filteredServers.length === 0 && (
-                    <div className="admin-empty">No servers found.</div>
-                  )}
+                  {servers.length === 0 && <div className="admin-empty">No servers found.</div>}
+                </div>
+
+                <div className="admin-pagination">
+                  <button
+                    onClick={() => setServerPage((p) => Math.max(0, p - 1))}
+                    disabled={serverPage === 0 || loading}
+                  >
+                    ← Previous
+                  </button>
+                  <span>
+                    Page {serverPage + 1} of {Math.max(1, Math.ceil(serversTotalCount / PAGE_SIZE))} ({serversTotalCount} total)
+                  </span>
+                  <button
+                    onClick={() => setServerPage((p) => p + 1)}
+                    disabled={serverPage >= Math.ceil(serversTotalCount / PAGE_SIZE) - 1 || loading}
+                  >
+                    Next →
+                  </button>
                 </div>
               </div>
             )}
 
-            {!loading && data && tab === 'users' && (
+            {!loading && tab === 'users' && (
               <div className="admin-section">
                 <div className="us-card">
                   <div className="admin-search">
                     <input
                       type="text"
-                      placeholder="Search users by name, username, id, email"
+                      placeholder="Search users by name, username, id, email..."
                       value={userQuery}
                       onChange={(e) => setUserQuery(e.target.value)}
                     />
-                    <span className="admin-count">{filteredUsers.length} results</span>
+                    <span className="admin-count">{usersTotalCount} total</span>
+                  </div>
+
+                  <div className="admin-sort-row">
+                    {[
+                      { field: 'username', label: 'Username' },
+                      { field: 'displayname', label: 'Display Name' },
+                      { field: 'email', label: 'Email' },
+                      { field: 'created', label: 'Created' },
+                    ].map((sort) => (
+                      <button
+                        key={sort.field}
+                        className={`admin-sort-btn ${userSort.field === sort.field ? 'active' : ''}`}
+                        onClick={() => {
+                          setUserSort({
+                            field: sort.field,
+                            order:
+                              userSort.field === sort.field && userSort.order === 'asc'
+                                ? 'desc'
+                                : 'asc',
+                          });
+                        }}
+                      >
+                        {sort.label}{' '}
+                        {userSort.field === sort.field && (userSort.order === 'asc' ? '↑' : '↓')}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
                 <div className="admin-table">
                   <div className="admin-table-header admin-table-users">
-                    <span>Display</span>
+                    <span>Display Name</span>
                     <span>Username</span>
                     <span>Email</span>
-                    <span>Status</span>
+                    <span>Created</span>
+                    <span>Actions</span>
                   </div>
-                  {filteredUsers.map((u) => (
+                  {users.map((u) => (
                     <div key={u.id} className="admin-table-row admin-table-users">
                       <span className="admin-strong">{u.displayName}</span>
                       <span className="admin-mono">{u.username}</span>
                       <span className="admin-mono">{u.email || '—'}</span>
-                      <span>{u.status}</span>
+                      <span className="admin-date">{formatDate(u.createdAt)}</span>
+                      <span className="admin-actions-cell">
+                        <button
+                          className="admin-action-btn"
+                          onClick={() => copyToClipboard(u.id, 'User ID')}
+                          title="Copy user ID"
+                        >
+                          📋
+                        </button>
+                        <button
+                          className="admin-action-btn admin-danger"
+                          onClick={() => setUserToDelete(u)}
+                          title="Delete user"
+                        >
+                          🗑️
+                        </button>
+                      </span>
                     </div>
                   ))}
-                  {filteredUsers.length === 0 && (
-                    <div className="admin-empty">No users found.</div>
-                  )}
+                  {users.length === 0 && <div className="admin-empty">No users found.</div>}
+                </div>
+
+                <div className="admin-pagination">
+                  <button
+                    onClick={() => setUserPage((p) => Math.max(0, p - 1))}
+                    disabled={userPage === 0 || loading}
+                  >
+                    ← Previous
+                  </button>
+                  <span>
+                    Page {userPage + 1} of {Math.max(1, Math.ceil(usersTotalCount / PAGE_SIZE))} ({usersTotalCount} total)
+                  </span>
+                  <button
+                    onClick={() => setUserPage((p) => p + 1)}
+                    disabled={userPage >= Math.ceil(usersTotalCount / PAGE_SIZE) - 1 || loading}
+                  >
+                    Next →
+                  </button>
                 </div>
               </div>
             )}
@@ -697,7 +1025,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                       value={expiresAt}
                       onChange={(e) => setExpiresAt(e.target.value)}
                     />
-                    <button className="btn-secondary" onClick={createInviteCode} disabled={creatingCode}>
+                    <button className="btn-secondary" onClick={createInvite} disabled={creatingCode}>
                       {creatingCode ? 'Creating...' : 'Create'}
                     </button>
                   </div>
@@ -713,6 +1041,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                     <span>Uses</span>
                     <span>Expires</span>
                     <span>Last Used</span>
+                    <span>Actions</span>
                   </div>
                   {(settings?.codes || []).map((c) => (
                     <div key={c.id} className="admin-table-row admin-table-codes">
@@ -720,6 +1049,15 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                       <span>{c.uses}{c.maxUses ? ` / ${c.maxUses}` : ''}</span>
                       <span>{c.expiresAt ? new Date(c.expiresAt).toLocaleString() : '—'}</span>
                       <span>{c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString() : '—'}</span>
+                      <span className="admin-actions-cell">
+                        <button
+                          className="admin-action-btn admin-danger"
+                          onClick={() => setCodeToDelete(c)}
+                          title="Delete invite code"
+                        >
+                          🗑️
+                        </button>
+                      </span>
                     </div>
                   ))}
                   {settings && settings.codes.length === 0 && (
@@ -756,6 +1094,115 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
             )}
+
+      {/* Delete Server Confirmation */}
+      {serverToDelete && (
+        <ConfirmModal
+          title="Delete Server"
+          message={`Are you sure you want to permanently delete "${serverToDelete.name}"? This will delete all channels, messages, and data. This action cannot be undone.`}
+          confirmLabel="Delete Server"
+          onConfirm={() => handleDeleteServer(serverToDelete)}
+          onClose={() => setServerToDelete(null)}
+          danger
+        />
+      )}
+
+      {/* Delete User Confirmation */}
+      {userToDelete && (
+        <ConfirmModal
+          title="Delete User"
+          message={`Are you sure you want to permanently delete user "${userToDelete.displayName}" (@${userToDelete.username})? This will remove them from all servers and delete their data. Messages will be preserved but marked as deleted. This action cannot be undone.`}
+          confirmLabel="Delete User"
+          onConfirm={() => handleDeleteUser(userToDelete)}
+          onClose={() => setUserToDelete(null)}
+          danger
+        />
+      )}
+
+      {/* Delete Invite Code Confirmation */}
+      {codeToDelete && (
+        <ConfirmModal
+          title="Delete Invite Code"
+          message={`Are you sure you want to delete invite code "${codeToDelete.code}"? This code will no longer be usable.`}
+          confirmLabel="Delete Code"
+          onConfirm={() => handleDeleteInvite(codeToDelete)}
+          onClose={() => setCodeToDelete(null)}
+          danger
+        />
+      )}
+
+      {/* Transfer Ownership Modal */}
+      {transferOwnershipServer && createPortal(
+        <div className="modal-overlay" onClick={() => setTransferOwnershipServer(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ minWidth: '450px' }}>
+            <h2>Transfer Server Ownership</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>
+              Transfer ownership of "{transferOwnershipServer.name}" to another user. The new owner will have full control.
+            </p>
+
+            <div style={{ position: 'relative', marginBottom: '16px' }}>
+              <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', fontWeight: 600 }}>
+                Search for new owner
+              </label>
+              <input
+                type="text"
+                placeholder="Search by username or display name..."
+                value={ownershipSearchQuery}
+                onChange={(e) => { setOwnershipSearchQuery(e.target.value); setOwnershipDropdownOpen(true); }}
+                onFocus={() => setOwnershipDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setOwnershipDropdownOpen(false), 200)}
+                style={{
+                  width: '100%',
+                  background: 'var(--bg-tertiary)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  borderRadius: 4,
+                  padding: '8px',
+                  color: 'var(--text-primary)',
+                  fontSize: 14
+                }}
+              />
+
+              {ownershipDropdownOpen && ownershipSearchResults.length > 0 && (
+                <div className="cosmetic-user-dropdown" style={{ top: '100%', marginTop: '4px' }}>
+                  {ownershipSearchResults.map((u) => (
+                    <div
+                      key={u.id}
+                      className="cosmetic-user-dropdown-item"
+                      onMouseDown={() => {
+                        handleTransferOwnership(u.id);
+                        setOwnershipDropdownOpen(false);
+                      }}
+                    >
+                      <div className="cosmetic-user-dropdown-avatar">
+                        {u.avatarUrl ? (
+                          <img src={u.avatarUrl.startsWith('http') ? u.avatarUrl : `${getApiBase()}${u.avatarUrl}`} alt={u.displayName} />
+                        ) : (
+                          <div className="cosmetic-user-dropdown-avatar-fallback">{u.displayName[0]}</div>
+                        )}
+                      </div>
+                      <div className="cosmetic-user-dropdown-info">
+                        <span className="cosmetic-user-dropdown-display">{u.displayName}</span>
+                        <span className="cosmetic-user-dropdown-username">@{u.username}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {ownershipDropdownOpen && ownershipSearchQuery.trim() && ownershipSearchResults.length === 0 && (
+                <div className="cosmetic-user-dropdown" style={{ top: '100%', marginTop: '4px' }}>
+                  <div className="cosmetic-user-dropdown-empty">No users found</div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="btn-secondary" onClick={() => setTransferOwnershipServer(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </SettingsModal>
   );
 }

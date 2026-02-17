@@ -26,7 +26,7 @@ import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmC
 const soundCache = new Map<string, any>();
 const normalizedVolumeCache = new Map<string, number>();
 const pendingAnalysis = new Map<string, Promise<number>>();
-const TARGET_RMS = 0.05; // target perceived loudness level (~-26 dB)
+const TARGET_RMS = 0.02; // target perceived loudness level (~-34 dB) - matched to voice chat levels
 let analysisCtx: any = null;
 
 function getNormalizedVolume(url: string): Promise<number> {
@@ -68,7 +68,7 @@ function getNormalizedVolume(url: string): Promise<number> {
       normalizedVolumeCache.set(url, volume);
       return volume;
     } catch {
-      return TARGET_RMS;
+      return 0.5;
     } finally {
       pendingAnalysis.delete(url);
     }
@@ -229,6 +229,13 @@ export function useSignalRListeners() {
         } else {
           // If was invisible and now visible, add to online users
           usePresenceStore.getState().setUserOnline(userId);
+        }
+        // Keep authStore in sync for the current user — without this,
+        // useIdleDetection and StatusPicker read stale values when the
+        // server changes our status (e.g. PresenceMonitorService auto-away).
+        const currentUser = useAuthStore.getState().user;
+        if (currentUser && userId === currentUser.id) {
+          useAuthStore.getState().setPresenceStatus(presenceStatus);
         }
       });
 

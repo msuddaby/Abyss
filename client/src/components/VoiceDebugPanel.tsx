@@ -34,10 +34,18 @@ export function VoiceDebugPanel() {
       summary: {
         activePeers: stats?.activePeerCount ?? 0,
         connectionType: stats?.connectionType ?? 'unknown',
+        natType: stats?.natType ?? 'unknown',
         iceConnectionState: stats?.iceConnectionState ?? 'new',
+        iceGatheringComplete: stats?.iceGatheringComplete ?? false,
         avgRoundTripTime: stats?.roundTripTime,
         avgPacketLoss: stats?.packetLoss,
         avgJitter: stats?.jitter,
+      },
+      localCandidates: stats?.localCandidates ?? {
+        hostCount: 0,
+        srflxCount: 0,
+        relayCount: 0,
+        protocol: 'unknown',
       },
       peers: stats?.perPeerStats.map(peer => ({
         userId: peer.userId,
@@ -45,6 +53,10 @@ export function VoiceDebugPanel() {
         iceState: peer.iceState,
         signalingState: peer.signalingState,
         connectionType: peer.connectionType,
+        localCandidateType: peer.localCandidateType,
+        remoteCandidateType: peer.remoteCandidateType,
+        transportProtocol: peer.transportProtocol,
+        consent: peer.consent,
         roundTripTime: peer.roundTripTime,
         packetLoss: peer.packetLoss,
         jitter: peer.jitter,
@@ -138,6 +150,32 @@ export function VoiceDebugPanel() {
                     </div>
 
                     <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">NAT Type</div>
+                      <div className="voice-debug-metric-value">
+                        {stats.natType === 'open' && '🌐 Open Internet'}
+                        {stats.natType === 'cone' && '🔶 Cone NAT'}
+                        {stats.natType === 'symmetric' && '⚠️ Symmetric NAT'}
+                        {stats.natType === 'unknown' && '❓ Detecting...'}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">ICE Candidates</div>
+                      <div className="voice-debug-metric-value" style={{ fontSize: '0.85em' }}>
+                        Host: {stats.localCandidates.hostCount} |
+                        STUN: {stats.localCandidates.srflxCount} |
+                        TURN: {stats.localCandidates.relayCount}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
+                      <div className="voice-debug-metric-label">Protocol</div>
+                      <div className="voice-debug-metric-value">
+                        {stats.localCandidates.protocol.toUpperCase()}
+                      </div>
+                    </div>
+
+                    <div className="voice-debug-metric">
                       <div className="voice-debug-metric-label">Ping / RTT</div>
                       <div className={`voice-debug-metric-value ${getQualityClass(stats.roundTripTime, null)}`}>
                         {formatMetric(stats.roundTripTime, 'ms')}
@@ -162,6 +200,7 @@ export function VoiceDebugPanel() {
                       <div className="voice-debug-metric-label">ICE State</div>
                       <div className="voice-debug-metric-value">
                         {stats.iceConnectionState}
+                        {stats.iceGatheringComplete && ' ✓'}
                       </div>
                     </div>
 
@@ -190,12 +229,30 @@ export function VoiceDebugPanel() {
                               </div>
                             </div>
                             <div>
+                              <div className="label">Local → Remote</div>
+                              <div style={{ fontSize: '0.85em' }}>
+                                {peer.localCandidateType || '?'} → {peer.remoteCandidateType || '?'}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="label">Protocol</div>
+                              <div>{peer.transportProtocol?.toUpperCase() || 'Unknown'}</div>
+                            </div>
+                            <div>
                               <div className="label">ICE State</div>
                               <div>{peer.iceState}</div>
                             </div>
                             <div>
                               <div className="label">Signaling</div>
                               <div>{peer.signalingState}</div>
+                            </div>
+                            <div>
+                              <div className="label">Consent</div>
+                              <div>
+                                {peer.consent === 'granted' && '✓ Active'}
+                                {peer.consent === 'checking' && '⏳ Checking'}
+                                {peer.consent === 'unknown' && '❓'}
+                              </div>
                             </div>
                             <div>
                               <div className="label">RTT</div>

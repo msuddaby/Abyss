@@ -25,6 +25,7 @@ interface VoiceState {
   inputDeviceId: string;
   outputDeviceId: string;
   cameraDeviceId: string;
+  cameraFacingMode: 'user' | 'environment'; // 'user' = front camera, 'environment' = back camera
   noiseSuppression: boolean;
   echoCancellation: boolean;
   autoGainControl: boolean;
@@ -56,6 +57,7 @@ interface VoiceState {
   setInputDeviceId: (deviceId: string) => void;
   setOutputDeviceId: (deviceId: string) => void;
   setCameraDeviceId: (deviceId: string) => void;
+  setCameraFacingMode: (mode: 'user' | 'environment') => void;
   setNoiseSuppression: (enabled: boolean) => void;
   setEchoCancellation: (enabled: boolean) => void;
   setAutoGainControl: (enabled: boolean) => void;
@@ -114,6 +116,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   inputDeviceId: 'default',
   outputDeviceId: 'default',
   cameraDeviceId: 'default',
+  cameraFacingMode: 'user' as const, // Default to front camera
   noiseSuppression: true,
   echoCancellation: true,
   autoGainControl: true,
@@ -248,6 +251,10 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     getStorage().setItem('cameraDeviceId', deviceId);
     set({ cameraDeviceId: deviceId });
   },
+  setCameraFacingMode: (mode) => {
+    getStorage().setItem('cameraFacingMode', mode);
+    set({ cameraFacingMode: mode });
+  },
   setNoiseSuppression: (enabled) => {
     getStorage().setItem('noiseSuppression', String(enabled));
     set({ noiseSuppression: enabled });
@@ -366,6 +373,7 @@ export function hydrateVoiceStore() {
     inputDeviceId: s.getItem('inputDeviceId') || 'default',
     outputDeviceId: s.getItem('outputDeviceId') || 'default',
     cameraDeviceId: s.getItem('cameraDeviceId') || 'default',
+    cameraFacingMode: (s.getItem('cameraFacingMode') as 'user' | 'environment') || 'user',
     noiseSuppression: boolOr('noiseSuppression', true),
     echoCancellation: boolOr('echoCancellation', true),
     autoGainControl: boolOr('autoGainControl', true),

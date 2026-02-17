@@ -57,13 +57,13 @@ public class AuthController : ControllerBase
         if (!string.IsNullOrWhiteSpace(request.Email) && !EmailRegex.IsMatch(request.Email))
             return BadRequest("Invalid email format.");
 
-        Models.InviteCode? invite = null;
+        Models.Invite? invite = null;
         if (await IsInviteOnlyAsync())
         {
             if (string.IsNullOrWhiteSpace(request.InviteCode))
                 return BadRequest("Invite code required.");
 
-            invite = await _db.InviteCodes.FirstOrDefaultAsync(i => i.Code == request.InviteCode);
+            invite = await _db.Invites.FirstOrDefaultAsync(i => i.Code == request.InviteCode && i.ServerId == null);
             if (invite == null) return BadRequest("Invalid invite code.");
             if (invite.ExpiresAt.HasValue && invite.ExpiresAt.Value < DateTime.UtcNow)
                 return BadRequest("Invite code expired.");
@@ -237,6 +237,12 @@ public class AuthController : ControllerBase
         var previousStatus = user.PresenceStatus;
         user.PresenceStatus = request.PresenceStatus;
         await _userManager.UpdateAsync(user);
+
+        // Clear server auto-away flag so PresenceMonitorService can re-detect
+        // future idle periods, and refresh the heartbeat since the user is
+        // clearly active (they just made an API call).
+        ChatHub._serverAutoAway.TryRemove(userId, out _);
+        ChatHub._lastHeartbeats[userId] = DateTime.UtcNow;
 
         // Broadcast status change via SignalR
         await BroadcastPresenceChange(userId, request.PresenceStatus);

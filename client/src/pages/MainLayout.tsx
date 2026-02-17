@@ -16,6 +16,7 @@ import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
+import { useSwipeGesture } from '../hooks/useSwipeGesture';
 
 export default function MainLayout() {
   const activeChannel = useServerStore((s) => s.activeChannel);
@@ -37,6 +38,12 @@ export default function MainLayout() {
   const openLeftDrawer = useMobileStore((s) => s.openLeftDrawer);
   const openRightDrawer = useMobileStore((s) => s.openRightDrawer);
   const closeDrawers = useMobileStore((s) => s.closeDrawers);
+  const leftDrawerDragOffset = useMobileStore((s) => s.leftDrawerDragOffset);
+  const isLeftDrawerDragging = useMobileStore((s) => s.isLeftDrawerDragging);
+  const setLeftDrawerDragOffset = useMobileStore((s) => s.setLeftDrawerDragOffset);
+  const startLeftDrawerDrag = useMobileStore((s) => s.startLeftDrawerDrag);
+  const endLeftDrawerDrag = useMobileStore((s) => s.endLeftDrawerDrag);
+  const resetLeftDrawerDrag = useMobileStore((s) => s.resetLeftDrawerDrag);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -65,6 +72,12 @@ export default function MainLayout() {
     });
   }, [activeChannel?.id, activeDmChannel?.id, isDmMode]);
 
+  // Reset drag state on channel navigation
+  useEffect(() => {
+    endLeftDrawerDrag();
+    resetLeftDrawerDrag();
+  }, [activeChannel?.id, activeDmChannel?.id, isDmMode, endLeftDrawerDrag, resetLeftDrawerDrag]);
+
   const showSignalRBanner = signalRStatus !== 'connected';
   const signalRMessage = signalRStatus === 'connecting'
     ? 'Connecting to live updates...'
@@ -80,13 +93,56 @@ export default function MainLayout() {
     </button>
   );
 
+  // Edge swipe to open drawer
+  const edgeSwipeGesture = useSwipeGesture({
+    mode: 'edge-open',
+    edgeWidth: 50,
+    threshold: 80,
+    enabled: !leftDrawerOpen && isMobile(),
+    onDragStart: () => startLeftDrawerDrag(),
+    onDragMove: (offset) => setLeftDrawerDragOffset(offset),
+    onDragEnd: () => {
+      endLeftDrawerDrag();
+      resetLeftDrawerDrag();
+    },
+    onSwipeComplete: () => {
+      endLeftDrawerDrag();
+      openLeftDrawer();
+      setTimeout(() => resetLeftDrawerDrag(), 220);
+    },
+  });
+
+  // Drawer swipe to close
+  const drawerSwipeGesture = useSwipeGesture({
+    mode: 'drawer-close',
+    threshold: 100,
+    enabled: leftDrawerOpen && isMobile(),
+    onDragStart: () => startLeftDrawerDrag(),
+    onDragMove: (offset) => setLeftDrawerDragOffset(312 - offset),
+    onDragEnd: () => {
+      endLeftDrawerDrag();
+      resetLeftDrawerDrag();
+    },
+    onSwipeComplete: () => {
+      endLeftDrawerDrag();
+      closeDrawers();
+      setTimeout(() => resetLeftDrawerDrag(), 220);
+    },
+  });
+
   return (
     <div className="main-layout">
-      <div className={`left-drawer${leftDrawerOpen ? ' open' : ''}`}>
+      <div
+        className={`left-drawer${leftDrawerOpen ? ' open' : ''}${isLeftDrawerDragging ? ' dragging' : ''}`}
+        style={isLeftDrawerDragging ? {
+          '--drag-offset': `${leftDrawerDragOffset}px`
+        } as React.CSSProperties : undefined}
+        {...drawerSwipeGesture}
+      >
         <ServerSidebar />
         <ChannelSidebar />
       </div>
-      <div className="content-area">
+      <div className="content-area" {...edgeSwipeGesture}>
         {showSignalRBanner && (
           <div className={`signalr-status-banner ${signalRStatus}`}>
             <span>{signalRMessage}</span>
@@ -198,7 +254,7 @@ export default function MainLayout() {
           <WatchPartyPlayer mini={activeChannel?.id !== voiceChannelId || activeChannel?.type !== 'Voice'} />
         )}
       </div>
-      <div className={`right-drawer${rightDrawerOpen ? ' open' : ''}`}>
+      <div className={`right-drawer${rightDrawerOpen ? ' open' : ''}${!memberListVisible && !isMobile() ? ' hidden' : ''}`}>
         {activeServer && !isDmMode && (searchIsOpen ? <SearchPanel /> : <MemberList />)}
       </div>
       {(leftDrawerOpen || rightDrawerOpen) && (

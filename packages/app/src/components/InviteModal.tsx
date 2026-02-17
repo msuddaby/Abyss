@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
+import { View, Text, TextInput, Pressable, StyleSheet, type ViewStyle, type TextStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { api, useServerStore } from '@abyss/shared';
 import Modal from './Modal';
@@ -10,6 +10,7 @@ export default function InviteModal() {
   const [code, setCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [maxUses, setMaxUses] = useState('');
   const activeServer = useServerStore((s) => s.activeServer);
   const closeModal = useUiStore((s) => s.closeModal);
 
@@ -17,7 +18,10 @@ export default function InviteModal() {
     if (!activeServer || loading) return;
     setLoading(true);
     try {
-      const res = await api.post(`/servers/${activeServer.id}/invites`);
+      const payload: { maxUses?: number } = {};
+      const parsedMax = Number(maxUses);
+      if (!Number.isNaN(parsedMax) && parsedMax > 0) payload.maxUses = parsedMax;
+      const res = await api.post(`/servers/${activeServer.id}/invites`, payload);
       setCode(res.data.code);
     } catch (err) {
       console.error('Failed to generate invite', err);
@@ -47,13 +51,23 @@ export default function InviteModal() {
           </View>
         </View>
       ) : (
-        <Pressable
-          style={[styles.generateBtn, loading && styles.btnDisabled]}
-          onPress={generateInvite}
-          disabled={loading}
-        >
-          <Text style={styles.generateBtnText}>{loading ? 'Generating...' : 'Generate Invite Link'}</Text>
-        </Pressable>
+        <View>
+          <TextInput
+            style={styles.optionInput}
+            placeholder="Max uses (optional)"
+            placeholderTextColor={colors.textMuted}
+            value={maxUses}
+            onChangeText={setMaxUses}
+            keyboardType="numeric"
+          />
+          <Pressable
+            style={[styles.generateBtn, loading && styles.btnDisabled]}
+            onPress={generateInvite}
+            disabled={loading}
+          >
+            <Text style={styles.generateBtnText}>{loading ? 'Generating...' : 'Generate Invite Link'}</Text>
+          </Pressable>
+        </View>
       )}
       <View style={styles.actions}>
         <Pressable style={styles.btnSecondary} onPress={closeModal}>
@@ -98,6 +112,14 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
     fontSize: fontSize.md,
+  } as TextStyle,
+  optionInput: {
+    backgroundColor: colors.bgTertiary,
+    color: colors.textPrimary,
+    borderRadius: borderRadius.sm,
+    padding: spacing.md,
+    fontSize: fontSize.md,
+    marginBottom: spacing.md,
   } as TextStyle,
   generateBtn: {
     backgroundColor: colors.bgAccent,
