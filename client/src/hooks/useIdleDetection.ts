@@ -85,9 +85,6 @@ export function useIdleDetection() {
           // Validate the idle reading, especially on Windows where the API can be
           // unreliable when games are running and the window is minimized
           if (window.electron.platform === 'win32' && lastIdleValue > 0) {
-            const idleIncrease = sysIdleSec - lastIdleValue;
-            const expectedIncrease = Math.min(timeSinceLastRead, IDLE_TIMEOUT_S);
-
             // If idle time jumped from active (<60s) to idle threshold (600s+) within
             // a short period, the reading is suspicious — likely a Windows idle bug
             const isSuspiciousJump = (
