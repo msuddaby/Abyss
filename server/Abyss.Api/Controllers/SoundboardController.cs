@@ -100,9 +100,6 @@ public class SoundboardController : ControllerBase
         var clip = await _db.SoundboardClips.FirstOrDefaultAsync(sc => sc.Id == clipId && sc.ServerId == serverId);
         if (clip == null) return NotFound();
 
-        if (string.IsNullOrWhiteSpace(req.Name) || !NameRegex.IsMatch(req.Name))
-            return BadRequest("Clip name must be 2-32 characters, alphanumeric, spaces, hyphens, or underscores.");
-
         var nameExists = await _db.SoundboardClips.AnyAsync(sc => sc.ServerId == serverId && sc.Name == req.Name && sc.Id != clipId);
         if (nameExists)
             return BadRequest($"A clip with the name '{req.Name}' already exists in this server.");

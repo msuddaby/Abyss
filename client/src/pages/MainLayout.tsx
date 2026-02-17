@@ -12,6 +12,8 @@ import UpdateBanner from '../components/UpdateBanner';
 import VoiceChatOverlay from '../components/VoiceChatOverlay';
 import MediaLibraryBrowser from '../components/MediaLibraryBrowser';
 import ContextMenu from '../components/contextMenu/ContextMenu';
+import RoleAssignModal from '../components/RoleAssignModal';
+import ModerationConfirmModal from '../components/ModerationConfirmModal';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
@@ -262,6 +264,8 @@ export default function MainLayout() {
       )}
       <VoiceChatOverlay />
       <ContextMenu />
+      <RoleAssignModal />
+      <ModerationConfirmModal />
       {isBrowsingLibrary && <MediaLibraryBrowser onClose={() => setIsBrowsingLibrary(false)} />}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
-import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
+import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, useRateLimitStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import GifPicker from "./GifPicker";
@@ -92,6 +92,29 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
   const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
   const addToast = useToastStore((s) => s.addToast);
+  const rateLimitEntry = useRateLimitStore((s) => s.activeLimits['SendMessage']);
+  const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
+
+  // Countdown ticker for rate limit banner
+  useEffect(() => {
+    if (!rateLimitEntry || Date.now() >= rateLimitEntry.expiresAt) {
+      setRateLimitRemaining(0);
+      return;
+    }
+    setRateLimitRemaining(Math.ceil((rateLimitEntry.expiresAt - Date.now()) / 1000));
+    const interval = setInterval(() => {
+      const remaining = Math.ceil((rateLimitEntry.expiresAt - Date.now()) / 1000);
+      if (remaining <= 0) {
+        setRateLimitRemaining(0);
+        clearInterval(interval);
+      } else {
+        setRateLimitRemaining(remaining);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [rateLimitEntry]);
+
+  const isRateLimited = rateLimitRemaining > 0;
 
   const isVoiceChat = !!channelIdOverride;
   const effectiveChannelId = channelIdOverride || (isDmMode ? activeDmChannel?.id : activeChannel?.id);
@@ -687,6 +710,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
 
   const handleSubmit = async () => {
     if (!editorRef.current || !effectiveChannelId || sending) return;
+    if (isRateLimited) return;
     if (!canSendMessages) {
       addToast('You do not have permission to send messages in this channel.', 'error');
       return;
@@ -888,6 +912,11 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
           ))}
         </div>
       )}
+      {isRateLimited && (
+        <div className="rate-limit-banner">
+          You're sending messages too quickly. Please wait {rateLimitRemaining}s.
+        </div>
+      )}
       <form className="message-input-form" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
         {canAttachFiles && (
           <>
@@ -965,7 +994,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
           type="submit"
           className="send-btn"
           onMouseDown={(e) => e.preventDefault()}
-          disabled={!canSendMessages || sending || (isEmpty && files.length === 0) || contentLength > maxMessageLength}
+          disabled={!canSendMessages || sending || isRateLimited || (isEmpty && files.length === 0) || contentLength > maxMessageLength}
         >
           Send
         </button>

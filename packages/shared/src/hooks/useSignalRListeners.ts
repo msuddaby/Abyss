@@ -17,6 +17,7 @@ import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { useWatchPartyStore } from '../stores/watchPartyStore.js';
 import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
 import { useSoundboardStore } from '../stores/soundboardStore.js';
+import { useRateLimitStore } from '../stores/rateLimitStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import type { HubConnection } from '@microsoft/signalr';
@@ -202,7 +203,7 @@ export function useSignalRListeners() {
         'NewUnreadMessage', 'MentionReceived',
         'DmChannelCreated',
         'FriendRequestReceived', 'FriendRequestAccepted', 'FriendRemoved',
-        'Error', 'ConfigUpdated',
+        'Error', 'RateLimited', 'ConfigUpdated',
         'ServerDefaultNotificationLevelChanged', 'NotificationSettingsChanged', 'UserPreferencesChanged',
         'WatchPartyStarted', 'WatchPartyStopped', 'WatchPartyActive',
         'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged',
@@ -490,6 +491,10 @@ export function useSignalRListeners() {
         if (message) {
           useToastStore.getState().addToast(message, 'error');
         }
+      });
+
+      conn.on('RateLimited', (method: string, retrySeconds: number) => {
+        useRateLimitStore.getState().setRateLimit(method, retrySeconds);
       });
 
       conn.on('ConfigUpdated', (payload: { maxMessageLength: number } | number) => {

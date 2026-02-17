@@ -100,9 +100,6 @@ public class EmojisController : ControllerBase
         var emoji = await _db.CustomEmojis.FirstOrDefaultAsync(e => e.Id == emojiId && e.ServerId == serverId);
         if (emoji == null) return NotFound();
 
-        if (string.IsNullOrWhiteSpace(req.Name) || !NameRegex.IsMatch(req.Name))
-            return BadRequest("Emoji name must be 2-32 characters, alphanumeric or underscore.");
-
         var nameExists = await _db.CustomEmojis.AnyAsync(e => e.ServerId == serverId && e.Name == req.Name && e.Id != emojiId);
         if (nameExists)
             return BadRequest($"An emoji with the name '{req.Name}' already exists in this server.");

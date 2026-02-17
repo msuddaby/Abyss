@@ -1,22 +1,35 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useServerStore } from '@abyss/shared';
+import { useServerStore, parseValidationErrors, getGeneralError } from '@abyss/shared';
+import FormField from './FormField';
 
 export default function CreateChannelModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [name, setName] = useState('');
   const [type, setType] = useState<'Text' | 'Voice'>('Text');
   const [userLimit, setUserLimit] = useState('');
   const [error, setError] = useState('');
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]> | null>(null);
   const createChannel = useServerStore((s) => s.createChannel);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    setValidationErrors(null);
     try {
       const limit = type === 'Voice' && userLimit ? parseInt(userLimit, 10) : null;
       await createChannel(serverId, name, type, limit);
       onClose();
     } catch (err: any) {
-      setError(err.response?.data || 'Failed to create channel');
+      const parsedErrors = parseValidationErrors(err);
+      if (parsedErrors) {
+        setValidationErrors(parsedErrors);
+        const generalError = getGeneralError(parsedErrors);
+        if (generalError) {
+          setError(generalError);
+        }
+      } else {
+        setError(err.response?.data || 'Failed to create channel');
+      }
     }
   };
 
@@ -45,10 +58,16 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
               </button>
             </div>
           </label>
-          <label>
-            Channel Name
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
-          </label>
+
+          <FormField
+            label="Channel Name"
+            name="Name"
+            value={name}
+            onChange={setName}
+            required
+            errors={validationErrors}
+          />
+
           {type === 'Voice' && (
             <label>
               User Limit

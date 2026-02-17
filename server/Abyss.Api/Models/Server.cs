@@ -1,8 +1,11 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace Abyss.Api.Models;
 
 public class Server
 {
     public Guid Id { get; set; }
+    [MaxLength(32)]
     public string Name { get; set; } = string.Empty;
     public string? IconUrl { get; set; }
     public string OwnerId { get; set; } = string.Empty;

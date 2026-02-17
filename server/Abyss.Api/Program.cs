@@ -12,6 +12,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.DataProtection;
 using FirebaseAdmin;
 using FirebaseAdmin.Messaging;
+using Microsoft.AspNetCore.SignalR;
 using Abyss.Api.Data;
 using Abyss.Api.Hubs;
 using Abyss.Api.Models;
@@ -130,6 +131,7 @@ builder.Services.AddDataProtection()
 builder.Services.AddSingleton<ProviderConfigProtector>();
 builder.Services.AddScoped<MediaProviderFactory>();
 builder.Services.AddSingleton<WatchPartyService>();
+builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached thumbnails
 builder.Services.AddHttpClient<PlexMediaProvider>();
 builder.Services.AddHttpClient<YouTubeMediaProvider>();
@@ -211,6 +213,7 @@ else
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = true;
+    options.AddFilter<RateLimitFilter>();
 });
 
 // Controllers

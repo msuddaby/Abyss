@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Abyss.Api.Models;
 
 namespace Abyss.Api.DTOs;
@@ -18,15 +19,20 @@ public record EquippedCosmeticsDto(
     CosmeticItemDto? AvatarDecoration);
 
 public record CreateCosmeticRequest(
-    string Name, string Description,
-    CosmeticType Type, CosmeticRarity Rarity,
-    string CssData, string? PreviewImageUrl);
+    [Required, StringLength(100, MinimumLength = 1)] string Name,
+    [Required, StringLength(500, MinimumLength = 1)] string Description,
+    CosmeticType Type,
+    CosmeticRarity Rarity,
+    [Required, MaxLength(10000)] string CssData,
+    string? PreviewImageUrl);
 
 public record UpdateCosmeticRequest(
-    string? Name, string? Description,
+    [StringLength(100, MinimumLength = 1)] string? Name,
+    [StringLength(500, MinimumLength = 1)] string? Description,
     CosmeticRarity? Rarity,
-    string? CssData, string? PreviewImageUrl,
+    [MaxLength(10000)] string? CssData,
+    string? PreviewImageUrl,
     bool? IsActive);
 
-public record AssignCosmeticRequest(string UserId, Guid CosmeticItemId);
+public record AssignCosmeticRequest([Required] string UserId, Guid CosmeticItemId);
 public record EquipCosmeticRequest(Guid CosmeticItemId);

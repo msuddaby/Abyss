@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations;
+using Abyss.Api.Validation;
+
 namespace Abyss.Api.DTOs;
 
 public record AdminServerDto(
@@ -27,6 +30,6 @@ public record AdminOverviewStatsDto(int ServerCount, int UserCount, int MessageC
 public record InviteCodeDto(Guid Id, string Code, string? CreatorId, DateTime CreatedAt, DateTime? ExpiresAt, int? MaxUses, int Uses, DateTime? LastUsedAt);
 public record AdminSettingsDto(bool InviteOnly, int MaxMessageLength, List<InviteCodeDto> Codes);
 public record UpdateInviteOnlyRequest(bool InviteOnly);
-public record UpdateMaxMessageLengthRequest(int MaxMessageLength);
-public record CreateInviteCodeRequest(DateTime? ExpiresAt, int? MaxUses);
-public record TransferServerOwnershipRequest(string NewOwnerId);
+public record UpdateMaxMessageLengthRequest([Range(100, 10000)] int MaxMessageLength);
+public record CreateInviteCodeRequest([FutureDate] DateTime? ExpiresAt, [Range(1, int.MaxValue)] int? MaxUses);
+public record TransferServerOwnershipRequest([Required] string NewOwnerId);

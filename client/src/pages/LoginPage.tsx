@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { useAuthStore, useServerConfigStore } from "@abyss/shared";
+import { useAuthStore, useServerConfigStore, parseValidationErrors, getGeneralError } from "@abyss/shared";
 import { Link, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import ServerSetupModal from "../components/ServerSetupModal";
+import FormField from "../components/FormField";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]> | null>(null);
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
   const hasConfigured = useServerConfigStore((s) => s.hasConfigured);
@@ -23,11 +25,21 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
     setError("");
+    setValidationErrors(null);
     try {
       await login(username, password);
       navigate("/");
     } catch (err: any) {
-      setError(err.response?.data || "Login failed");
+      const parsedErrors = parseValidationErrors(err);
+      if (parsedErrors) {
+        setValidationErrors(parsedErrors);
+        const generalError = getGeneralError(parsedErrors);
+        if (generalError) {
+          setError(generalError);
+        }
+      } else {
+        setError(err.response?.data || "Login failed");
+      }
     }
   };
 
@@ -44,24 +56,29 @@ export default function LoginPage() {
           <h1>Welcome back!</h1>
           <p className="auth-subtitle">We're so excited to see you again!</p>
           {error && <div className="auth-error">{error}</div>}
-          <label>
-            Username
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
+
+          <FormField
+            label="Username"
+            name="Username"
+            type="text"
+            value={username}
+            onChange={setUsername}
+            required
+            errors={validationErrors}
+            autoComplete="username"
+          />
+
+          <FormField
+            label="Password"
+            name="Password"
+            type="password"
+            value={password}
+            onChange={setPassword}
+            required
+            errors={validationErrors}
+            autoComplete="current-password"
+          />
+
           <button type="submit">Log In</button>
           <p className="auth-link">
             Need an account? <Link to="/register">Register</Link>

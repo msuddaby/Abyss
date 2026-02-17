@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType } from "@abyss/shared";
+import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, parseValidationErrors, getFieldError } from "@abyss/shared";
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { Capacitor } from "@capacitor/core";
 import axios from "axios";
@@ -48,6 +48,8 @@ export default function UserSettingsModal({
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileFieldErrors, setProfileFieldErrors] = useState<Record<string, string[]> | null>(null);
   const [capturingKey, setCapturingKey] = useState(false);
   const [capturingKeybind, setCapturingKeybind] = useState<string | null>(null);
   const [micTestActive, setMicTestActive] = useState(false);
@@ -521,14 +523,24 @@ export default function UserSettingsModal({
 
   const handleSave = async () => {
     setSaving(true);
+    setProfileError(null);
+    setProfileFieldErrors(null);
     try {
       if (avatarFile) {
         await updateAvatar(avatarFile);
       }
       await updateProfile({ displayName, bio, status });
       onClose();
-    } catch (err) {
-      console.error("Failed to update profile", err);
+    } catch (err: any) {
+      const parsed = parseValidationErrors(err);
+      if (parsed) {
+        setProfileFieldErrors(parsed);
+        // Build a summary from all field errors
+        const messages = Object.values(parsed).flat();
+        if (messages.length > 0) setProfileError(messages.join(', '));
+      } else {
+        setProfileError(err.response?.data || 'Failed to update profile');
+      }
     } finally {
       setSaving(false);
     }
@@ -755,6 +767,7 @@ export default function UserSettingsModal({
     >
             {activeTab === "profile" && (
               <>
+                {profileError && <div className="auth-error">{profileError}</div>}
                 <div className="us-card">
                   <div className="settings-avatar-section">
                     <div
@@ -779,7 +792,7 @@ export default function UserSettingsModal({
                     />
                   </div>
 
-                  <label>
+                  <label className={getFieldError(profileFieldErrors, 'DisplayName') ? 'has-error' : ''}>
                     Display Name
                     <input
                       type="text"
@@ -787,28 +800,37 @@ export default function UserSettingsModal({
                       onChange={(e) => setDisplayName(e.target.value)}
                       maxLength={32}
                     />
+                    {getFieldError(profileFieldErrors, 'DisplayName') && (
+                      <span className="field-error">{getFieldError(profileFieldErrors, 'DisplayName')}</span>
+                    )}
                   </label>
 
-                  <label>
+                  <label className={getFieldError(profileFieldErrors, 'Bio') ? 'has-error' : ''}>
                     Bio
                     <textarea
                       className="settings-textarea"
                       value={bio}
                       onChange={(e) => setBio(e.target.value)}
-                      maxLength={190}
+                      maxLength={500}
                       rows={3}
                       placeholder="Tell us about yourself"
                     />
+                    {getFieldError(profileFieldErrors, 'Bio') && (
+                      <span className="field-error">{getFieldError(profileFieldErrors, 'Bio')}</span>
+                    )}
                   </label>
 
-                  <label>
+                  <label className={getFieldError(profileFieldErrors, 'Status') ? 'has-error' : ''}>
                     Status
                     <input
                       type="text"
                       value={status}
                       onChange={(e) => setStatus(e.target.value)}
-                      maxLength={32}
+                      maxLength={128}
                     />
+                    {getFieldError(profileFieldErrors, 'Status') && (
+                      <span className="field-error">{getFieldError(profileFieldErrors, 'Status')}</span>
+                    )}
                   </label>
                 </div>
 

@@ -117,7 +117,6 @@ public class ServersController : ControllerBase
         if (req.Name != null)
         {
             var trimmed = req.Name.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed)) return BadRequest("Server name is required.");
             if (!string.Equals(server.Name, trimmed, StringComparison.Ordinal))
             {
                 server.Name = trimmed;
@@ -247,7 +246,6 @@ public class ServersController : ControllerBase
     public async Task<ActionResult<ChannelDto>> UpdateChannel(Guid serverId, Guid channelId, UpdateChannelRequest req)
     {
         if (!await _perms.HasPermissionAsync(serverId, UserId, Permission.ManageChannels)) return Forbid();
-        if (string.IsNullOrWhiteSpace(req.Name)) return BadRequest("Channel name is required.");
 
         var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId && c.ServerId == serverId);
         if (channel == null) return NotFound();
@@ -479,7 +477,7 @@ public class ServersController : ControllerBase
             targetId: userId, targetName: targetUser?.DisplayName);
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("MemberKicked", serverId.ToString(), userId);
-        await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false);
+        await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false, action: "kicked");
         return Ok();
     }
 

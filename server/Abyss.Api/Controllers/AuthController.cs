@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -48,15 +47,10 @@ public class AuthController : ControllerBase
         _imageService = imageService;
     }
 
-    private static readonly Regex EmailRegex = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled);
-
     [HttpPost("register")]
     [EnableRateLimiting("auth")]
     public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request)
     {
-        if (!string.IsNullOrWhiteSpace(request.Email) && !EmailRegex.IsMatch(request.Email))
-            return BadRequest("Invalid email format.");
-
         Models.Invite? invite = null;
         if (await IsInviteOnlyAsync())
         {
@@ -229,10 +223,6 @@ public class AuthController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
         var user = await _userManager.FindByIdAsync(userId);
         if (user == null) return NotFound();
-
-        // Validate status value (0-3)
-        if (request.PresenceStatus < 0 || request.PresenceStatus > 3)
-            return BadRequest("Invalid presence status");
 
         var previousStatus = user.PresenceStatus;
         user.PresenceStatus = request.PresenceStatus;

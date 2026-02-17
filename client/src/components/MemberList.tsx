@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { useServerStore, useAuthStore, usePresenceStore, getApiBase, getDisplayColor, getNameplateStyle } from '@abyss/shared';
 import type { ServerMember } from '@abyss/shared';
 import UserProfileCard from './UserProfileCard';
@@ -14,9 +13,6 @@ export default function MemberList() {
   const userStatuses = usePresenceStore((s) => s.userStatuses);
   const currentUser = useAuthStore((s) => s.user);
   const [profileCard, setProfileCard] = useState<{ userId: string; x: number; y: number } | null>(null);
-  const [showRoleAssign, setShowRoleAssign] = useState(false);
-  const [roleAssignTarget, setRoleAssignTarget] = useState<ServerMember | null>(null);
-  const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
   const openContextMenu = useContextMenuStore((s) => s.open);
   const [hoveredMemberId, setHoveredMemberId] = useState<string | null>(null);
   const [isInViewport, setIsInViewport] = useState(true);
@@ -117,24 +113,9 @@ export default function MemberList() {
       { user: member.user, member },
       {
         onViewProfile: () => setProfileCard({ userId: member.userId, x: e.clientX, y: e.clientY }),
-        onManageRoles: () => {
-          setRoleAssignTarget(member);
-          setSelectedRoleIds(member.roles.filter((r) => !r.isDefault).map((r) => r.id));
-          setShowRoleAssign(true);
-        },
       }
     );
   };
-
-  const handleSaveRoles = async () => {
-    if (!roleAssignTarget || !activeServer) return;
-    const { updateMemberRoles } = useServerStore.getState();
-    await updateMemberRoles(activeServer.id, roleAssignTarget.userId, selectedRoleIds);
-    setShowRoleAssign(false);
-    setRoleAssignTarget(null);
-  };
-
-  const assignableRoles = [...roles].filter((r) => !r.isDefault).sort((a, b) => b.position - a.position);
 
   const renderMember = (m: ServerMember) => {
     const displayColor = getDisplayColor(m);
@@ -206,55 +187,6 @@ export default function MemberList() {
           position={{ x: profileCard.x, y: profileCard.y }}
           onClose={() => setProfileCard(null)}
         />
-      )}
-      {showRoleAssign && roleAssignTarget && createPortal(
-        <div className="modal-overlay" onClick={() => setShowRoleAssign(false)}>
-          <div className="modal role-assign-modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Manage Roles</h2>
-            <div className="role-assign-target">
-              <div className="member-manage-avatar">
-                {roleAssignTarget.user.avatarUrl ? (
-                  <img src={roleAssignTarget.user.avatarUrl.startsWith('http') ? roleAssignTarget.user.avatarUrl : `${getApiBase()}${roleAssignTarget.user.avatarUrl}`} alt={roleAssignTarget.user.displayName} />
-                ) : (
-                  <span>{roleAssignTarget.user.displayName.charAt(0).toUpperCase()}</span>
-                )}
-              </div>
-              <span className="role-assign-target-name">{roleAssignTarget.user.displayName}</span>
-            </div>
-            <div className="role-assign-list">
-              {assignableRoles.map((role) => {
-                const checked = selectedRoleIds.includes(role.id);
-                return (
-                  <div
-                    key={role.id}
-                    className={`role-assign-item${checked ? ' active' : ''}`}
-                    onClick={() => {
-                      if (checked) {
-                        setSelectedRoleIds(selectedRoleIds.filter((id) => id !== role.id));
-                      } else {
-                        setSelectedRoleIds([...selectedRoleIds, role.id]);
-                      }
-                    }}
-                  >
-                    <span className="role-assign-color" style={{ background: role.color }} />
-                    <span className="role-assign-name">{role.name}</span>
-                    <div className={`toggle-switch small${checked ? ' on' : ''}`}>
-                      <div className="toggle-knob" />
-                    </div>
-                  </div>
-                );
-              })}
-              {assignableRoles.length === 0 && (
-                <p className="role-assign-empty">No roles created yet.</p>
-              )}
-            </div>
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => setShowRoleAssign(false)}>Cancel</button>
-              <button onClick={handleSaveRoles}>Save</button>
-            </div>
-          </div>
-        </div>,
-        document.body,
       )}
     </div>
   );

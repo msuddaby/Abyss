@@ -317,17 +317,17 @@ export default function MessageItem({
         </div>
       ) : (
         <div className="message-avatar clickable" onClick={handleAuthorClick}>
-          {message.author.avatarUrl ? (
+          {authorAvatarUrl ? (
             <img
               src={
-                message.author.avatarUrl.startsWith("http")
-                  ? message.author.avatarUrl
-                  : `${getApiBase()}${message.author.avatarUrl}`
+                authorAvatarUrl.startsWith("http")
+                  ? authorAvatarUrl
+                  : `${getApiBase()}${authorAvatarUrl}`
               }
-              alt={message.author.displayName}
+              alt={authorDisplayName}
             />
           ) : (
-            <span>{message.author.displayName.charAt(0).toUpperCase()}</span>
+            <span>{authorDisplayName.charAt(0).toUpperCase()}</span>
           )}
         </div>
       )}
@@ -339,7 +339,7 @@ export default function MessageItem({
               onClick={handleAuthorClick}
               style={authorStyle}
             >
-              {message.author.displayName}
+              {authorDisplayName}
             </span>
             <span className="message-time">
               {formatDate(message.createdAt)} at {formatTime(message.createdAt)}

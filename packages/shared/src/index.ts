@@ -35,6 +35,7 @@ export { useMediaProviderStore } from './stores/mediaProviderStore.js';
 export { useWatchPartyStore } from './stores/watchPartyStore.js';
 export { useSoundboardStore } from './stores/soundboardStore.js';
 export { useServerConfigStore } from './stores/serverConfigStore.js';
+export { useRateLimitStore } from './stores/rateLimitStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';
@@ -45,3 +46,4 @@ export { parseMentions, resolveMentionName, resolveCustomEmoji, MENTION_EMOJI_RE
 export type { MentionSegment } from './utils/mentions.js';
 export { shouldGroupMessage, groupReactions } from './utils/messages.js';
 export { getNameplateStyle, getMessageStyle, parseCosmeticCss } from './utils/cosmetics.js';
+export { parseValidationErrors, getFieldError, getGeneralError, hasFieldError } from './utils/validation.js';

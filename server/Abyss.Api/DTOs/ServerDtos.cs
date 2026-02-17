@@ -1,10 +1,13 @@
+using System.ComponentModel.DataAnnotations;
+using Abyss.Api.Validation;
 using Microsoft.AspNetCore.Http;
 
 namespace Abyss.Api.DTOs;
 
-public record CreateServerRequest(string Name);
+public record CreateServerRequest([Required, StringLength(32, MinimumLength = 1)] string Name);
 public class UpdateServerRequest
 {
+    [StringLength(32, MinimumLength = 1)]
     public string? Name { get; set; }
     public IFormFile? Icon { get; set; }
     public bool? RemoveIcon { get; set; }
@@ -12,8 +15,15 @@ public class UpdateServerRequest
     public Guid? JoinLeaveChannelId { get; set; }
 }
 public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, bool JoinLeaveMessagesEnabled, Guid? JoinLeaveChannelId, int DefaultNotificationLevel = 0);
-public record CreateChannelRequest(string Name, string Type, int? UserLimit = null);
-public record UpdateChannelRequest(string Name, bool? PersistentChat = null, int? UserLimit = null);
+public record CreateChannelRequest(
+    [Required, StringLength(32, MinimumLength = 1)] string Name,
+    [Required] string Type,
+    [Range(0, 99)] int? UserLimit = null);
+
+public record UpdateChannelRequest(
+    [Required, StringLength(32, MinimumLength = 1)] string Name,
+    bool? PersistentChat = null,
+    [Range(0, 99)] int? UserLimit = null);
 public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
 public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null);
 public record ChannelPermissionOverrideDto(Guid RoleId, long Allow, long Deny);
@@ -28,8 +38,18 @@ public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto Pi
 public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji);
 public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string? PosterPath, string ContentType, long Size);
 public record AuditLogDto(Guid Id, string Action, string ActorId, UserDto Actor, string? TargetId, string? TargetName, string? Details, DateTime CreatedAt);
-public record CreateRoleRequest(string Name, string Color, long Permissions, bool DisplaySeparately);
-public record UpdateRoleRequest(string? Name, string? Color, long? Permissions, int? Position, bool? DisplaySeparately);
+public record CreateRoleRequest(
+    [Required, StringLength(32, MinimumLength = 1)] string Name,
+    [Required, HexColor] string Color,
+    long Permissions,
+    bool DisplaySeparately);
+
+public record UpdateRoleRequest(
+    [StringLength(32, MinimumLength = 1)] string? Name,
+    [HexColor] string? Color,
+    long? Permissions,
+    int? Position,
+    bool? DisplaySeparately);
 public record UpdateMemberRolesRequest(List<Guid> RoleIds);
 public record BanMemberRequest(string? Reason);
 public record ServerBanDto(Guid Id, string UserId, UserDto User, string BannedById, UserDto BannedBy, string? Reason, DateTime CreatedAt);
@@ -38,9 +58,9 @@ public record ChannelUnreadDto(Guid ChannelId, bool HasUnread, int MentionCount)
 public record ServerUnreadDto(Guid ServerId, bool HasUnread, int MentionCount);
 public record NotificationDto(Guid Id, Guid MessageId, Guid ChannelId, Guid? ServerId, string Type, DateTime CreatedAt);
 public record CustomEmojiDto(Guid Id, Guid ServerId, string Name, string ImageUrl, string CreatedById, DateTime CreatedAt);
-public record RenameEmojiRequest(string Name);
+public record RenameEmojiRequest([Required, EmojiName] string Name);
 public record SoundboardClipDto(Guid Id, Guid ServerId, string Name, string Url, string UploadedById, double Duration, long FileSize, DateTime CreatedAt);
-public record RenameSoundboardClipRequest(string Name);
+public record RenameSoundboardClipRequest([Required, SoundboardName] string Name);
 public record FriendshipDto(Guid Id, UserDto User, string Status, DateTime CreatedAt, DateTime? AcceptedAt);
 public record FriendRequestDto(Guid Id, UserDto User, bool IsOutgoing, DateTime CreatedAt);
 public record DmChannelDto(Guid Id, UserDto OtherUser, DateTime? LastMessageAt, DateTime CreatedAt, string? LastMessageContent = null, string? LastMessageAuthorName = null);

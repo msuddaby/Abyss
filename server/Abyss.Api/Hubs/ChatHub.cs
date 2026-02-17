@@ -19,6 +19,7 @@ public class ChatHub : Hub
     private readonly NotificationService _notifications;
     private readonly WatchPartyService _watchPartyService;
     private readonly CosmeticService _cosmetics;
+    private readonly HubRateLimiter _rateLimiter;
 
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
@@ -49,7 +50,7 @@ public class ChatHub : Hub
         public CancellationTokenSource Cancellation { get; } = new();
     }
 
-    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics)
+    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics, HubRateLimiter rateLimiter)
     {
         _db = db;
         _voiceState = voiceState;
@@ -57,6 +58,7 @@ public class ChatHub : Hub
         _notifications = notifications;
         _watchPartyService = watchPartyService;
         _cosmetics = cosmetics;
+        _rateLimiter = rateLimiter;
     }
 
     private string UserId => Context.User!.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -324,6 +326,7 @@ public class ChatHub : Hub
         {
             _activeChannels.TryRemove(UserId, out _);
             _lastHeartbeats.TryRemove(UserId, out _);
+            _rateLimiter.RemoveUser(UserId);
 
             // Get user to check presence status
             var user = await _db.Users.FindAsync(UserId);

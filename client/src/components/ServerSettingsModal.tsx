@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 import AudioTrimmer from './AudioTrimmer';
+import { useModerationStore } from '../stores/moderationStore';
 import SettingsModal from './SettingsModal';
 import type { SettingsTab } from './SettingsModal';
 
@@ -132,7 +133,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [confirmName, setConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const { fetchAuditLogs, deleteServer, activeServer, fetchBans, unbanMember, kickMember, banMember } = useServerStore();
+  const { fetchAuditLogs, deleteServer, activeServer, fetchBans, unbanMember } = useServerStore();
   const channels = useServerStore((s) => s.channels);
   const members = useServerStore((s) => s.members);
   const roles = useServerStore((s) => s.roles);
@@ -510,13 +511,20 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                               }}>Roles</button>
                             )}
                             {showKick && (
-                              <button className="btn-danger-sm" onClick={() => kickMember(serverId, m.userId)}>Kick</button>
+                              <button className="btn-danger-sm" onClick={() => useModerationStore.getState().open({
+                                type: 'kick',
+                                serverId,
+                                userId: m.userId,
+                                displayName: m.user.displayName || m.user.username,
+                              })}>Kick</button>
                             )}
                             {showBan && (
-                              <button className="btn-danger-sm" onClick={() => {
-                                const reason = prompt('Ban reason (optional):');
-                                banMember(serverId, m.userId, reason || undefined);
-                              }}>Ban</button>
+                              <button className="btn-danger-sm" onClick={() => useModerationStore.getState().open({
+                                type: 'ban',
+                                serverId,
+                                userId: m.userId,
+                                displayName: m.user.displayName || m.user.username,
+                              })}>Ban</button>
                             )}
                           </div>
                         </div>

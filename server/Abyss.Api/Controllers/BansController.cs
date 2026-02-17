@@ -95,7 +95,7 @@ public class BansController : ControllerBase
 
         if (member != null)
         {
-            await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false);
+            await _systemMessages.SendMemberJoinLeaveAsync(serverId, userId, joined: false, action: "banned", reason: req?.Reason);
         }
         return Ok();
     }

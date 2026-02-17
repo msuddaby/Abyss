@@ -18,7 +18,7 @@ public class SystemMessageService
         _hub = hub;
     }
 
-    public async Task SendMemberJoinLeaveAsync(Guid serverId, string userId, bool joined)
+    public async Task SendMemberJoinLeaveAsync(Guid serverId, string userId, bool joined, string? action = null, string? reason = null)
     {
         var server = await _db.Servers.FindAsync(serverId);
         if (server == null || !server.JoinLeaveMessagesEnabled) return;
@@ -48,10 +48,20 @@ public class SystemMessageService
         var author = await _db.Users.FindAsync(userId);
         if (author == null) return;
 
+        string content;
+        if (joined)
+            content = "joined the server.";
+        else if (action == "banned")
+            content = string.IsNullOrWhiteSpace(reason) ? "was banned." : $"was banned: {reason}";
+        else if (action == "kicked")
+            content = "was kicked.";
+        else
+            content = "left the server.";
+
         var message = new Message
         {
             Id = Guid.NewGuid(),
-            Content = joined ? "joined the server." : "left the server.",
+            Content = content,
             AuthorId = userId,
             ChannelId = channelId.Value,
             CreatedAt = DateTime.UtcNow,

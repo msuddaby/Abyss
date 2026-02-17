@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace Abyss.Api.Models;
 
 public enum ChannelType
@@ -10,6 +12,7 @@ public enum ChannelType
 public class Channel
 {
     public Guid Id { get; set; }
+    [MaxLength(32)]
     public string? Name { get; set; }
     public ChannelType Type { get; set; } = ChannelType.Text;
     public Guid? ServerId { get; set; }

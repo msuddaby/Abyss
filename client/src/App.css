@@ -187,6 +187,28 @@ body.window-hidden *::after {
   font-size: 14px;
 }
 
+/* Field-level validation errors */
+.field-error {
+  display: block;
+  color: var(--danger);
+  font-size: 12px;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+label.has-error input,
+label.has-error textarea,
+label.has-error select {
+  border-color: var(--danger);
+}
+
+label.has-error input:focus,
+label.has-error textarea:focus,
+label.has-error select:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(237, 66, 69, 0.1);
+}
+
 .auth-link {
   margin-top: 8px;
   font-size: 14px;
@@ -2486,6 +2508,16 @@ body.window-hidden *::after {
   color: var(--text-normal);
 }
 
+.rate-limit-banner {
+  padding: 6px 12px;
+  background: #d32f2f;
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+  border-radius: 4px;
+  margin: 0 0 4px;
+}
+
 .file-previews {
   display: flex;
   gap: 8px;
@@ -4221,6 +4253,24 @@ body.window-hidden *::after {
 }
 
 .settings-textarea:focus {
+  border-color: var(--brand-color);
+}
+
+.moderation-reason-input {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid #040405;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+}
+
+.moderation-reason-input:focus {
   border-color: var(--brand-color);
 }
 

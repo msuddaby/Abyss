@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { useAuthStore, useServerConfigStore } from "@abyss/shared";
+import { useAuthStore, useServerConfigStore, parseValidationErrors, getGeneralError } from "@abyss/shared";
 import { Link, useNavigate } from "react-router-dom";
 import { Capacitor } from "@capacitor/core";
 import ServerSetupModal from "../components/ServerSetupModal";
+import FormField from "../components/FormField";
 
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
@@ -11,6 +12,7 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
+  const [validationErrors, setValidationErrors] = useState<Record<string, string[]> | null>(null);
   const register = useAuthStore((s) => s.register);
   const navigate = useNavigate();
   const hasConfigured = useServerConfigStore((s) => s.hasConfigured);
@@ -26,6 +28,7 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault();
     setError("");
+    setValidationErrors(null);
     try {
       await register(
         username,
@@ -36,11 +39,23 @@ export default function RegisterPage() {
       );
       navigate("/");
     } catch (err: any) {
-      const data = err.response?.data;
-      if (Array.isArray(data)) {
-        setError(data.map((e: any) => e.description).join(", "));
+      // Try to parse validation errors
+      const parsedErrors = parseValidationErrors(err);
+      if (parsedErrors) {
+        setValidationErrors(parsedErrors);
+        // Show general error if present
+        const generalError = getGeneralError(parsedErrors);
+        if (generalError) {
+          setError(generalError);
+        }
       } else {
-        setError(data || "Registration failed");
+        // Fallback to old error handling for non-validation errors
+        const data = err.response?.data;
+        if (Array.isArray(data)) {
+          setError(data.map((e: any) => e.description).join(", "));
+        } else {
+          setError(data || "Registration failed");
+        }
       }
     }
   };
@@ -57,51 +72,61 @@ export default function RegisterPage() {
         <form className="auth-form" onSubmit={handleSubmit}>
           <h1>Create an account</h1>
           {error && <div className="auth-error">{error}</div>}
-          <label>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Display Name
-            <input
-              type="text"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Username
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Invite Code
-            <input
-              type="text"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-              placeholder="Only required if invite-only is enabled"
-            />
-          </label>
+
+          <FormField
+            label="Email"
+            name="Email"
+            type="email"
+            value={email}
+            onChange={setEmail}
+            required
+            errors={validationErrors}
+            autoComplete="email"
+          />
+
+          <FormField
+            label="Display Name"
+            name="DisplayName"
+            type="text"
+            value={displayName}
+            onChange={setDisplayName}
+            required
+            errors={validationErrors}
+            autoComplete="name"
+          />
+
+          <FormField
+            label="Username"
+            name="Username"
+            type="text"
+            value={username}
+            onChange={setUsername}
+            required
+            errors={validationErrors}
+            autoComplete="username"
+          />
+
+          <FormField
+            label="Password"
+            name="Password"
+            type="password"
+            value={password}
+            onChange={setPassword}
+            required
+            errors={validationErrors}
+            autoComplete="new-password"
+          />
+
+          <FormField
+            label="Invite Code"
+            name="InviteCode"
+            type="text"
+            value={inviteCode}
+            onChange={setInviteCode}
+            placeholder="Only required if invite-only is enabled"
+            errors={validationErrors}
+          />
+
           <button type="submit">Continue</button>
           <p className="auth-link">
             <Link to="/login">Already have an account?</Link>
