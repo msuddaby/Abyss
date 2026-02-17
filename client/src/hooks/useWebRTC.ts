@@ -3768,6 +3768,11 @@ export function useWebRTC() {
             const authoritative = new Map(Object.entries(users));
             useVoiceStore.getState().setParticipants(authoritative);
 
+            // Skip P2P peer management when in SFU mode
+            if (isInSfuMode() || useVoiceStore.getState().connectionMode === 'sfu' || useVoiceStore.getState().connectionMode === 'attempting-sfu') {
+              return;
+            }
+
             const currentUser = useAuthStore.getState().user;
             const myId = currentUser?.id;
             for (const peerId of peers.keys()) {
