@@ -53,20 +53,11 @@ services:
     image: livekit/livekit-server:v1.9
     container_name: abyss-livekit
     command: --config /etc/livekit.yaml
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
-      - "50000-50100:50000-50100/udp"
+    network_mode: host
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     environment:
       LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7880/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     restart: unless-stopped
 
 volumes:
