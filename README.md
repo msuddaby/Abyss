@@ -45,8 +45,7 @@ tl;dr Discord sucks and there's no sane alternative that offers all of the featu
 ├── client/                 # React web + Capacitor mobile (iOS/Android)
 ├── packages/
 │   ├── shared/             # Shared TypeScript (types, stores, services)
-│   ├── desktop/            # Electron desktop app
-│   └── app/                # Expo mobile app (deprecated)
+│   └── desktop/            # Electron desktop app
 ├── docker-compose.yml      # Production deployment
 ├── docker-compose.dev.yml  # Development (DB + TURN only)
 ├── .env                    # All configuration (not committed)
