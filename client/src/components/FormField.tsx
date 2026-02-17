@@ -27,7 +27,7 @@ export default function FormField({
   errors,
   autoComplete,
 }: FormFieldProps) {
-  const error = getFieldError(errors, name);
+  const error = getFieldError(errors ?? null, name);
   const hasError = !!error;
 
   return (

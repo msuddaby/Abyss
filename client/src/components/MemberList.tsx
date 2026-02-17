@@ -7,7 +7,6 @@ import { useWindowVisibility } from '../hooks/useWindowVisibility';
 
 export default function MemberList() {
   const members = useServerStore((s) => s.members);
-  const activeServer = useServerStore((s) => s.activeServer);
   const roles = useServerStore((s) => s.roles);
   const onlineUsers = usePresenceStore((s) => s.onlineUsers);
   const userStatuses = usePresenceStore((s) => s.userStatuses);
