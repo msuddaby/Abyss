@@ -88,6 +88,67 @@ function shouldFallbackToSFU(): boolean {
   return false;
 }
 
+// Tear down P2P connections without leaving the voice channel or setting
+// connectionState to "disconnected". Used during P2P → SFU transition so the
+// participant list and SignalR group membership stay intact.
+function cleanupP2PConnections() {
+  voiceSessionId++;
+  if (noiseSuppressor) {
+    noiseSuppressor.destroy();
+    noiseSuppressor = null;
+  }
+  peerStream = null;
+  peers.forEach((pc) => pc.close());
+  peers.clear();
+  audioElements.forEach((audio) => {
+    audio.pause();
+    audio.srcObject = null;
+    audio.remove();
+  });
+  audioElements.clear();
+  screenAudioElements.forEach((audio) => {
+    audio.pause();
+    audio.srcObject = null;
+    audio.remove();
+  });
+  screenAudioElements.clear();
+  cleanupAnalysers();
+  peerStreams.clear();
+  gainNodes.forEach((entry) => entry.source.disconnect());
+  gainNodes.clear();
+  screenVideoStreams.clear();
+  cameraVideoStreams.clear();
+  pendingCandidates.clear();
+  gatheredCandidates.clear();
+  clearAllPendingTrackState();
+  screenTrackSenders.clear();
+  cameraTrackSenders.clear();
+  signalingQueues.clear();
+  lastIceRestartTime.clear();
+  iceRestartAttempts.clear();
+  prevBytesReceived.clear();
+  zombieStaleCount.clear();
+  lastZombieRecreate.clear();
+  iceReconnectTimers.forEach((t) => clearTimeout(t));
+  iceReconnectTimers.clear();
+  iceNewStateTimers.forEach((t) => clearTimeout(t));
+  iceNewStateTimers.clear();
+  cancelInitialParticipantWait();
+  stopStatsCollection();
+  if (localStream) {
+    localStream.getTracks().forEach((track) => track.stop());
+    localStream = null;
+  }
+  if (screenStream) {
+    screenStream.getTracks().forEach((track) => track.stop());
+    screenStream = null;
+  }
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((track) => track.stop());
+    cameraStream = null;
+  }
+}
+
 async function fallbackToSFU(reason: string): Promise<void> {
   const voiceState = useVoiceStore.getState();
   const channelId = voiceState.currentChannelId;
@@ -95,28 +156,18 @@ async function fallbackToSFU(reason: string): Promise<void> {
 
   console.warn(`[fallback] Switching to SFU mode: ${reason}`);
   voiceState.setFallbackReason(reason);
+  voiceState.setConnectionMode('attempting-sfu');
 
   try {
-    // Close all P2P connections
-    cleanupAll();
+    // Tear down P2P connections but stay in the SignalR voice group.
+    // This preserves the participant list and avoids leave/join sound
+    // spam for other users in the channel.
+    cleanupP2PConnections();
 
-    // Notify server we're leaving P2P (will re-join via SFU-side SignalR)
-    try {
-      const conn = getConnection();
-      await conn.invoke('LeaveVoiceChannel', channelId);
-    } catch { /* ignore */ }
-
-    // Connect via LiveKit SFU
-    voiceState.setCurrentChannel(channelId);
+    // Connect via LiveKit SFU (sets mode to 'sfu' on success)
     await connectToLiveKit(channelId);
 
-    // Re-join SignalR voice group so sidebar/state updates still work
-    try {
-      const conn = getConnection();
-      await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
-    } catch { /* ignore */ }
-
-    useToastStore.getState().addToast(`Switched to relay mode: ${reason}`, 'info');
+    useToastStore.getState().addToast('Switched to relay mode', 'info');
 
     p2pFailedPeers.clear();
     voiceState.resetP2PFailures();

@@ -3012,6 +3012,15 @@ body.window-hidden *::after {
   color: #8b9fff;
 }
 
+.connection-mode-badge.sfu.attempting {
+  animation: badge-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Loading state for voice buttons */
 .vc-btn.loading {
   opacity: 0.6;
