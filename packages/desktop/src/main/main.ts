@@ -21,6 +21,24 @@ try {
   // electron-squirrel-startup not installed (NSIS builds); nothing to do.
 }
 
+// Single instance lock — if another instance is already running, focus it
+// and quit this one. If the existing instance is unresponsive (lock held but
+// no windows), Electron will release the lock and let this instance take over.
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+  process.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // Register custom scheme before app is ready — gives the renderer a real
 // origin (app://abyss) instead of file://, which fixes YouTube embedding
 // (error 150/153) and other web APIs that reject null/file:// origins.
