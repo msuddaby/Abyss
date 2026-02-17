@@ -9783,12 +9783,20 @@ body.window-hidden *::after {
     bottom: 0;
     width: 312px;
     z-index: 200;
-    transform: translateX(-100%);
-    transition: transform 0.22s ease;
+    /* CSS variable for interactive drag offset */
+    transform: translateX(calc(-100% + var(--drag-offset, 0px)));
+    /* Transition controlled by dragging state */
+    transition: transform var(--transition-duration, 0.22s) ease;
     background: var(--bg-secondary);
+    /* Allow vertical scroll, capture horizontal */
+    touch-action: pan-y;
   }
   .left-drawer.open {
-    transform: translateX(0);
+    --drag-offset: 312px;
+  }
+  .left-drawer.dragging {
+    /* Disable transition during active drag */
+    --transition-duration: 0s;
   }
   .left-drawer .server-sidebar {
     height: 100%;

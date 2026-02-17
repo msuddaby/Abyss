@@ -444,15 +444,27 @@ function startStatsCollection() {
         prevBytesReceived.set(peerId, peerBytesReceived);
 
         if ((iceState === "connected" || iceState === "completed") && prev != null && peerBytesReceived === prev) {
+          // Check if remote user is muted — no data is expected, so skip zombie detection
+          const zombieChannelId = useVoiceStore.getState().currentChannelId;
+          if (zombieChannelId) {
+            const channelUsers = useServerStore.getState().voiceChannelUsers.get(zombieChannelId);
+            const peerVoiceState = channelUsers?.get(peerId);
+            if (peerVoiceState && (peerVoiceState.isMuted || peerVoiceState.isDeafened || peerVoiceState.isServerMuted || peerVoiceState.isServerDeafened)) {
+              // Remote user is muted/deafened — bytesReceived stall is expected, not a zombie
+              zombieStaleCount.delete(peerId);
+              continue;
+            }
+          }
+
           const count = (zombieStaleCount.get(peerId) ?? 0) + 1;
           zombieStaleCount.set(peerId, count);
           if (count >= ZOMBIE_STALE_THRESHOLD) {
             const lastRecreate = lastZombieRecreate.get(peerId) ?? 0;
             if (Date.now() - lastRecreate < ZOMBIE_COOLDOWN_MS) {
-              console.warn(`[zombie] Skipping recreation for ${peerId}, cooldown active`);
+              console.warn(`[zombie] Skipping recreation for ${peerId}, cooldown active (${Math.round((ZOMBIE_COOLDOWN_MS - (Date.now() - lastRecreate)) / 1000)}s remaining)`);
               zombieStaleCount.delete(peerId);
             } else {
-              console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer`);
+              console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer | bytesReceived=${peerBytesReceived} bytesSent=${peerBytesSent} connectionType=${peerConnectionType} local=${localCandidateType} remote=${remoteCandidateType} proto=${transportProtocol}`);
               zombieStaleCount.delete(peerId);
               prevBytesReceived.delete(peerId);
               lastZombieRecreate.set(peerId, Date.now());
@@ -463,6 +475,12 @@ function startStatsCollection() {
           }
         } else {
           zombieStaleCount.delete(peerId);
+          // Log recovery after a zombie recreation so we can confirm the fix worked
+          if (lastZombieRecreate.has(peerId) && prev != null && peerBytesReceived > prev) {
+            const elapsed = Math.round((Date.now() - lastZombieRecreate.get(peerId)!) / 1000);
+            console.log(`[zombie] Audio recovered for ${peerId} — ${peerBytesReceived - prev} new bytes received ${elapsed}s after recreation`);
+            lastZombieRecreate.delete(peerId);
+          }
         }
       } catch {
         // peer may have closed
@@ -1179,6 +1197,16 @@ async function recreatePeer(peerId: string) {
   const hadScreenTracks = screenTrackSenders.has(peerId);
   await enqueueSignaling(peerId, async () => {
     console.warn(`[recreate] Recreating peer connection for ${peerId} (hadScreenTracks=${hadScreenTracks}, hasLocalStream=${!!localStream}, hasCamera=${!!cameraStream}, hasScreenStream=${!!screenStream})`);
+    // Tell the remote peer to close their existing PC so they create a fresh
+    // one when our offer arrives.  Without this, the remote side renegotiates
+    // on a stale PC whose DTLS/SRTP pipeline may not restart properly,
+    // causing one-directional audio (zombie audio that never resolves).
+    const preConn = getConnection();
+    await preConn.invoke(
+      "SendSignal",
+      peerId,
+      JSON.stringify({ type: "peer-reset" }),
+    );
     const pc = createPeerConnection(peerId, { preserveZombieRecreateCooldown: true });
     const outStream = getPeerStream();
     if (outStream) {
@@ -2541,6 +2569,17 @@ function setupSignalRListeners() {
 
     const data = JSON.parse(signal);
 
+    if (data.type === "peer-reset") {
+      // Remote peer is about to recreate their PeerConnection (e.g. zombie
+      // recovery).  Close our existing PC so the incoming offer creates a
+      // fresh one on both sides — prevents stale DTLS/SRTP state that causes
+      // one-directional audio.
+      const existingPc = peers.get(fromUserId);
+      console.log(`[peer-reset] ${fromUserId} requested peer reset, closing existing PC (exists=${!!existingPc}${existingPc ? ` connectionState=${existingPc.connectionState} iceState=${existingPc.iceConnectionState} senders=${existingPc.getSenders().length} receivers=${existingPc.getReceivers().length}` : ""})`);
+      closePeer(fromUserId);
+      return;
+    }
+
     if (data.type === "track-info") {
       if (
         data.trackType !== "camera" &&
@@ -2578,6 +2617,7 @@ function setupSignalRListeners() {
         let pc = peers.get(fromUserId);
         if (pc && pc.signalingState !== "closed") {
           // Glare detection: both sides sent offers simultaneously
+          let didRollback = false;
           if (pc.signalingState === "have-local-offer") {
             // Deterministic tiebreaker — "polite" peer yields its offer
             const isPolite = currentUser!.id > fromUserId;
@@ -2589,6 +2629,7 @@ function setupSignalRListeners() {
             console.log(`[glare] Rolling back our offer, will answer remote offer instead`);
             await pc.setLocalDescription({ type: "rollback" } as RTCSessionDescriptionInit);
             console.log(`[glare] Rollback complete, signalingState=${pc.signalingState}`);
+            didRollback = true;
           }
 
           // Renegotiation: reuse existing connection — flush stale candidates
@@ -2610,6 +2651,29 @@ function setupSignalRListeners() {
               fromUserId,
               JSON.stringify({ type: "answer", sdp: answer.sdp }),
             );
+
+            // After glare rollback, our rolled-back offer may have contained
+            // camera/screen tracks that the remote offer didn't include.
+            // Re-offer so those senders get negotiated.
+            if (didRollback) {
+              const hasScreenSenders = screenTrackSenders.has(fromUserId);
+              const hasCameraSender = cameraTrackSenders.has(fromUserId);
+              if (hasScreenSenders || hasCameraSender) {
+                console.log(`[glare] Scheduling renegotiation for ${fromUserId} to restore tracks lost in rollback (screen=${hasScreenSenders}, camera=${hasCameraSender})`);
+                void enqueueSignaling(fromUserId, async () => {
+                  const rePc = peers.get(fromUserId);
+                  if (!rePc || rePc.signalingState !== "stable") return;
+                  const reOffer = await rePc.createOffer();
+                  await rePc.setLocalDescription(reOffer);
+                  await conn.invoke(
+                    "SendSignal",
+                    fromUserId,
+                    JSON.stringify({ type: "offer", sdp: reOffer.sdp }),
+                  );
+                  console.log(`[glare] Renegotiation offer sent to ${fromUserId}`);
+                }).catch(console.error);
+              }
+            }
           } catch (err) {
             console.warn(`Renegotiation failed for ${fromUserId}, recreating:`, err);
             // SDP state is likely corrupt — rebuild with a fresh connection
