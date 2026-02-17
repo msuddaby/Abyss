@@ -277,10 +277,13 @@ public class ChatHub : Hub
         }
 
         // Auto-restore from server-set away: if the server marked this user
-        // as Away due to stale heartbeats, restore to Online on reconnect
-        if (_serverAutoAway.TryRemove(UserId, out _) && user.PresenceStatus == 1)
+        // as Away due to stale heartbeats, restore to Online on reconnect.
+        // Check both in-memory dict and DB column (DB survives server restarts).
+        var wasAutoAway = _serverAutoAway.TryRemove(UserId, out _) || user.IsAutoAway;
+        if (wasAutoAway && user.PresenceStatus == 1)
         {
             user.PresenceStatus = 0;
+            user.IsAutoAway = false;
             await _db.SaveChangesAsync();
         }
 
@@ -333,9 +336,11 @@ public class ChatHub : Hub
 
             // If the server auto-set this user to Away, reset to Online in the DB
             // so they don't appear as Away on their next login
-            if (_serverAutoAway.TryRemove(UserId, out _) && user != null && user.PresenceStatus == 1)
+            var wasAutoAway = _serverAutoAway.TryRemove(UserId, out _) || (user != null && user.IsAutoAway);
+            if (wasAutoAway && user != null && user.PresenceStatus == 1)
             {
                 user.PresenceStatus = 0;
+                user.IsAutoAway = false;
                 await _db.SaveChangesAsync();
             }
 

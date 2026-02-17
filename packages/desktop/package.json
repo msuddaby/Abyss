@@ -1,7 +1,7 @@
 {
   "name": "abyss-desktop",
   "productName": "Abyss",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Abyss Desktop - Electron wrapper for Abyss web client",
   "main": "dist/main/main.js",
   "scripts": {

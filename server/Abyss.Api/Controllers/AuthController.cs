@@ -226,6 +226,7 @@ public class AuthController : ControllerBase
 
         var previousStatus = user.PresenceStatus;
         user.PresenceStatus = request.PresenceStatus;
+        user.IsAutoAway = false;
         await _userManager.UpdateAsync(user);
 
         // Clear server auto-away flag so PresenceMonitorService can re-detect

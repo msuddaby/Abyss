@@ -43,9 +43,10 @@ export function useIdleDetection() {
     // to the web timer. Once we see a value >= 5s, we know it works.
     let systemIdleApiWorks = false;
 
-    const updatePresence = async (status: number) => {
+    // Returns true if the API call succeeded (or was a no-op).
+    const updatePresence = async (status: number): Promise<boolean> => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
-      if (currentStatus === status) return;
+      if (currentStatus === status) return true;
       try {
         await api.put(`${getApiBase()}/api/auth/presence`, {
           presenceStatus: status
@@ -57,8 +58,10 @@ export function useIdleDetection() {
         if (!disposed) {
           setPresenceStatus(status);
         }
+        return true;
       } catch (error) {
         console.error('Failed to update presence status:', error);
+        return false;
       }
     };
 
@@ -88,11 +91,19 @@ export function useIdleDetection() {
       await updatePresence(PresenceStatus.Away);
     };
 
+    let restoring = false;
     const restoreIfAutoAway = async () => {
+      if (restoring) return; // already attempting
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
       if (!autoAwayRef.current || currentStatus !== PresenceStatus.Away) return;
-      autoAwayRef.current = false;
-      await updatePresence(PresenceStatus.Online);
+      restoring = true;
+      try {
+        const ok = await updatePresence(PresenceStatus.Online);
+        if (ok) autoAwayRef.current = false;
+        // If API failed, autoAwayRef stays true so next activity retries
+      } finally {
+        restoring = false;
+      }
     };
 
     // Send a presence heartbeat to the server so PresenceMonitorService knows
@@ -111,32 +122,38 @@ export function useIdleDetection() {
       }
     };
 
-    // Probe whether Electron's getSystemIdleTime() works. On working systems
-    // (X11, macOS, Windows) it returns seconds since last input to ANY app.
-    // On broken systems (Wayland) it always returns 0. We probe a few times
-    // over 2 minutes — if we ever see >= 5s, we know it works.
+    // On macOS and Windows, powerMonitor.getSystemIdleTime() always works.
+    // On Linux Wayland it always returns 0 — we probe to detect this and
+    // fall back to the web timer. We probe a few times over 2 minutes;
+    // if we ever see >= 5s, we know it works.
     let probeCount = 0;
     const MAX_PROBES = 4;
     let probeInterval: ReturnType<typeof setInterval> | null = null;
 
     if (typeof window.electron?.getSystemIdleTime === 'function') {
-      probeInterval = setInterval(async () => {
-        if (disposed) { clearInterval(probeInterval!); return; }
-        probeCount++;
-        try {
-          const secs = await window.electron!.getSystemIdleTime();
-          if (secs >= 5) {
-            systemIdleApiWorks = true;
+      if (window.electron.platform !== 'linux') {
+        // macOS / Windows: API always works, no probe needed
+        systemIdleApiWorks = true;
+      } else {
+        // Linux: probe needed because Wayland may always return 0
+        probeInterval = setInterval(async () => {
+          if (disposed) { clearInterval(probeInterval!); return; }
+          probeCount++;
+          try {
+            const secs = await window.electron!.getSystemIdleTime();
+            if (secs >= 5) {
+              systemIdleApiWorks = true;
+              clearInterval(probeInterval!);
+              probeInterval = null;
+            }
+          } catch { /* ignore */ }
+          if (probeCount >= MAX_PROBES && !systemIdleApiWorks) {
+            // API appears broken — web timer will be the sole idle mechanism
             clearInterval(probeInterval!);
             probeInterval = null;
           }
-        } catch { /* ignore */ }
-        if (probeCount >= MAX_PROBES && !systemIdleApiWorks) {
-          // API appears broken — web timer will be the sole idle mechanism
-          clearInterval(probeInterval!);
-          probeInterval = null;
-        }
-      }, 30_000);
+        }, 30_000);
+      }
     }
 
     // Electron: idle detection runs in the main process (immune to renderer

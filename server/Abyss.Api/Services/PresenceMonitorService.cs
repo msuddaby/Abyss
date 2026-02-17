@@ -89,6 +89,7 @@ public class PresenceMonitorService : BackgroundService
             if (user.PresenceStatus != 0) continue;
 
             user.PresenceStatus = 1; // Away
+            user.IsAutoAway = true;
             await db.SaveChangesAsync(ct);
 
             ChatHub._serverAutoAway[userId] = 0;
