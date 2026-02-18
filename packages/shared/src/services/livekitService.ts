@@ -23,6 +23,14 @@ let currentRoom: Room | null = null;
 // Audio elements created for remote participants (cleaned up on disconnect)
 const sfuAudioElements = new Map<string, HTMLAudioElement>();
 
+// GainNode entries for participants whose volume is boosted above 100%
+interface SfuGainEntry {
+  audioCtx: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  gain: GainNode;
+}
+const sfuGainNodes = new Map<string, SfuGainEntry>();
+
 // Video streams from remote participants via SFU (screen share + camera)
 const sfuScreenStreams = new Map<string, MediaStream>();
 const sfuCameraStreams = new Map<string, MediaStream>();
@@ -127,15 +135,15 @@ function setupRoomListeners(room: Room): void {
     if (track.kind === Track.Kind.Audio) {
       console.log('[livekit] Audio track subscribed from:', participant.identity);
       const audioElement = track.attach();
-      const voiceState = useVoiceStore.getState();
-      const userVol = voiceState.userVolumes.get(participant.identity);
-      if (voiceState.isDeafened) {
-        audioElement.volume = 0;
-      } else if (userVol !== undefined) {
-        audioElement.volume = userVol / 100;
-      }
       document.body.appendChild(audioElement);
       sfuAudioElements.set(participant.identity, audioElement);
+      const voiceState = useVoiceStore.getState();
+      if (voiceState.isDeafened) {
+        audioElement.volume = 0;
+      } else {
+        const userVol = voiceState.userVolumes.get(participant.identity) ?? 100;
+        sfuSetUserVolume(participant.identity, userVol);
+      }
     } else if (track.kind === Track.Kind.Video) {
       const source = publication.source;
       const mediaStream = new MediaStream([track.mediaStreamTrack]);
@@ -240,14 +248,60 @@ export async function sfuToggleMute(muted: boolean): Promise<void> {
 }
 
 export function sfuSetDeafened(deafened: boolean): void {
-  for (const audio of sfuAudioElements.values()) {
-    audio.volume = deafened ? 0 : 1;
+  if (deafened) {
+    for (const audio of sfuAudioElements.values()) {
+      audio.volume = 0;
+    }
+    for (const entry of sfuGainNodes.values()) {
+      entry.gain.gain.setValueAtTime(0, entry.audioCtx.currentTime);
+    }
+  } else {
+    const { userVolumes } = useVoiceStore.getState();
+    for (const [userId, audio] of sfuAudioElements) {
+      const vol = userVolumes.get(userId) ?? 100;
+      const entry = sfuGainNodes.get(userId);
+      if (entry) {
+        audio.volume = 0;
+        entry.gain.gain.setValueAtTime(vol / 100, entry.audioCtx.currentTime);
+      } else {
+        audio.volume = vol / 100;
+      }
+    }
   }
 }
 
 export function sfuSetUserVolume(userId: string, volume: number): void {
   const audio = sfuAudioElements.get(userId);
-  if (audio && !useVoiceStore.getState().isDeafened) {
+  if (!audio || useVoiceStore.getState().isDeafened) return;
+
+  if (volume > 100) {
+    // Boost via AudioContext GainNode
+    let entry = sfuGainNodes.get(userId);
+    if (!entry) {
+      const stream = audio.srcObject as MediaStream | null;
+      if (!stream) { audio.volume = 1; return; }
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const gain = audioCtx.createGain();
+      source.connect(gain);
+      gain.connect(audioCtx.destination);
+      entry = { audioCtx, source, gain };
+      sfuGainNodes.set(userId, entry);
+      audio.volume = 0; // mute direct playback; gain handles output
+    }
+    const now = entry.audioCtx.currentTime;
+    entry.gain.gain.cancelScheduledValues(now);
+    entry.gain.gain.setValueAtTime(entry.gain.gain.value, now);
+    entry.gain.gain.linearRampToValueAtTime(volume / 100, now + 0.05);
+  } else {
+    // Normal range — remove gain node if one exists
+    const entry = sfuGainNodes.get(userId);
+    if (entry) {
+      entry.gain.disconnect();
+      entry.source.disconnect();
+      entry.audioCtx.close();
+      sfuGainNodes.delete(userId);
+    }
     audio.volume = volume / 100;
   }
 }
@@ -266,14 +320,23 @@ export async function sfuPublishScreenShare(opts?: {
 }): Promise<void> {
   if (!currentRoom) return;
   console.log('[livekit] Publishing screen share', opts);
-  await currentRoom.localParticipant.setScreenShareEnabled(true, {
-    audio: true,
-  }, {
+  const publishOpts = {
     screenShareEncoding: opts?.maxBitrate ? {
       maxBitrate: opts.maxBitrate,
       maxFramerate: opts.maxFramerate,
     } : undefined,
-  });
+  };
+  try {
+    await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: true }, publishOpts);
+  } catch (err: any) {
+    if (err?.name === 'NotSupportedError') {
+      // Audio capture via getDisplayMedia is not supported on this platform (e.g. Linux)
+      console.warn('[livekit] Screen share audio not supported, retrying without audio');
+      await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: false }, publishOpts);
+    } else {
+      throw err;
+    }
+  }
 }
 
 export async function sfuUnpublishScreenShare(): Promise<void> {
@@ -409,6 +472,13 @@ export async function disconnectFromLiveKit(): Promise<void> {
 }
 
 function cleanupParticipantAudio(participantId: string): void {
+  const entry = sfuGainNodes.get(participantId);
+  if (entry) {
+    entry.gain.disconnect();
+    entry.source.disconnect();
+    entry.audioCtx.close();
+    sfuGainNodes.delete(participantId);
+  }
   const audio = sfuAudioElements.get(participantId);
   if (audio) {
     audio.pause();
@@ -419,6 +489,12 @@ function cleanupParticipantAudio(participantId: string): void {
 }
 
 function cleanup(): void {
+  for (const entry of sfuGainNodes.values()) {
+    entry.gain.disconnect();
+    entry.source.disconnect();
+    entry.audioCtx.close();
+  }
+  sfuGainNodes.clear();
   for (const [, audio] of sfuAudioElements) {
     audio.pause();
     audio.srcObject = null;

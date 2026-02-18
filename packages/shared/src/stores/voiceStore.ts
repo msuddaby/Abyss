@@ -81,7 +81,7 @@ interface VoiceState {
   setVoiceChatOpen: (open: boolean) => void;
   voiceChatDesktopNotify: boolean;
   setVoiceChatDesktopNotify: (enabled: boolean) => void;
-  userVolumes: Map<string, number>; // userId -> 0-200 volume percentage
+  userVolumes: Map<string, number>; // userId -> 0-300 volume percentage
   setUserVolume: (userId: string, volume: number) => void;
   cameraQuality: CameraQuality;
   screenShareQuality: ScreenShareQuality;
@@ -135,7 +135,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   localInputLevel: 0,
   needsAudioUnlock: false,
 
-  setCurrentChannel: (channelId) => set(channelId ? { currentChannelId: channelId } : { currentChannelId: null, userVolumes: new Map() }),
+  setCurrentChannel: (channelId) => set(channelId ? { currentChannelId: channelId } : { currentChannelId: null }),
 
   setParticipants: (participants) => set({ participants }),
 
@@ -335,7 +335,10 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((s) => {
       const next = new Map(s.userVolumes);
       if (volume === 100) next.delete(userId);
-      else next.set(userId, Math.max(0, Math.min(200, volume)));
+      else next.set(userId, Math.max(0, Math.min(300, volume)));
+      const obj: Record<string, number> = {};
+      for (const [id, vol] of next) obj[id] = vol;
+      getStorage().setItem('userVolumes', JSON.stringify(obj));
       return { userVolumes: next };
     }),
   cameraQuality: 'medium' as CameraQuality,
@@ -388,7 +391,18 @@ export function hydrateVoiceStore() {
     const v = s.getItem(key);
     return v === null ? fallback : v === 'true';
   };
+  const userVolumes = new Map<string, number>();
+  try {
+    const saved = s.getItem('userVolumes');
+    if (saved) {
+      const obj = JSON.parse(saved) as Record<string, number>;
+      for (const [id, vol] of Object.entries(obj)) {
+        if (typeof vol === 'number') userVolumes.set(id, vol);
+      }
+    }
+  } catch { /* ignore corrupt data */ }
   useVoiceStore.setState({
+    userVolumes,
     isMuted: boolOr('isMuted', false),
     isDeafened: boolOr('isDeafened', false),
     voiceMode: (s.getItem('voiceMode') as VoiceMode) || 'voice-activity',

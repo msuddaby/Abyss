@@ -166,7 +166,7 @@ export default function ContextMenu() {
                     <input
                       type="range"
                       min={0}
-                      max={200}
+                      max={300}
                       value={volumeValue}
                       onChange={(e) => setUserVolume(volumeUserId, Number(e.target.value))}
                     />
