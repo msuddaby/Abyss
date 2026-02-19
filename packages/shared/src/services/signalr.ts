@@ -3,8 +3,9 @@ import { getApiBase, ensureFreshToken } from "./api.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
-const PING_TIMEOUT_MS = 8000;
+const PING_TIMEOUT_MS = 15000;
 const RECONNECT_GRACE_MS = 20000;
+const PING_FAIL_THRESHOLD = 2;
 
 let connection: signalR.HubConnection | null = null;
 let startPromise: Promise<signalR.HubConnection> | null = null;
@@ -13,6 +14,7 @@ let reconnectingSince: number | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let pingInFlight = false;
+let consecutivePingFailures = 0;
 let reconnectCallbacks: (() => void)[] = [];
 let suspended = false;
 
@@ -52,6 +54,7 @@ export function getConnection(): signalR.HubConnection {
   connection.onreconnected(() => {
     reconnectingSince = null;
     reconnectAttempts = 0;
+    consecutivePingFailures = 0;
     setStatus("connected");
     fireReconnectCallbacks();
   });
@@ -234,8 +237,13 @@ async function healthCheck() {
         setTimeout(() => reject(new Error("Ping timeout")), PING_TIMEOUT_MS),
       ),
     ]);
+    consecutivePingFailures = 0;
   } catch {
-    scheduleReconnect("ping-failed");
+    consecutivePingFailures += 1;
+    if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+      consecutivePingFailures = 0;
+      scheduleReconnect("ping-failed");
+    }
   } finally {
     pingInFlight = false;
   }
