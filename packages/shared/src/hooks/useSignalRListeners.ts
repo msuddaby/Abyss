@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { getConnection, startConnection, onReconnected } from '../services/signalr.js';
+import { getConnection, startConnection, onReconnected, healthCheck } from '../services/signalr.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
@@ -618,6 +618,42 @@ export function useSignalRListeners() {
       rejoinActiveChannel(conn);
       refreshSignalRState(conn);
     });
+  }, []);
+
+  // Refresh state when the window regains focus — catches up on anything
+  // missed while backgrounded (zombie connection, throttled WebSocket, etc.)
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    let lastRefresh = 0;
+
+    const handleFocus = () => {
+      if (Date.now() - lastRefresh < 5000) return;
+      lastRefresh = Date.now();
+
+      // Messages via HTTP — works even when SignalR is dead
+      const { currentChannelId, fetchMessages } = useMessageStore.getState();
+      if (currentChannelId) fetchMessages(currentChannelId);
+
+      // Immediate health check to catch zombie connections on return
+      // instead of waiting up to 30s for the next interval
+      void healthCheck();
+
+      // If connected, also refresh presence/unreads via SignalR
+      const conn = getConnection();
+      if (conn.state === 'Connected') {
+        const server = useServerStore.getState().activeServer;
+        if (server) fetchServerState(conn, server.id);
+        refreshSignalRState(conn);
+      }
+    };
+
+    const onVisChange = () => { if (!document.hidden) handleFocus(); };
+    document.addEventListener('visibilitychange', onVisChange);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, []);
 
   // Fetch voice channel users when switching servers + periodic reconciliation

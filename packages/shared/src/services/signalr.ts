@@ -3,7 +3,7 @@ import { getApiBase, ensureFreshToken } from "./api.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
-const PING_TIMEOUT_MS = 15000;
+const PING_TIMEOUT_MS = 8000;
 const RECONNECT_GRACE_MS = 20000;
 const PING_FAIL_THRESHOLD = 2;
 
@@ -163,8 +163,12 @@ export function resetConnection(): void {
 async function restartConnection(reason: string): Promise<void> {
   const conn = getConnection();
   console.log(`[SignalR] restartConnection reason=${reason} state=${conn.state}`);
-  if (conn.state === signalR.HubConnectionState.Connected) return;
+  // Don't skip when state is "Connected" — the connection may be a zombie
+  // (SignalR thinks it's connected but the underlying transport is dead).
+  // The health check only triggers a restart after confirmed ping failures,
+  // so forcing a stop+start here is intentional.
   setStatus("reconnecting");
+  stopHealthMonitor();
   try {
     await conn.stop();
   } catch {
@@ -234,7 +238,7 @@ function scheduleReconnect(reason: string) {
   }, delay);
 }
 
-async function healthCheck() {
+export async function healthCheck() {
   const conn = getConnection();
   if (conn.state !== signalR.HubConnectionState.Connected) {
     console.debug(`[SignalR] healthCheck state=${conn.state}`);
