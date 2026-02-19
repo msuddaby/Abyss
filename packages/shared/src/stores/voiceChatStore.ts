@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import { ensureConnected } from '../services/signalr.js';
+import { resilientInvoke } from '../services/signalr.js';
 import { isElectron } from '../services/electronNotifications.js';
 import { useVoiceStore } from './voiceStore.js';
 import { useAuthStore } from './authStore.js';
@@ -139,8 +139,7 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
   sendMessage: async (content, attachmentIds) => {
     const { channelId } = get();
     if (!channelId) return;
-    const conn = await ensureConnected();
-    await conn.invoke('SendMessage', channelId, content, attachmentIds || [], null);
+    await resilientInvoke('SendMessage', channelId, content, attachmentIds || [], null);
   },
 
   loadMore: async () => {

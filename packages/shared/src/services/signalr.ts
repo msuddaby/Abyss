@@ -3,9 +3,11 @@ import { getApiBase, ensureFreshToken } from "./api.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
-const PING_TIMEOUT_MS = 8000;
+const PING_TIMEOUT_MS = 4000;
 const RECONNECT_GRACE_MS = 20000;
 const PING_FAIL_THRESHOLD = 2;
+const STALE_THRESHOLD_MS = 45000;
+const INVOKE_TIMEOUT_MS = 5000;
 
 let connection: signalR.HubConnection | null = null;
 let startPromise: Promise<signalR.HubConnection> | null = null;
@@ -18,6 +20,8 @@ let consecutivePingFailures = 0;
 let reconnectCallbacks: (() => void)[] = [];
 let suspended = false;
 let intentionalStop = false;
+let lastActivity = 0;
+let networkDebounce: ReturnType<typeof setTimeout> | null = null;
 
 export function onReconnected(cb: () => void): () => void {
   reconnectCallbacks.push(cb);
@@ -58,6 +62,7 @@ export function getConnection(): signalR.HubConnection {
     reconnectingSince = null;
     reconnectAttempts = 0;
     consecutivePingFailures = 0;
+    lastActivity = Date.now();
     setStatus("connected");
     fireReconnectCallbacks();
   });
@@ -114,6 +119,7 @@ export function startConnection(): Promise<signalR.HubConnection> {
       .start()
       .then(() => {
         startPromise = null;
+        lastActivity = Date.now();
         startHealthMonitor();
         setStatus("connected");
         return conn;
@@ -127,7 +133,29 @@ export function startConnection(): Promise<signalR.HubConnection> {
   return startPromise;
 }
 
-export function ensureConnected(): Promise<signalR.HubConnection> {
+export async function ensureConnected(): Promise<signalR.HubConnection> {
+  const conn = getConnection();
+  if (conn.state === signalR.HubConnectionState.Connected) {
+    // Fast path: connected and fresh — no overhead
+    if (lastActivity > 0 && Date.now() - lastActivity < STALE_THRESHOLD_MS) {
+      return conn;
+    }
+    // Connected but stale — quick ping to verify it's not a zombie
+    try {
+      await Promise.race([
+        conn.invoke("Ping"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Stale ping timeout")), 3000),
+        ),
+      ]);
+      lastActivity = Date.now();
+      return conn;
+    } catch {
+      console.warn('[SignalR] ensureConnected: stale connection detected, restarting');
+      await restartConnection("stale-zombie");
+      return getConnection();
+    }
+  }
   return startConnection();
 }
 
@@ -282,6 +310,7 @@ export async function healthCheck() {
       ),
     ]);
     console.debug(`[SignalR] ping ok ${Date.now() - pingStart}ms`);
+    lastActivity = Date.now();
     consecutivePingFailures = 0;
   } catch (err) {
     // Ignore failures caused by an intentional restart tearing down the connection
@@ -322,6 +351,7 @@ export async function focusReconnect(): Promise<boolean> {
     ]);
     console.debug('[SignalR] focus ping ok');
     consecutivePingFailures = 0;
+    lastActivity = Date.now();
     return true;
   } catch {
     console.warn('[SignalR] focus ping failed — restarting');
@@ -332,4 +362,50 @@ export async function focusReconnect(): Promise<boolean> {
     });
     return false;
   }
+}
+
+/**
+ * Resilient invoke — the single entry point for all user-facing SignalR calls.
+ * 1. ensureConnected() (handles staleness detection)
+ * 2. Invoke with timeout
+ * 3. On failure: immediate restart + single retry
+ */
+export async function resilientInvoke(method: string, ...args: unknown[]): Promise<void> {
+  const doInvoke = async () => {
+    const conn = await ensureConnected();
+    await Promise.race([
+      conn.invoke(method, ...args),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Invoke timeout: ${method}`)), INVOKE_TIMEOUT_MS),
+      ),
+    ]);
+    lastActivity = Date.now();
+  };
+  try {
+    await doInvoke();
+  } catch (err) {
+    console.warn(`[SignalR] resilientInvoke ${method} failed, retrying`, (err as Error)?.message);
+    clearReconnectTimer();
+    reconnectAttempts = 0;
+    await restartConnection("invoke-failed");
+    await doInvoke();
+  }
+}
+
+// --- Network change detection ---
+function onNetworkChange() {
+  if (suspended) return;
+  if (networkDebounce) clearTimeout(networkDebounce);
+  networkDebounce = setTimeout(() => {
+    networkDebounce = null;
+    console.log('[SignalR] network change detected, verifying connection');
+    void focusReconnect();
+  }, 2000);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("online", onNetworkChange);
+  // navigator.connection is not available in all browsers
+  const nav = navigator as { connection?: EventTarget };
+  nav.connection?.addEventListener("change", onNetworkChange);
 }

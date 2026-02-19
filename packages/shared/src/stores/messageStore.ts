@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import { ensureConnected } from '../services/signalr.js';
+import { resilientInvoke } from '../services/signalr.js';
 import type { Message, Reaction, PinnedMessage, EquippedCosmetics } from '../types/index.js';
 
 interface CachedChannel {
@@ -64,6 +64,30 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   fetchMessages: async (channelId) => {
     const state = get();
     const prevChannelId = state.currentChannelId;
+
+    // Re-fetching the same channel (e.g. window focus): background refresh only
+    if (prevChannelId === channelId && state.messages.length > 0) {
+      const newest = state.messages[state.messages.length - 1];
+      if (newest) {
+        try {
+          const res = await api.get(`/channels/${channelId}/messages?limit=100&after=${newest.id}`);
+          if (res.data.length > 0 && get().currentChannelId === channelId) {
+            set((s) => {
+              const existingIds = new Set(s.messages.map((m) => m.id));
+              const newMsgs = (res.data as Message[]).filter((m) => !existingIds.has(m.id));
+              if (newMsgs.length === 0) return s;
+              return {
+                messages: [...s.messages, ...newMsgs],
+                hasNewer: res.data.length >= 100,
+              };
+            });
+          }
+        } catch {
+          // Background refresh failed silently
+        }
+      }
+      return;
+    }
 
     // Save current channel's messages to cache before switching
     if (prevChannelId && prevChannelId !== channelId && state.messages.length > 0) {
@@ -277,43 +301,35 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   },
 
   toggleReaction: async (messageId, emoji) => {
-    const conn = await ensureConnected();
-    await conn.invoke('ToggleReaction', messageId, emoji);
+    await resilientInvoke('ToggleReaction', messageId, emoji);
   },
 
   editMessage: async (messageId, newContent) => {
-    const conn = await ensureConnected();
-    await conn.invoke('EditMessage', messageId, newContent);
+    await resilientInvoke('EditMessage', messageId, newContent);
   },
 
   deleteMessage: async (messageId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('DeleteMessage', messageId);
+    await resilientInvoke('DeleteMessage', messageId);
   },
 
   pinMessage: async (messageId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('PinMessage', messageId);
+    await resilientInvoke('PinMessage', messageId);
   },
 
   unpinMessage: async (messageId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('UnpinMessage', messageId);
+    await resilientInvoke('UnpinMessage', messageId);
   },
 
   sendMessage: async (channelId, content, attachmentIds, replyToMessageId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('SendMessage', channelId, content, attachmentIds || [], replyToMessageId || null);
+    await resilientInvoke('SendMessage', channelId, content, attachmentIds || [], replyToMessageId || null);
   },
 
   joinChannel: async (channelId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('JoinChannel', channelId);
+    await resilientInvoke('JoinChannel', channelId);
   },
 
   leaveChannel: async (channelId) => {
-    const conn = await ensureConnected();
-    await conn.invoke('LeaveChannel', channelId);
+    await resilientInvoke('LeaveChannel', channelId);
   },
 
   updateAuthorCosmetics: (userId, cosmetics) =>

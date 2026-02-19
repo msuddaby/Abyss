@@ -1,4 +1,4 @@
-import { useSoundboardStore, useVoiceStore, ensureConnected } from '@abyss/shared';
+import { useSoundboardStore, useVoiceStore, resilientInvoke } from '@abyss/shared';
 
 export default function SoundboardPanel() {
   const clips = useSoundboardStore((s) => s.clips);
@@ -7,8 +7,7 @@ export default function SoundboardPanel() {
   const playClip = async (clipId: string) => {
     if (!currentChannelId) return;
     try {
-      const conn = await ensureConnected();
-      await conn.invoke('PlaySoundboardClip', currentChannelId, clipId);
+      await resilientInvoke('PlaySoundboardClip', currentChannelId, clipId);
     } catch (err) {
       console.warn('Failed to play soundboard clip', err);
     }

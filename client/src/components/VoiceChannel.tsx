@@ -1,4 +1,4 @@
-import { useServerStore, useVoiceStore, useVoiceChatStore, useAuthStore, getApiBase, hasPermission, hasChannelPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useVoiceChatStore, useAuthStore, getApiBase, hasPermission, hasChannelPermission, Permission, canActOn, resilientInvoke } from '@abyss/shared';
 import type { Channel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 
@@ -46,8 +46,7 @@ export default function VoiceChannel({ channel, isActive, isConnected, onSelect,
 
   const handleModerate = async (targetUserId: string, isMuted: boolean, isDeafened: boolean) => {
     try {
-      const conn = await ensureConnected();
-      await conn.invoke('ModerateVoiceState', targetUserId, isMuted, isDeafened);
+      await resilientInvoke('ModerateVoiceState', targetUserId, isMuted, isDeafened);
     } catch (err) {
       console.warn('Failed to moderate voice state', err);
     }

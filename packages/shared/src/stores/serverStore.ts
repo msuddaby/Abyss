@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import { ensureConnected } from '../services/signalr.js';
+import { resilientInvoke } from '../services/signalr.js';
 import { getStorage } from '../storage.js';
 import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji, VoiceUserState, EquippedCosmetics } from '../types/index.js';
 
@@ -171,8 +171,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const res = await api.post('/servers', { name });
     const server = res.data;
     set((s) => s.servers.some((sv) => sv.id === server.id) ? s : { servers: [...s.servers, server] });
-    const conn = await ensureConnected();
-    await conn.invoke('JoinServerGroup', server.id);
+    await resilientInvoke('JoinServerGroup', server.id);
     return server;
   },
 
@@ -246,8 +245,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     const res = await api.post(`/invites/${code}/join`);
     const server = res.data;
     set((s) => s.servers.some((sv) => sv.id === server.id) ? s : { servers: [...s.servers, server] });
-    const conn = await ensureConnected();
-    await conn.invoke('JoinServerGroup', server.id);
+    await resilientInvoke('JoinServerGroup', server.id);
   },
 
   fetchMembers: async (serverId) => {

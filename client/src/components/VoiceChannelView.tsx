@@ -1,6 +1,6 @@
 import { Component, useRef, useEffect, useState, useCallback } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
-import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, ensureConnected } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, resilientInvoke } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
 import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
@@ -104,8 +104,7 @@ function VoiceChannelViewInner() {
 
   const handleModerate = async (targetUserId: string, newMuted: boolean, newDeafened: boolean) => {
     try {
-      const conn = await ensureConnected();
-      await conn.invoke('ModerateVoiceState', targetUserId, newMuted, newDeafened);
+      await resilientInvoke('ModerateVoiceState', targetUserId, newMuted, newDeafened);
     } catch (err) {
       console.warn('Failed to moderate voice state', err);
     }
