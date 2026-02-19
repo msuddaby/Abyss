@@ -184,6 +184,10 @@ async function restartConnection(reason: string): Promise<void> {
 function startHealthMonitor() {
   if (healthInterval) return;
   healthInterval = setInterval(() => {
+    // Skip health checks while the window is hidden — browsers throttle
+    // WebSocket traffic and timers for background tabs, causing false
+    // positive ping timeouts.
+    if (typeof document !== "undefined" && document.hidden) return;
     void healthCheck();
   }, HEALTH_INTERVAL_MS);
 }
@@ -193,6 +197,17 @@ function stopHealthMonitor() {
     clearInterval(healthInterval);
     healthInterval = null;
   }
+}
+
+// When the window becomes visible again, run an immediate health check
+// and reset ping failure state (failures while hidden are unreliable).
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && healthInterval && connection) {
+      consecutivePingFailures = 0;
+      void healthCheck();
+    }
+  });
 }
 
 function clearReconnectTimer() {
