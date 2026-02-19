@@ -16,6 +16,7 @@ import {
   disconnectFromLiveKit,
   sfuToggleMute,
   sfuSetDeafened,
+  sfuSetScreenAudioVolume,
   sfuSetInputDevice,
   sfuPublishScreenShare,
   sfuUnpublishScreenShare,
@@ -1200,6 +1201,18 @@ function cleanupAnalysers() {
 }
 
 // Module-level exports for ScreenShareView to access
+export function setScreenAudioVolume(userId: string, volume: number): void {
+  if (isInSfuMode()) {
+    sfuSetScreenAudioVolume(userId, volume);
+  } else {
+    const audio = screenAudioElements.get(userId);
+    if (audio) {
+      audio.volume = volume;
+      audio.muted = volume === 0;
+    }
+  }
+}
+
 export function getScreenVideoStream(userId: string): MediaStream | undefined {
   // Check SFU streams first (when in relay mode)
   if (isInSfuMode()) {
@@ -1585,7 +1598,9 @@ function applyIncomingRemoteTrack(
         audio = new Audio();
         audio.autoplay = true;
         audio.setAttribute("playsinline", "true");
-        audio.volume = 1.0;
+        const savedSsVol = parseFloat(localStorage.getItem('ss-volume') ?? '1');
+        audio.volume = savedSsVol;
+        audio.muted = savedSsVol === 0;
         screenAudioElements.set(peerId, audio);
       }
       applyOutputDevice(audio, currentOutputDeviceId);

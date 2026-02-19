@@ -1,10 +1,13 @@
 # Abyss
 
-A self-hosted chat platform with text channels, voice chat (WebRTC), screen sharing, custom emoji, and role-based permissions.
+> Self-hosted chat platform — text, voice, video, and watch parties on infrastructure you control.
 
-## Why?
+![.NET 10](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)
+![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 
-tl;dr Discord sucks and there's no sane alternative that offers all of the features I want out of a chat app. Thus, Abyss was created.
+Abyss is an open-source, self-hosted alternative to managed chat platforms. No telemetry, no vendor lock-in, and no reliance on a managed SaaS backend — your data lives on your server.
 
 ## Features
 

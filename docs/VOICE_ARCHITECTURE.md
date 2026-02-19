@@ -1,373 +1,250 @@
-# Abyss Voice Chat Architecture
+# Voice Architecture
 
-Comprehensive reference for the WebRTC voice system — signaling, audio pipeline, TURN configuration, and known pitfalls.
+Comprehensive reference for the Abyss voice stack: WebRTC P2P, TURN traversal, and LiveKit SFU relay fallback.
 
----
+For a high-level overview of the voice system in context, see [Architecture](/architecture#voice-system). This page covers protocol details, state machines, signaling flows, and backend state model.
 
 ## Table of Contents
 
-1. [TURN Server Configuration](#1-turn-server-configuration)
-2. [WebRTC Signaling Flow](#2-webrtc-signaling-flow)
-3. [Audio Playback Pipeline](#3-audio-playback-pipeline)
-4. [Voice Activity Detection & Push-to-Talk](#4-voice-activity-detection--push-to-talk)
-5. [ICE Restart & Reconnection](#5-ice-restart--reconnection)
-6. [Glare (Simultaneous Offer) Handling](#6-glare-simultaneous-offer-handling)
-7. [Screen Sharing Audio](#7-screen-sharing-audio)
-8. [Mute, Deafen & Volume Control](#8-mute-deafen--volume-control)
-9. [Output Device Selection](#9-output-device-selection)
-10. [Backend Voice State](#10-backend-voice-state)
-11. [Troubleshooting Guide](#11-troubleshooting-guide)
-
----
-
-## 1. TURN Server Configuration
+1. [Architecture Overview](#1-architecture-overview)
+2. [Mode Selection and Fallback](#2-mode-selection-and-fallback)
+3. [Signaling and Realtime Control Plane](#3-signaling-and-realtime-control-plane)
+4. [P2P Path (WebRTC + TURN)](#4-p2p-path-webrtc--turn)
+5. [SFU Path (LiveKit Relay)](#5-sfu-path-livekit-relay)
+6. [Audio, Screen Share, and Camera Pipeline](#6-audio-screen-share-and-camera-pipeline)
+7. [Mute, Deafen, VAD, and Push-to-Talk](#7-mute-deafen-vad-and-push-to-talk)
+8. [Reliability and Recovery](#8-reliability-and-recovery)
+9. [Backend Voice State Model](#9-backend-voice-state-model)
+10. [Configuration Checklist](#10-configuration-checklist)
+11. [Troubleshooting](#11-troubleshooting)
 
-### Architecture
+## 1. Architecture Overview
 
-The backend generates **ephemeral HMAC-SHA1 credentials** (coturn `use-auth-secret` mode). The client fetches them from `GET /api/voice/turn` and passes them to the `RTCPeerConnection`.
+Abyss voice runs in two modes:
 
-### Required coturn Config
+- `p2p`: direct peer-to-peer WebRTC between participants.
+- `sfu`: media relayed through LiveKit.
 
-```
-listening-port=3478
-listening-ip=0.0.0.0
-relay-ip=0.0.0.0
-external-ip=<PUBLIC_IP>
-realm=abyss
-use-auth-secret
-static-auth-secret=<MUST MATCH TURN_AUTH_SECRET ENV VAR>
-fingerprint
-no-cli
-verbose
-```
+Mode is tracked in shared state (`connectionMode`):
 
-### Critical Configuration Notes
+- `attempting-p2p`
+- `p2p`
+- `attempting-sfu`
+- `sfu`
 
-- **`use-auth-secret`** is required — NOT `lt-cred-mech`. These are completely different auth mechanisms. Using `lt-cred-mech` will cause 401 Unauthorized on every TURN allocation, meaning zero relay candidates and broken connectivity for users behind NAT.
-- **`static-auth-secret`** must exactly match the `TURN_AUTH_SECRET` environment variable on the backend. Any mismatch (even trailing whitespace) causes 401s.
-- **`realm`** must be set (coturn requires it even with ephemeral auth).
-- **Firewall**: UDP 3478 + relay range (49152-65535) must be open.
-- **If coturn is behind NAT**: `external-ip` must be set to the public IP.
+Key implementation files:
 
-### Backend Environment Variables
+- `client/src/hooks/useWebRTC.ts`
+- `packages/shared/src/services/livekitService.ts`
+- `server/Abyss.Api/Hubs/ChatHub.cs`
+- `server/Abyss.Api/Services/VoiceStateService.cs`
+- `server/Abyss.Api/Controllers/VoiceController.cs`
+- `server/Abyss.Api/Services/LiveKitService.cs`
 
-| Variable | Description |
-|----------|-------------|
-| `TURN_URLS` | Comma-separated TURN URLs (e.g., `turn:142.4.217.154:3478`) |
-| `TURN_AUTH_SECRET` | Shared secret matching coturn's `static-auth-secret` |
-| `TURN_TTL_SECONDS` | Credential lifetime (default: 3600) |
+## 2. Mode Selection and Fallback
 
-### Credential Format
+Join behavior:
 
-- Username: `{unixExpiry}:{userId}` (e.g., `1706950400:user-uuid`)
-- Credential: `Base64(HMAC-SHA1(secret, username))`
+1. Client joins SignalR voice group (`JoinVoiceChannel`).
+2. Default flow attempts P2P.
+3. Client switches to SFU when fallback criteria are met.
 
-### Client Credential Refresh
+Fallback triggers implemented in client logic:
 
-Credentials are cached and auto-refreshed 5 minutes before expiry (or 20% of TTL, whichever is larger). Minimum 30s between refreshes. On failure, retries after 15s.
+- User preference `forceSfuMode` (`Always use relay mode`).
+- P2P failure threshold reached (`p2pFailureCount >= 1`).
+- Large room (`participants.size > 8`).
+- ICE stuck in `checking`.
+- ICE `failed`.
+- Offer unanswered / peer stuck in `new`.
+- Channel already has relay users (`ChannelRelayActive`).
 
-### Testing TURN
+When switching to SFU, client:
 
-```bash
-# Install test tools (Arch)
-sudo pacman -S coturn
+- tears down P2P connections,
+- connects to LiveKit,
+- calls `NotifyRelayMode` so other users in channel can upgrade.
 
-# Fetch credentials from API, then test:
-turnutils_uclient -t -e 8.8.8.8 \
-  -u "<username>" -w "<credential>" \
-  <TURN_SERVER_IP> -p 3478
+## 3. Signaling and Realtime Control Plane
 
-# Expected: successful allocation
-# 401 = auth secret mismatch
-# 403 = firewall/relay IP issue
-# Timeout = server unreachable or UDP blocked
-```
+Control plane uses SignalR hub `/hubs/chat`.
 
-### Browser-Side TURN Test
+Relevant hub methods/events:
 
-```js
-// Paste in browser console — forces TURN-only connection
-const pc = new RTCPeerConnection({
-  iceServers: [{ urls: 'turn:<IP>:3478', username: '<u>', credential: '<c>' }],
-  iceTransportPolicy: 'relay'
-});
-pc.createDataChannel('test');
-pc.createOffer().then(o => pc.setLocalDescription(o));
-pc.onicecandidate = e => {
-  if (e.candidate) console.log('candidate:', e.candidate.type);
-  else console.log('gathering done');
-};
-// Should see "relay" candidate. If only "gathering done" with none → TURN broken.
-```
+- `JoinVoiceChannel`, `LeaveVoiceChannel`
+- `SendSignal` -> `ReceiveSignal` (P2P SDP/ICE)
+- `VoiceHeartbeat`
+- `NotifyRelayMode` -> `ChannelRelayActive`
+- `VoiceChannelUsers` (authoritative participant map)
 
----
+Important behavior:
 
-## 2. WebRTC Signaling Flow
+- `SendSignal` routes only to target user's active voice connection (`_voiceConnections`) to avoid non-voice tabs creating stale peer state.
+- New joiners receive current relay status; if channel already has relay users, server emits `ChannelRelayActive`.
 
-### Key Files
+## 4. P2P Path (WebRTC + TURN)
 
-- `client/src/hooks/useWebRTC.ts` — all WebRTC logic
-- `server/Abyss.Api/Hubs/ChatHub.cs` — SignalR signal routing
+P2P mode uses browser WebRTC connections with ICE servers from:
 
-### Connection Establishment
+- STUN (`VITE_STUN_URL`)
+- TURN credentials from `GET /api/voice/turn`
 
-1. User A joins voice → server sends `VoiceChannelUsers` (full participant list)
-2. Reconciliation creates `RTCPeerConnection` for each missing peer
-3. Local audio tracks added, offer created and sent via `SendSignal`
-4. Peer receives offer via `ReceiveSignal`, creates answer
-5. ICE candidates exchanged inline via `SendSignal`/`ReceiveSignal`
+TURN auth model:
 
-### Signaling Queue
+- coturn `use-auth-secret`
+- backend issues short-lived HMAC credentials
 
-All signaling operations are serialized per-peer via `enqueueSignaling()` to prevent race conditions. Each operation checks the session ID to abort if the voice session ended.
+Required alignment:
 
-### Signal Routing (Server)
+- `TURN_AUTH_SECRET` equals coturn `static-auth-secret`
+- `TURN_REALM` matches coturn `realm`
+- `TURN_URLS` valid and reachable
 
-`SendSignal` routes only to the target user's **voice connection** (`_voiceConnections` map). This prevents signals from reaching non-voice browser tabs, which would create broken peer connections.
+P2P uses:
 
-### DTLS Role Fix
+- per-peer signaling queues,
+- ICE restarts with backoff,
+- reconciliation against `VoiceChannelUsers`.
 
-On renegotiation, answer SDP roles are patched (lines 160-174) to maintain compatibility with the existing DTLS transport. Without this fix, DTLS can fail silently after renegotiation.
+## 5. SFU Path (LiveKit Relay)
 
----
+SFU token endpoint:
 
-## 3. Audio Playback Pipeline
+- `POST /api/voice/livekit-token` with `channelId`
+- returns signed JWT and LiveKit URL
 
-### Incoming Track Flow
+Server-side guardrails:
 
-```
-ontrack event
-  → track queued (400ms wait for track-info match)
-  → timeout/match → applyIncomingRemoteTrack()
-    → classify as mic / screen-audio / camera / screen-video
-    → for audio: create HTMLAudioElement, set srcObject, play()
-```
+- returns `501` when LiveKit not configured
+- checks channel existence and `Permission.Connect`
 
-### Audio Element Setup (Mic Audio)
+LiveKit room model:
 
-```
-audio = new Audio()
-audio.autoplay = true
-audio.srcObject = stream        ← raw WebRTC stream (NOT createMediaStreamDestination)
-audio.volume = userVolume / 100  ← 0-100% range
-applyOutputDevice(audio)         ← setSinkId for output device selection
-audio.play()
-```
+- room name format: `channel-{channelId}`
+- participants publish mic and optional camera/screen tracks
+- remote tracks auto-subscribed by LiveKit client
 
-### Why Raw Streams (Not GainNode → createMediaStreamDestination)
+Relay cascade behavior:
 
-**`createMediaStreamDestination()` streams are unreliable for `HTMLAudioElement` playback:**
+- when one client enables relay, it notifies server via `NotifyRelayMode`
+- server marks relay user in `VoiceStateService` and broadcasts `ChannelRelayActive`
+- peers in P2P mode upgrade to SFU to keep channel in one transport mode
 
-- **Firefox**: `play()` resolves but `paused` stays `true` — the element never actually plays audio.
-- **Chrome**: Can silently produce no output depending on timing of stream creation vs. track data flow.
-- This was the root cause of a long-standing "can't hear anyone" bug. The connection was healthy, RTP packets were flowing, but the audio element produced silence.
+### SFU Encryption Notes
 
-**Current approach**: Raw WebRTC stream on the audio element. Volume 0-100% uses `audio.volume`. Volume >100% (boost) uses a GainNode chain connected to `audioContext.destination`.
+LiveKit connection attempts to enable client-side E2EE (`ExternalE2EEKeyProvider`).
 
-### Volume Boost (>100%)
+Current key strategy is deterministic per channel ID (`abyss-e2ee-{channelId}`), derived client-side.
+This protects media from relay plaintext exposure, but it is not equivalent to user-managed end-to-end secrets.
 
-For per-user volume above 100%, a GainNode chain amplifies the signal:
+## 6. Audio, Screen Share, and Camera Pipeline
 
-```
-createMediaStreamSource(stream) → GainNode → audioContext.destination
-audio.volume = 0  (mute element to avoid double playback)
-```
+P2P audio:
 
-Note: This bypasses `setSinkId` — output goes to the AudioContext's default device. This is an acceptable tradeoff since >100% boost is uncommon.
+- remote audio attached to `HTMLAudioElement` from raw `MediaStream`
+- per-user volume 0-100 via `audio.volume`
+- >100 uses GainNode boost
 
-### Track-Info System
+SFU audio:
 
-Before adding a track to a peer connection, the sender transmits a `track-info` message (via SignalR) identifying the track type (mic, screen-audio, camera, screen). The receiver uses this to classify incoming tracks in `ontrack`. If no track-info arrives within 400ms, the track type is inferred from context.
+- `TrackSubscribed` attaches LiveKit remote audio tracks
+- same volume/deafen model as P2P via shared voice store
 
----
+Screen sharing and camera:
 
-## 4. Voice Activity Detection & Push-to-Talk
+- P2P mode: explicit signaling + track-info handling
+- SFU mode: publish/unpublish through LiveKit APIs
+- quality controls:
+  - camera presets up to 1080p
+  - screen-share presets from quality to high-motion
 
-### Voice Activity Detection (VAD)
+## 7. Mute, Deafen, VAD, and Push-to-Talk
 
-- Per-user AnalyserNode fed from a **cloned** stream (so `track.enabled` toggling doesn't break RMS readings)
-- 50ms polling interval (20Hz)
-- RMS threshold: `max(0.005, min(0.05, 0.05 - sensitivity * 0.045))`
-- Hysteresis: Mic held open 200ms after RMS drops below threshold
-- When below threshold: `track.enabled = false` (silences outgoing audio)
+Mute/deafen semantics:
 
-### Firefox VAD Workaround
+- mute controls outgoing mic publication/track state
+- deafen mutes local playback only
+- server moderation can enforce mute/deafen state
 
-On Firefox, toggling `track.enabled` for voice-activity can permanently mute the remote audio in Firefox→Chromium sessions. The `SHOULD_GATE_VA_WITH_TRACK_ENABLED` flag is `false` on Firefox — the sender stays enabled and only the UI speaking indicator reflects VAD state.
+Input modes:
 
-### Push-to-Talk
+- Voice Activity Detection (VAD)
+- Push-to-talk (browser listeners + Electron global keybind support)
 
-- Configurable key (default: backtick)
-- Browser: `keydown`/`keyup` + `mousedown`/`mouseup` listeners
-- Electron: Native global shortcuts via `window.electron.registerPttKey()`
-- Track enabled state: `!isMuted && isPttActive`
+SFU mode maps mute/device changes through LiveKit participant APIs.
 
----
+## 8. Reliability and Recovery
 
-## 5. ICE Restart & Reconnection
+P2P reliability mechanisms:
 
-### ICE State Monitoring
+- ICE timeout handling for `new`, `checking`, `disconnected`, `failed`
+- ICE restart with capped exponential backoff
+- periodic reconciliation against server participant list
+- connection replacement logic for stale/zombie peers
 
-| State | Action |
-|-------|--------|
-| `checking` | 30s hard timeout → restart (Firefox can stall here forever) |
-| `disconnected` | 5s timeout → restart if still disconnected |
-| `failed` | Immediate restart with `force: true`, shows toast |
-| `connected` | Clear timers, reset backoff, retry play() on paused elements |
+Session resilience:
 
-### Exponential Backoff
+- voice session ownership is single-connection per user
+- reconnect path supports same-channel recovery without full leave/rejoin churn
 
-- Base cooldown: 30s
-- Max cooldown: 120s
-- Formula: `min(30s × 2^attempts, 120s)`
-- Max 5 consecutive restart attempts before giving up
+## 9. Backend Voice State Model
 
-### ICE Restart Procedure
+`VoiceStateService` keeps in-memory state for:
 
-1. Create offer with `{ iceRestart: true }` — new ICE credentials, same DTLS session
-2. Send via SignalR
-3. If `setLocalDescription` throws → peer is corrupt → `recreatePeer()` (nuclear option: close + fresh connection)
+- channel participants and voice state
+- active screen sharers
+- active camera users
+- relay users per channel
+- user -> voice connection ownership
 
-### Play() Retry on ICE Connected
+Cleanup job:
 
-When ICE reaches `connected`, the handler retries `play()` on any paused audio elements for that peer. This handles the case where `play()` was called before data was flowing (the promise resolves but the element stays paused).
+- stale voice entries removed after inactivity window
+- heartbeat updates via `VoiceHeartbeat`
 
----
+## 10. Configuration Checklist
 
-## 6. Glare (Simultaneous Offer) Handling
+Required for base voice:
 
-When both peers send offers simultaneously:
+- `VITE_STUN_URL`
+- TURN variables (`TURN_URLS`, `TURN_AUTH_SECRET`, `TURN_TTL_SECONDS`, etc.)
+- valid `turnserver.conf`
 
-```
-if (pc.signalingState === "have-local-offer" && incoming is offer):
-  isPolite = myUserId > remoteUserId   // deterministic, string comparison
-  if polite:  rollback our offer → answer theirs
-  if impolite: ignore their offer → wait for our answer
-```
+Required for relay mode:
 
-### Known Race Condition
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
+- `LIVEKIT_URL` (backend)
+- `VITE_LIVEKIT_URL` (client)
+- reverse proxy route for LiveKit signaling (example: `/lk/*`)
 
-The `setLocalDescriptionOnFailure` error ("Called in wrong state: have-remote-offer") can occur when:
-1. Reconciliation starts creating an offer (async)
-2. Remote offer arrives and is applied first
-3. Pending local offer creation completes → `setLocalDescription` fails
+Recommended production network exposure:
 
-The connection typically recovers, but this can leave transceivers in unexpected states. The signaling queue mitigates but doesn't fully prevent this because the initial offer creation on join isn't always queued.
+- TURN: `3478` TCP/UDP
+- LiveKit signaling/media per `livekit.yaml` and deployment docs
 
----
+## 11. Troubleshooting
 
-## 7. Screen Sharing Audio
+### Voice works on some networks only
 
-- Screen capture via `getDisplayMedia()` (video + optional system audio)
-- Audio tracks added as `screen-audio` type (distinct from mic)
-- Viewers receive in separate `screenAudioElements` map
-- Allows simultaneous mic + screen audio playback
-- Lazy model: tracks only added when a viewer calls `requestWatch()`
+Likely P2P NAT/firewall failure. Validate TURN config and ensure relay mode is configured.
 
----
+### Relay mode unavailable
 
-## 8. Mute, Deafen & Volume Control
+Check `POST /api/voice/livekit-token` response:
 
-### Mute (Outgoing)
+- `501`: LiveKit env vars missing on backend.
+- `403`: user lacks connect permission.
+- connection errors: verify `LIVEKIT_URL` / `VITE_LIVEKIT_URL` and proxy routing.
 
-- Toggles `track.enabled` on local audio tracks
-- Server notified via `UpdateVoiceState` for UI indicators
-- Server can force-mute via `isServerMuted` (permission-based)
+### Channel oscillates between modes
 
-### Deafen (Incoming)
+Confirm clients are on current build with `NotifyRelayMode` + `ChannelRelayActive` behavior and that reconnection logic is not dropping hub events.
 
-- Sets `audio.muted = true` on all remote audio elements (mic + screen)
-- Client-side only — server stores state but doesn't enforce
-- When deafened, user cannot hear anyone
+### No remote audio in SFU mode
 
-### Per-User Volume
+Inspect LiveKit track subscription logs and local device output selection. Verify deafen is off and per-user volume is not set to `0`.
 
-- Stored in `voiceStore.userVolumes` map (peerId → 0-200)
-- 0-100%: `audio.volume = vol / 100`
-- 101-200%: GainNode → `audioContext.destination`, element muted
-- Smooth transitions via `linearRampToValueAtTime`
+### P2P repeatedly fails then reconnects
 
----
-
-## 9. Output Device Selection
-
-- Uses `HTMLAudioElement.setSinkId()` for output device routing
-- "default" resolved to actual device ID to prevent audio cutout on window blur/focus
-- Applied to all audio elements on device change
-- Falls back gracefully if `setSinkId` not supported
-- `deviceResolutionFailed` flag prevents repeated resolution attempts after failure
-
-### Timing Note
-
-`applyOutputDevice()` is fire-and-forget (not awaited). In Firefox, concurrent `setSinkId()` + `play()` can cause `play()` to resolve with `paused=true`. The ICE-connected play() retry handles this edge case.
-
----
-
-## 10. Backend Voice State
-
-### VoiceStateService (In-Memory Singleton)
-
-| Data Structure | Purpose |
-|---------------|---------|
-| `_voiceChannels` | channelId → {userId → VoiceUserState} |
-| `_voiceConnections` | userId → connectionId (voice session ownership) |
-| `_userChannels` | userId → channelId (inverse lookup) |
-| `_activeSharers` | channelId → {userId → displayName} |
-| `_activeCameras` | channelId → {userId → displayName} |
-
-### Single Voice Session Per User
-
-Each user can only have one voice session. `_voiceConnections` maps userId to the connectionId that owns the session. Joining from another device sends `VoiceSessionReplaced` to the old connection.
-
-### Stale Connection Cleanup
-
-- Background job runs every 5 minutes
-- Removes users not seen (no heartbeat) in 10 minutes
-- Client sends `VoiceHeartbeat` every 30 seconds
-
-### Reconciliation
-
-Client-side 30s periodic reconciliation fetches authoritative `VoiceChannelUsers` from server. Closes peers for departed users, creates peers for missing users. Handles race conditions between join events and the participant list.
-
----
-
-## 11. Troubleshooting Guide
-
-### "Can't hear anyone" / No audio
-
-1. **Check TURN server**: Most common cause. Open `chrome://webrtc-internals` or `about:webrtc` (Firefox).
-   - Look for `relay` candidates in the candidate list. If none → TURN is broken.
-   - Check for `onicecandidateerror` events with 401/403 codes.
-   - Verify coturn config uses `use-auth-secret` (NOT `lt-cred-mech`).
-
-2. **Check ICE connection state**: Should be `connected`. If `failed`, check TURN + firewall.
-
-3. **Check DTLS/connection state**: `connectionState` must be `connected`. If ICE is connected but connection is `failed`, DTLS handshake failed (often caused by ICE restart after initial failure).
-
-4. **Check RTP packet flow**: In `chrome://webrtc-internals`, look at `outbound-rtp` / `inbound-rtp` stats. `packetsSent` and `packetsReceived` should be non-zero and increasing.
-   - If zero: Connection-level issue (DTLS, ICE, or track not enabled)
-   - If non-zero: Audio playback pipeline issue (see below)
-
-5. **Check audio element state**: `play()` can resolve with `paused=true` in Firefox when using `createMediaStreamDestination()` streams or when `setSinkId()` races with `play()`.
-
-6. **Check track.enabled**: Voice activity detection sets `track.enabled = false` when no speech detected. In PTT mode, track is only enabled while key is held.
-
-### Docker/VPN Users Have Slow Connections
-
-Virtual network interfaces (Docker bridges, VPN adapters) generate extra ICE host candidates that all fail before the real LAN/internet candidate succeeds. This adds seconds to connection time. A working TURN server mitigates this — relay candidates bypass local network topology.
-
-### One Direction Works, Other Doesn't
-
-- Check if the sender's local track is `enabled=true` (not gated by VAD/PTT)
-- Check the receiver's audio element: `paused`, `muted`, `volume`, `srcObject`
-- Verify both sides have matching codec support (Opus is standard)
-
-### Firefox-Specific Issues
-
-- `play()` resolving with `paused=true` on MediaStreamDestination streams
-- `track.enabled` toggling can permanently mute audio in cross-browser sessions
-- ICE can stall at "checking" state indefinitely (30s hard timeout handles this)
-
-### Glare / Signaling Errors
-
-- `setLocalDescriptionOnFailure: Called in wrong state` — signaling race between offer creation and incoming offer. Usually self-recovers, but can leave audio in broken state. Rejoin voice channel to reset.
+Expected on restrictive networks. Abyss intentionally promotes to SFU quickly after failures to stabilize voice.
