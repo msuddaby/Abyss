@@ -26,6 +26,10 @@ client/dist/
 client/dist-ssr/
 node_modules/
 
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # Logs
 *.log
 
@@ -56,4 +60,3 @@ server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep
 server/Abyss.Api/uploads/*
 data/
-

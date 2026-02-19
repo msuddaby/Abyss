@@ -22,6 +22,8 @@ let currentRoom: Room | null = null;
 
 // Audio elements created for remote participants (cleaned up on disconnect)
 const sfuAudioElements = new Map<string, HTMLAudioElement>();
+// Separate audio elements for screen share audio (ScreenShareAudio source)
+const sfuScreenAudioElements = new Map<string, HTMLAudioElement>();
 
 // GainNode entries for participants whose volume is boosted above 100%
 interface SfuGainEntry {
@@ -133,16 +135,25 @@ function setupRoomListeners(room: Room): void {
     participant: RemoteParticipant,
   ) => {
     if (track.kind === Track.Kind.Audio) {
-      console.log('[livekit] Audio track subscribed from:', participant.identity);
+      const isScreenAudio = publication.source === Track.Source.ScreenShareAudio;
       const audioElement = track.attach();
       document.body.appendChild(audioElement);
-      sfuAudioElements.set(participant.identity, audioElement);
       const voiceState = useVoiceStore.getState();
-      if (voiceState.isDeafened) {
-        audioElement.volume = 0;
+      if (isScreenAudio) {
+        console.log('[livekit] Screen audio track subscribed from:', participant.identity);
+        sfuScreenAudioElements.set(participant.identity, audioElement);
+        const savedVol = parseFloat(localStorage.getItem('ss-volume') ?? '1');
+        audioElement.volume = voiceState.isDeafened ? 0 : savedVol;
+        audioElement.muted = voiceState.isDeafened || savedVol === 0;
       } else {
-        const userVol = voiceState.userVolumes.get(participant.identity) ?? 100;
-        sfuSetUserVolume(participant.identity, userVol);
+        console.log('[livekit] Audio track subscribed from:', participant.identity);
+        sfuAudioElements.set(participant.identity, audioElement);
+        if (voiceState.isDeafened) {
+          audioElement.volume = 0;
+        } else {
+          const userVol = voiceState.userVolumes.get(participant.identity) ?? 100;
+          sfuSetUserVolume(participant.identity, userVol);
+        }
       }
     } else if (track.kind === Track.Kind.Video) {
       const source = publication.source;
@@ -170,9 +181,21 @@ function setupRoomListeners(room: Room): void {
     participant: RemoteParticipant,
   ) => {
     if (track.kind === Track.Kind.Audio) {
-      console.log('[livekit] Audio track unsubscribed from:', participant.identity);
+      const isScreenAudio = publication.source === Track.Source.ScreenShareAudio;
       track.detach();
-      cleanupParticipantAudio(participant.identity);
+      if (isScreenAudio) {
+        console.log('[livekit] Screen audio track unsubscribed from:', participant.identity);
+        const audio = sfuScreenAudioElements.get(participant.identity);
+        if (audio) {
+          audio.pause();
+          audio.srcObject = null;
+          audio.remove();
+          sfuScreenAudioElements.delete(participant.identity);
+        }
+      } else {
+        console.log('[livekit] Audio track unsubscribed from:', participant.identity);
+        cleanupParticipantAudio(participant.identity);
+      }
     } else if (track.kind === Track.Kind.Video) {
       const source = publication.source;
       if (source === Track.Source.ScreenShare) {
@@ -255,6 +278,9 @@ export function sfuSetDeafened(deafened: boolean): void {
     for (const entry of sfuGainNodes.values()) {
       entry.gain.gain.setValueAtTime(0, entry.audioCtx.currentTime);
     }
+    for (const audio of sfuScreenAudioElements.values()) {
+      audio.volume = 0;
+    }
   } else {
     const { userVolumes } = useVoiceStore.getState();
     for (const [userId, audio] of sfuAudioElements) {
@@ -267,6 +293,19 @@ export function sfuSetDeafened(deafened: boolean): void {
         audio.volume = vol / 100;
       }
     }
+    const savedVol = parseFloat(localStorage.getItem('ss-volume') ?? '1');
+    for (const audio of sfuScreenAudioElements.values()) {
+      audio.volume = savedVol;
+      audio.muted = savedVol === 0;
+    }
+  }
+}
+
+export function sfuSetScreenAudioVolume(userId: string, volume: number): void {
+  const audio = sfuScreenAudioElements.get(userId);
+  if (audio && !useVoiceStore.getState().isDeafened) {
+    audio.volume = volume;
+    audio.muted = volume === 0;
   }
 }
 
@@ -486,6 +525,13 @@ function cleanupParticipantAudio(participantId: string): void {
     audio.remove();
     sfuAudioElements.delete(participantId);
   }
+  const screenAudio = sfuScreenAudioElements.get(participantId);
+  if (screenAudio) {
+    screenAudio.pause();
+    screenAudio.srcObject = null;
+    screenAudio.remove();
+    sfuScreenAudioElements.delete(participantId);
+  }
 }
 
 function cleanup(): void {
@@ -501,6 +547,12 @@ function cleanup(): void {
     audio.remove();
   }
   sfuAudioElements.clear();
+  for (const [, audio] of sfuScreenAudioElements) {
+    audio.pause();
+    audio.srcObject = null;
+    audio.remove();
+  }
+  sfuScreenAudioElements.clear();
   sfuScreenStreams.clear();
   sfuCameraStreams.clear();
   currentRoom = null;

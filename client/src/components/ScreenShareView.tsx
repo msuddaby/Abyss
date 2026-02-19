@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useVoiceStore, useAuthStore } from '@abyss/shared';
-import { getScreenVideoStream, getLocalScreenStream, requestWatch, stopWatching } from '../hooks/useWebRTC';
+import { getScreenVideoStream, getLocalScreenStream, requestWatch, stopWatching, setScreenAudioVolume } from '../hooks/useWebRTC';
 
 export default function ScreenShareView() {
   const activeSharers = useVoiceStore((s) => s.activeSharers);
@@ -18,6 +18,9 @@ export default function ScreenShareView() {
   const [premuteVolume, setPremuteVolume] = useState(1);
 
   const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+
+  const isWatching = watchingUserId !== null;
+  const isWatchingSelf = watchingUserId === currentUser?.id;
 
   const handleFullscreen = useCallback(() => {
     const el = containerRef.current;
@@ -45,7 +48,10 @@ export default function ScreenShareView() {
       video.volume = newVol;
       video.muted = newVol === 0;
     }
-  }, []);
+    if (watchingUserId && !isWatchingSelf) {
+      setScreenAudioVolume(watchingUserId, newVol);
+    }
+  }, [watchingUserId, isWatchingSelf]);
 
   const handleMuteToggle = useCallback(() => {
     if (volume > 0) {
@@ -55,9 +61,6 @@ export default function ScreenShareView() {
       handleVolumeChange(premuteVolume || 1);
     }
   }, [volume, premuteVolume, handleVolumeChange]);
-
-  const isWatching = watchingUserId !== null;
-  const isWatchingSelf = watchingUserId === currentUser?.id;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -78,6 +81,7 @@ export default function ScreenShareView() {
     if (!isWatchingSelf) {
       video.volume = volume;
       video.muted = volume === 0;
+      setScreenAudioVolume(watchingUserId, volume);
     }
 
     const tryPlay = () => {

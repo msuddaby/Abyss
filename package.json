@@ -5,11 +5,17 @@
     "packages/shared",
     "client"
   ],
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
   "overrides": {
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
   "devDependencies": {
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "vitepress": "^1.6.3"
   }
 }
