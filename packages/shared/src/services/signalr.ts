@@ -294,3 +294,37 @@ export async function healthCheck() {
     pingInFlight = false;
   }
 }
+
+/**
+ * Quick connection check for window focus events.
+ * Single ping with short timeout — if it fails, restart immediately.
+ * Returns true if the connection is alive, false if a restart was triggered.
+ */
+export async function focusReconnect(): Promise<boolean> {
+  const conn = getConnection();
+  if (conn.state !== signalR.HubConnectionState.Connected) {
+    if (conn.state === signalR.HubConnectionState.Disconnected) {
+      scheduleReconnect("focus-disconnected");
+    }
+    return false;
+  }
+  try {
+    await Promise.race([
+      conn.invoke("Ping"),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Ping timeout")), PING_TIMEOUT_MS),
+      ),
+    ]);
+    console.debug('[SignalR] focus ping ok');
+    consecutivePingFailures = 0;
+    return true;
+  } catch {
+    console.warn('[SignalR] focus ping failed — restarting');
+    consecutivePingFailures = 0;
+    // Restart immediately, no delay
+    void restartConnection("focus-ping-failed").catch(() => {
+      scheduleReconnect("focus-restart-failed");
+    });
+    return false;
+  }
+}

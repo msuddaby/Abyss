@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { getConnection, startConnection, onReconnected, healthCheck } from '../services/signalr.js';
+import { getConnection, startConnection, onReconnected, focusReconnect } from '../services/signalr.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useAuthStore } from '../stores/authStore.js';
 import { usePresenceStore } from '../stores/presenceStore.js';
@@ -626,7 +626,7 @@ export function useSignalRListeners() {
     if (typeof document === 'undefined') return;
     let lastRefresh = 0;
 
-    const handleFocus = () => {
+    const handleFocus = async () => {
       if (Date.now() - lastRefresh < 5000) return;
       lastRefresh = Date.now();
 
@@ -634,13 +634,12 @@ export function useSignalRListeners() {
       const { currentChannelId, fetchMessages } = useMessageStore.getState();
       if (currentChannelId) fetchMessages(currentChannelId);
 
-      // Immediate health check to catch zombie connections on return
-      // instead of waiting up to 30s for the next interval
-      void healthCheck();
-
-      // If connected, also refresh presence/unreads via SignalR
-      const conn = getConnection();
-      if (conn.state === 'Connected') {
+      // Single ping check — if it fails, restart immediately (no 2-failure wait).
+      // Only refresh presence/unreads via SignalR if the connection is alive,
+      // otherwise the invocations would just get canceled and spam errors.
+      const alive = await focusReconnect();
+      if (alive) {
+        const conn = getConnection();
         const server = useServerStore.getState().activeServer;
         if (server) fetchServerState(conn, server.id);
         refreshSignalRState(conn);
