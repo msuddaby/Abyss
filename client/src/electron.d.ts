@@ -68,6 +68,12 @@ interface Window {
     // Update log forwarding
     onUpdateLog: (callback: (msg: string) => void) => () => void;
 
+    // TTS fallback via espeak-ng (for Linux where Chromium speechSynthesis is broken)
+    tts: {
+      speak: (text: string) => void;
+      cancel: () => void;
+    };
+
     // Auto-launch on startup
     autoLaunch: {
       isEnabled: () => Promise<boolean>;

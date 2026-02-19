@@ -1,7 +1,7 @@
 // This module MUST be imported before anything that uses @abyss/shared stores/services.
 // It initializes the storage adapter and API base URL.
 import { Capacitor } from '@capacitor/core';
-import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, hydrateVoiceStore, useServerConfigStore } from '@abyss/shared';
+import { setStorage, setApiBase, setOnUnauthorized, useAuthStore, hydrateVoiceStore, hydrateTtsUsers, useServerConfigStore } from '@abyss/shared';
 import { setupNotificationClickListener } from '@abyss/shared/services/electronNotifications';
 
 const electronStoreAvailable =
@@ -40,6 +40,7 @@ setStorage({
 });
 
 hydrateVoiceStore();
+hydrateTtsUsers();
 
 // Hydrate server config store after storage is initialized
 useServerConfigStore.getState()._hydrate();

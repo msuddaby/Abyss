@@ -15,6 +15,44 @@ function cleanContentForTts(content: string): string {
   return text;
 }
 
+// Chromium on Linux often has a broken speechSynthesis (getVoices() returns []).
+// Detect this and fall back to espeak-ng via Electron IPC.
+let useNativeTts: boolean | null = null;
+
+function checkTtsAvailability(): boolean {
+  if (useNativeTts !== null) return useNativeTts;
+  const voices = speechSynthesis.getVoices();
+  if (voices.length > 0) {
+    useNativeTts = true;
+    return true;
+  }
+  // voices may load async — if electron fallback is available, prefer it immediately
+  if (window.electron?.tts) {
+    useNativeTts = false;
+    return false;
+  }
+  // No electron fallback, try native anyway (browser context)
+  useNativeTts = true;
+  return true;
+}
+
+function ttsSpeak(text: string) {
+  if (checkTtsAvailability()) {
+    const utterance = new SpeechSynthesisUtterance(text);
+    speechSynthesis.speak(utterance);
+  } else {
+    window.electron!.tts.speak(text);
+  }
+}
+
+function ttsCancel() {
+  if (useNativeTts !== false) {
+    speechSynthesis.cancel();
+  }
+  // Always try electron cancel too in case both were used
+  window.electron?.tts?.cancel();
+}
+
 export default function VoiceChatOverlay() {
   const currentChannelId = useVoiceStore((s) => s.currentChannelId);
   const isVoiceChatOpen = useVoiceStore((s) => s.isVoiceChatOpen);
@@ -46,16 +84,13 @@ export default function VoiceChatOverlay() {
         const text = cleanContentForTts(msg.content);
         if (!text) continue;
 
-        const utterance = new SpeechSynthesisUtterance(
-          `${msg.author.displayName} says: ${text}`,
-        );
-        speechSynthesis.speak(utterance);
+        ttsSpeak(`${msg.author.displayName} says: ${text}`);
       }
     });
 
     return () => {
       unsub();
-      speechSynthesis.cancel();
+      ttsCancel();
     };
   }, []);
 

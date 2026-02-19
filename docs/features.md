@@ -78,6 +78,34 @@ Voice chat uses a hybrid P2P/SFU architecture. See [Voice Architecture](/VOICE_A
 - Input and output device selection
 - Noise suppression (via `@sapphi-red/web-noise-suppressor`)
 
+### Voice Chat Text-to-Speech
+
+When in a voice channel, you can enable text-to-speech (TTS) for individual users in the voice chat panel. When TTS is enabled for a user, their text messages are read aloud automatically.
+
+- Right-click a user in the voice participant list to toggle TTS
+- TTS preferences are saved locally and persist across sessions — you don't need to re-enable TTS every time you rejoin
+- Message content is sanitized before speaking: URLs are read as "link", code blocks as "code block", and markdown formatting is stripped
+
+**Platform behavior:**
+
+| Platform | TTS Engine |
+|---|---|
+| **Web (Firefox, Chrome, Safari)** | Browser `speechSynthesis` API |
+| **Desktop (macOS, Windows)** | Electron/Chromium `speechSynthesis` API (uses OS voices) |
+| **Desktop (Linux)** | `espeak-ng` via Electron IPC — see note below |
+
+> **Linux desktop users:** Chromium's `speechSynthesis` API is broken on most Linux distributions (`getVoices()` returns an empty array even with `speech-dispatcher` installed). The Electron desktop app works around this by calling `espeak-ng` directly as a subprocess. You must have `espeak-ng` installed for TTS to work:
+>
+> ```sh
+> # Arch / CachyOS
+> sudo pacman -S espeak-ng
+>
+> # Debian / Ubuntu
+> sudo apt install espeak-ng
+> ```
+>
+> On the web client in Linux, TTS depends on your browser. Firefox ships its own speech synthesis backend and generally works out of the box.
+
 ### Video and Screen Share
 
 - Screen sharing with audio (where supported by the browser/OS)

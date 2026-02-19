@@ -245,6 +245,26 @@ After an update downloads, Abyss calls `quitAndInstall()` followed by `app.exit(
 ls -la ~/.local/bin/Abyss.AppImage
 ```
 
+### Text-to-speech not working (Linux)
+
+**Symptom:** TTS is enabled for a user in voice chat but no audio is heard. This only affects Linux.
+
+**Cause:** Chromium's `speechSynthesis` API is broken on most Linux distributions. Even with `speech-dispatcher` installed, `speechSynthesis.getVoices()` returns an empty array. This is a [longstanding Chromium bug](https://issues.chromium.org/issues/40506584) that affects all Chromium-based apps, including Electron.
+
+**Fix:** The Electron desktop app works around this by calling `espeak-ng` directly. Install it:
+
+```sh
+# Arch / CachyOS
+sudo pacman -S espeak-ng
+
+# Debian / Ubuntu
+sudo apt install espeak-ng
+```
+
+The desktop app automatically detects when browser TTS is unavailable and falls back to `espeak-ng`. No configuration is needed beyond having it installed.
+
+**Web client on Linux:** Firefox ships its own TTS backend and works out of the box. Chrome/Chromium on Linux has the same broken `speechSynthesis` — there is no workaround for the web client in Chromium-based browsers.
+
 ### Push-to-talk keybind not working
 
 Global keybinds require Accessibility permissions on macOS. Grant the permission in System Settings > Privacy & Security > Accessibility.
