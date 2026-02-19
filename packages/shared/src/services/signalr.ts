@@ -162,6 +162,7 @@ export function resetConnection(): void {
 
 async function restartConnection(reason: string): Promise<void> {
   const conn = getConnection();
+  console.log(`[SignalR] restartConnection reason=${reason} state=${conn.state}`);
   if (conn.state === signalR.HubConnectionState.Connected) return;
   setStatus("reconnecting");
   try {
@@ -174,8 +175,10 @@ async function restartConnection(reason: string): Promise<void> {
   await ensureFreshToken().catch(() => {});
   try {
     await startConnection();
+    console.log('[SignalR] restartConnection succeeded');
     fireReconnectCallbacks();
   } catch (err) {
+    console.warn('[SignalR] restartConnection failed', (err as Error)?.message);
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
   }
@@ -251,8 +254,14 @@ async function healthCheck() {
   }
   if (conn.state !== signalR.HubConnectionState.Connected) return;
   if (pingInFlight) return;
+  const hidden = typeof document !== "undefined" && document.hidden;
+  if (hidden) {
+    console.debug('[SignalR] skipping ping (document hidden)');
+    return;
+  }
   pingInFlight = true;
   const pingStart = Date.now();
+  console.debug(`[SignalR] ping start state=${conn.state} hidden=${hidden}`);
   try {
     await Promise.race([
       conn.invoke("Ping"),
@@ -264,7 +273,7 @@ async function healthCheck() {
     consecutivePingFailures = 0;
   } catch (err) {
     consecutivePingFailures += 1;
-    console.warn(`[SignalR] ping failed ${Date.now() - pingStart}ms failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD}`, (err as Error)?.message);
+    console.warn(`[SignalR] ping failed ${Date.now() - pingStart}ms failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} state=${conn.state}`, (err as Error)?.message);
     if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
       consecutivePingFailures = 0;
       scheduleReconnect("ping-failed");
