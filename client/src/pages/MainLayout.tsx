@@ -15,7 +15,8 @@ import ContextMenu from '../components/contextMenu/ContextMenu';
 import RoleAssignModal from '../components/RoleAssignModal';
 import ModerationConfirmModal from '../components/ModerationConfirmModal';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore } from '@abyss/shared';
+import GuestUpgradeModal from '../components/GuestUpgradeModal';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore, useAuthStore } from '@abyss/shared';
 import { useEffect, useState } from 'react';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useSwipeGesture } from '../hooks/useSwipeGesture';
@@ -46,6 +47,8 @@ export default function MainLayout() {
   const startLeftDrawerDrag = useMobileStore((s) => s.startLeftDrawerDrag);
   const endLeftDrawerDrag = useMobileStore((s) => s.endLeftDrawerDrag);
   const resetLeftDrawerDrag = useMobileStore((s) => s.resetLeftDrawerDrag);
+  const isGuest = useAuthStore((s) => s.isGuest);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showPins, setShowPins] = useState(false);
   const [memberListVisible, setMemberListVisible] = useState(() => {
     const saved = localStorage.getItem('memberListVisible');
@@ -151,6 +154,12 @@ export default function MainLayout() {
           </div>
         )}
         <UpdateBanner />
+        {isGuest && (
+          <div className="guest-upgrade-banner" onClick={() => setShowUpgradeModal(true)}>
+            You're using a guest account. Click here to register and keep your username and data.
+          </div>
+        )}
+        {showUpgradeModal && <GuestUpgradeModal onClose={() => setShowUpgradeModal(false)} />}
         {isDmMode && activeDmChannel ? (
           <>
             <div className="channel-header">

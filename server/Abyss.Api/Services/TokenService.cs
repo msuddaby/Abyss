@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using Abyss.Api.Models;
@@ -18,6 +19,11 @@ public class TokenService
             new(ClaimTypes.Name, user.UserName!),
             new("displayName", user.DisplayName)
         };
+
+        if (user.IsGuest)
+        {
+            claims.Add(new Claim("isGuest", "true"));
+        }
 
         var sysadminUsername = Environment.GetEnvironmentVariable("SYSADMIN_USERNAME");
         if (!string.IsNullOrWhiteSpace(sysadminUsername)
@@ -46,5 +52,41 @@ public class TokenService
     {
         var value = Environment.GetEnvironmentVariable("JWT_EXPIRES_MINUTES");
         return int.TryParse(value, out var minutes) && minutes > 0 ? minutes : DefaultAccessTokenMinutes;
+    }
+
+    private const int DefaultRefreshTokenDays = 30;
+
+    public static RefreshToken CreateRefreshToken(AppUser user, out string rawToken)
+    {
+        rawToken = GenerateRefreshToken();
+        return new RefreshToken
+        {
+            Id = Guid.NewGuid(),
+            UserId = user.Id,
+            TokenHash = HashToken(rawToken),
+            CreatedAt = DateTime.UtcNow,
+            ExpiresAt = DateTime.UtcNow.AddDays(GetRefreshTokenLifetimeDays())
+        };
+    }
+
+    public static string GenerateRefreshToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(64);
+        return Convert.ToBase64String(bytes)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
+    }
+
+    public static string HashToken(string token)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        return Convert.ToBase64String(bytes);
+    }
+
+    private static int GetRefreshTokenLifetimeDays()
+    {
+        var value = Environment.GetEnvironmentVariable("REFRESH_TOKEN_DAYS");
+        return int.TryParse(value, out var days) && days > 0 ? days : DefaultRefreshTokenDays;
     }
 }

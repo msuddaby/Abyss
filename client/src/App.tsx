@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { useAuthStore } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import QuickJoinPage from './pages/QuickJoinPage';
 import MainLayout from './pages/MainLayout';
 import ToastHost from './components/ToastHost';
 import ScreenSharePicker from './components/ScreenSharePicker';
@@ -84,6 +85,7 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/join/:code" element={<QuickJoinPage />} />
         <Route
           path="/*"
           element={

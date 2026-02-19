@@ -399,11 +399,12 @@ public class ServersController : ControllerBase
             CreatorId = UserId,
             ExpiresAt = request?.ExpiresAt,
             MaxUses = request?.MaxUses,
+            AllowGuests = request?.AllowGuests ?? false,
         };
         _db.Invites.Add(invite);
         await _db.SaveChangesAsync();
 
-        return Ok(new InviteDto(invite.Id, invite.Code, invite.ServerId, invite.CreatorId, invite.CreatedAt, invite.ExpiresAt, invite.MaxUses, invite.Uses, invite.LastUsedAt));
+        return Ok(new InviteDto(invite.Id, invite.Code, invite.ServerId, invite.CreatorId, invite.CreatedAt, invite.ExpiresAt, invite.MaxUses, invite.Uses, invite.LastUsedAt, invite.AllowGuests));
     }
 
     [HttpPatch("{serverId}/members/{userId}/roles")]

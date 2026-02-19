@@ -13,4 +13,5 @@ public class Invite
     public int? MaxUses { get; set; }
     public int Uses { get; set; }
     public DateTime? LastUsedAt { get; set; }
+    public bool AllowGuests { get; set; } = false;
 }

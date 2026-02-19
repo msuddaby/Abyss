@@ -34,6 +34,9 @@ public class ChatHub : Hub
     private static readonly ConcurrentDictionary<string, Guid> _activeChannels = new();
     private static readonly ConcurrentDictionary<string, PendingVoiceDisconnect> _pendingVoiceDisconnects = new();
 
+    // Guest activity tracking: userId -> last DB write time (throttle to once per hour)
+    private static readonly ConcurrentDictionary<string, DateTime> _guestActivityWrites = new();
+
     // Heartbeat tracking for server-side idle detection
     internal static readonly ConcurrentDictionary<string, DateTime> _lastHeartbeats = new();
     // Users that were auto-set to Away by the server (so we can restore on reconnect)
@@ -276,6 +279,13 @@ public class ChatHub : Hub
             return;
         }
 
+        // Track guest activity
+        if (user.IsGuest)
+        {
+            user.LastActiveAt = DateTime.UtcNow;
+            _guestActivityWrites[UserId] = DateTime.UtcNow;
+        }
+
         // Auto-restore from server-set away: if the server marked this user
         // as Away due to stale heartbeats, restore to Online on reconnect.
         // Check both in-memory dict and DB column (DB survives server restarts).
@@ -506,9 +516,29 @@ public class ChatHub : Hub
     // Explicit presence heartbeat — clients call this when the user is actively
     // interacting (mouse, keyboard, touch). Keeps the user's heartbeat fresh so
     // PresenceMonitorService doesn't mark them as Away.
-    public void ActivityHeartbeat()
+    public async void ActivityHeartbeat()
     {
         _lastHeartbeats[UserId] = DateTime.UtcNow;
+
+        // Throttled guest activity update (max once per hour)
+        if (_guestActivityWrites.TryGetValue(UserId, out var lastWrite) &&
+            (DateTime.UtcNow - lastWrite).TotalHours < 1)
+            return;
+
+        try
+        {
+            var user = await _db.Users.FindAsync(UserId);
+            if (user is { IsGuest: true })
+            {
+                user.LastActiveAt = DateTime.UtcNow;
+                _guestActivityWrites[UserId] = DateTime.UtcNow;
+                await _db.SaveChangesAsync();
+            }
+        }
+        catch
+        {
+            // Non-critical — ignore failures
+        }
     }
 
     public async Task SendMessage(string channelId, string content, List<string> attachmentIds, string? replyToMessageId = null)

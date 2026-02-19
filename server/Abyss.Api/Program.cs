@@ -182,6 +182,9 @@ builder.Services.AddHostedService<AuditLogCleanupService>();
 // Notification & push token cleanup
 builder.Services.AddHostedService<NotificationCleanupService>();
 
+// Guest account cleanup (deactivate after 7 days of inactivity)
+builder.Services.AddHostedService<GuestCleanupService>();
+
 // Async push notification dispatch
 builder.Services.AddHostedService<NotificationDispatchService>();
 
