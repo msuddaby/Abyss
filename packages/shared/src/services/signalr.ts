@@ -17,6 +17,7 @@ let pingInFlight = false;
 let consecutivePingFailures = 0;
 let reconnectCallbacks: (() => void)[] = [];
 let suspended = false;
+let intentionalStop = false;
 
 export function onReconnected(cb: () => void): () => void {
   reconnectCallbacks.push(cb);
@@ -62,8 +63,12 @@ export function getConnection(): signalR.HubConnection {
   });
 
   connection.onclose((err) => {
-    console.warn('[SignalR] onclose', err?.message ?? '(no error)');
+    console.warn('[SignalR] onclose', err?.message ?? '(no error)', intentionalStop ? '(intentional)' : '');
     reconnectingSince = null;
+    if (intentionalStop) {
+      // restartConnection is handling the stop+start cycle — don't interfere
+      return;
+    }
     setStatus("disconnected");
     if (!suspended) {
       scheduleReconnect("closed");
@@ -169,10 +174,13 @@ async function restartConnection(reason: string): Promise<void> {
   // so forcing a stop+start here is intentional.
   setStatus("reconnecting");
   stopHealthMonitor();
+  intentionalStop = true;
   try {
     await conn.stop();
   } catch {
     // Ignore stop errors; we'll attempt a clean start anyway.
+  } finally {
+    intentionalStop = false;
   }
   // Ensure the access token is still valid before reconnecting — only refreshes
   // if near expiry, avoiding unnecessary API calls that could fail during restarts.
