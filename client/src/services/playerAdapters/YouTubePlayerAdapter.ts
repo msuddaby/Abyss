@@ -172,9 +172,9 @@ export class YouTubePlayerAdapter implements PlayerAdapter {
   }
 
   setVolume(volume: number): void {
-    if (!this.player) return;
     // PlayerAdapter volume: 0-1, YouTube volume: 0-100
-    this.player.setVolume(Math.round(Math.max(0, Math.min(1, volume)) * 100));
+    const volumePct = Math.round(Math.max(0, Math.min(1, volume)) * 100);
+    this.whenReady(() => this.player!.setVolume(volumePct));
   }
 
   onEnded(cb: () => void): void { this.endedCb = cb; }

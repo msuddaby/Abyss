@@ -22,12 +22,13 @@ interface Props {
   onFullscreen?: () => void;
   isFullscreen?: boolean;
   onTransferHost?: () => void;
+  onSkip?: () => void;
 }
 
 export default function WatchPartyControls({
   isHost, canControl, isPlaying, currentTime, duration, title,
   onPlay, onPause, onSeek, onStop, onToggleQueue, hasQueue, formatTime,
-  volume, onVolumeChange, onPiP, isPiP, onTuneOut, onFullscreen, isFullscreen, onTransferHost,
+  volume, onVolumeChange, onPiP, isPiP, onTuneOut, onFullscreen, isFullscreen, onTransferHost, onSkip,
 }: Props) {
   const seekBarRef = useRef<HTMLDivElement>(null);
   const [showVolume, setShowVolume] = useState(false);
@@ -78,6 +79,13 @@ export default function WatchPartyControls({
             </button>
           ) : (
             <span className="wp-sync-badge">SYNCED</span>
+          )}
+          {canControl && hasQueue && onSkip && (
+            <button className="wp-ctrl-btn" onClick={onSkip} title="Skip to next">
+              <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                <path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/>
+              </svg>
+            </button>
           )}
           <span className="wp-time">
             {formatTime(currentTime)} / {formatTime(duration)}

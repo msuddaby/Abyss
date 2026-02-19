@@ -102,11 +102,14 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     adapter.onError((message) => setPlayerError(message));
 
     adapter.onEnded(() => {
-      if (isHost) handleNextInQueue();
+      const { activeParty: party } = useWatchPartyStore.getState();
+      const user = useAuthStore.getState().user;
+      if (party?.hostUserId === user?.id) handleNextInQueueRef.current();
     });
 
-    // Apply saved volume
-    adapter.setVolume(volume);
+    // Apply saved volume (read directly from storage to avoid stale closure)
+    const savedVolume = localStorage.getItem('wp-volume');
+    adapter.setVolume(savedVolume ? parseFloat(savedVolume) : 1);
 
     // Auto-play and sync to current position
     if (activeParty) {
@@ -207,24 +210,28 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
   }, []);
 
   const handleNextInQueue = useCallback(async () => {
-    if (!activeParty || !currentChannelId || activeParty.queue.length === 0) {
-      if (currentChannelId) {
-        await useWatchPartyStore.getState().stopWatchParty(currentChannelId).catch(console.error);
-      }
+    if (!currentChannelId) return;
+    // Read fresh from store — closure-captured activeParty would be stale if queue changed after party started
+    const { activeParty: party } = useWatchPartyStore.getState();
+    if (!party || party.queue.length === 0) {
+      await useWatchPartyStore.getState().stopWatchParty(currentChannelId).catch(console.error);
       return;
     }
 
-    const nextItem = activeParty.queue[0];
+    const nextItem = party.queue[0];
     await useWatchPartyStore.getState().removeFromQueue(currentChannelId, 0).catch(console.error);
     await useWatchPartyStore.getState().stopWatchParty(currentChannelId).catch(console.error);
     await useWatchPartyStore.getState().startWatchParty(currentChannelId, {
-      mediaProviderConnectionId: activeParty.mediaProviderConnectionId,
+      mediaProviderConnectionId: party.mediaProviderConnectionId,
       providerItemId: nextItem.providerItemId,
       itemTitle: nextItem.title,
       itemThumbnail: nextItem.thumbnail,
       itemDurationMs: nextItem.durationMs,
     }).catch(console.error);
-  }, [activeParty, currentChannelId]);
+  }, [currentChannelId]);
+
+  const handleNextInQueueRef = useRef(handleNextInQueue);
+  useEffect(() => { handleNextInQueueRef.current = handleNextInQueue; }, [handleNextInQueue]);
 
   const pipSupported = !isYouTube && typeof document.exitPictureInPicture === 'function';
 
@@ -327,6 +334,13 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
                 ) : (
                   <span className="wp-sync-badge">SYNCED</span>
                 )}
+                {canControl && activeParty.queue.length > 0 && (
+                  <button className="wp-ctrl-btn" onClick={handleNextInQueue} title="Skip to next">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                      <path d="M6 18l8.5-6L6 6v12zm2-8.14L11.03 12 8 14.14V9.86zM16 6h2v12h-2z"/>
+                    </svg>
+                  </button>
+                )}
                 <span className="wp-mini-time">{formatTime(currentTime)}</span>
                 <div className="wp-mini-volume" onMouseEnter={(e) => (e.currentTarget as HTMLElement).classList.add('show')} onMouseLeave={(e) => (e.currentTarget as HTMLElement).classList.remove('show')}>
                   <button className="wp-ctrl-btn" onClick={() => {
@@ -395,6 +409,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
               onFullscreen={handleFullscreen}
               isFullscreen={isFullscreen}
               onTransferHost={isHost ? () => setShowTransfer(!showTransfer) : undefined}
+              onSkip={canControl ? handleNextInQueue : undefined}
             />
           )}
         </div>
