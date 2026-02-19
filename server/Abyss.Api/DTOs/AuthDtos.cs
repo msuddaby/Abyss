@@ -19,7 +19,7 @@ public record LogoutRequest([Required] string RefreshToken);
 
 public record AuthResponse(string Token, string RefreshToken, UserDto User);
 
-public record UserDto(string Id, string Username, string DisplayName, string? AvatarUrl, string Status, string Bio, int PresenceStatus, EquippedCosmeticsDto? Cosmetics = null);
+public record UserDto(string Id, string Username, string DisplayName, string? AvatarUrl, string Status, string Bio, int PresenceStatus, EquippedCosmeticsDto? Cosmetics = null, bool IsGuest = false);
 
 public record UpdateProfileRequest(
     [StringLength(32)] string? DisplayName,
@@ -27,3 +27,13 @@ public record UpdateProfileRequest(
     [StringLength(128)] string? Status);
 
 public record UpdatePresenceRequest([Range(0, 3)] int PresenceStatus);
+
+public record GuestJoinRequest(
+    [Required, StringLength(32, MinimumLength = 1)] string Username,
+    [Required, StringLength(32, MinimumLength = 1)] string DisplayName);
+
+public record GuestJoinResponse(string Token, string RefreshToken, UserDto User, ServerDto Server);
+
+public record UpgradeGuestRequest(
+    [Required, EmailAddress] string Email,
+    [Required, StringLength(128, MinimumLength = 8)] string Password);

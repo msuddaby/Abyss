@@ -173,8 +173,13 @@ body.window-hidden *::after {
   transition: background 0.2s;
 }
 
-.auth-form button[type="submit"]:hover {
+.auth-form button[type="submit"]:hover:not(:disabled) {
   background: var(--bg-accent-hover);
+}
+
+.auth-form button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .auth-error {
@@ -3275,6 +3280,29 @@ label.has-error select:focus {
   background: var(--bg-accent-hover);
 }
 
+.modal form button[type="submit"] {
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--bg-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 8px;
+  transition: background 0.2s;
+}
+
+.modal form button[type="submit"]:hover {
+  background: var(--bg-accent-hover);
+}
+
+.modal form button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .btn-secondary {
   background: transparent;
   color: var(--text-primary);
@@ -3615,6 +3643,23 @@ label.has-error select:focus {
   border-radius: 4px;
   color: var(--text-primary);
   font-size: 13px;
+}
+
+.invite-options > button {
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--bg-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.invite-options > button:hover {
+  background: var(--bg-accent-hover);
 }
 
 /* Toast */
@@ -10216,4 +10261,61 @@ label.has-error select:focus {
   ::-webkit-scrollbar {
     width: 0;
   }
+}
+
+/* Guest upgrade banner */
+.guest-upgrade-banner {
+  background: var(--accent, #5865f2);
+  color: #fff;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.guest-upgrade-banner:hover {
+  filter: brightness(1.1);
+}
+
+/* Invite server info on quick join page */
+.invite-server-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.invite-server-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.invite-server-icon-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary, #2f3136);
+  color: #fff;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* Guest toggle in invite modal */
+.invite-guest-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary, #b9bbbe);
+  cursor: pointer;
+  margin: 0.5rem 0;
+}
+
+.invite-guest-toggle input[type="checkbox"] {
+  cursor: pointer;
 }

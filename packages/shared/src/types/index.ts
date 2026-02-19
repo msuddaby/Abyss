@@ -80,12 +80,27 @@ export interface User {
   bio: string;
   presenceStatus: number;
   cosmetics?: EquippedCosmetics | null;
+  isGuest?: boolean;
 }
 
 export interface AuthResponse {
   token: string;
   refreshToken: string;
   user: User;
+}
+
+export interface InviteInfo {
+  serverName: string;
+  serverIconUrl?: string;
+  memberCount: number;
+  allowGuests: boolean;
+}
+
+export interface GuestJoinResponse {
+  token: string;
+  refreshToken: string;
+  user: User;
+  server: Server;
 }
 
 export interface Server {

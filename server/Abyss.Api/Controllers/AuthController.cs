@@ -1,6 +1,4 @@
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
@@ -27,7 +25,6 @@ public class AuthController : ControllerBase
     private readonly ImageService _imageService;
     private readonly CosmeticService _cosmeticService;
     private const string InviteOnlyKey = "InviteOnly";
-    private const int DefaultRefreshTokenDays = 30;
 
     public AuthController(
         UserManager<AppUser> userManager,
@@ -108,7 +105,7 @@ public class AuthController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.RefreshToken)) return Unauthorized("Invalid refresh token");
 
-        var tokenHash = HashToken(request.RefreshToken);
+        var tokenHash = TokenService.HashToken(request.RefreshToken);
         var storedToken = await _db.RefreshTokens
             .Include(rt => rt.User)
             .FirstOrDefaultAsync(rt => rt.TokenHash == tokenHash);
@@ -129,7 +126,7 @@ public class AuthController : ControllerBase
                 if (currentToken != null)
                     currentToken.RevokedAt = DateTime.UtcNow;
 
-                var newRefresh = CreateRefreshToken(storedToken.User, out var newRefreshToken);
+                var newRefresh = TokenService.CreateRefreshToken(storedToken.User, out var newRefreshToken);
                 _db.RefreshTokens.Add(newRefresh);
                 await _db.SaveChangesAsync();
 
@@ -140,7 +137,7 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid refresh token");
         }
 
-        var newRotatedRefresh = CreateRefreshToken(storedToken.User, out var newRotatedRefreshToken);
+        var newRotatedRefresh = TokenService.CreateRefreshToken(storedToken.User, out var newRotatedRefreshToken);
         storedToken.RevokedAt = DateTime.UtcNow;
         storedToken.ReplacedByTokenId = newRotatedRefresh.Id;
 
@@ -156,7 +153,7 @@ public class AuthController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.RefreshToken)) return Ok();
 
-        var tokenHash = HashToken(request.RefreshToken);
+        var tokenHash = TokenService.HashToken(request.RefreshToken);
         var storedToken = await _db.RefreshTokens.FirstOrDefaultAsync(rt => rt.TokenHash == tokenHash);
         if (storedToken == null) return Ok();
 
@@ -247,6 +244,39 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
+    [HttpPost("upgrade")]
+    [Authorize]
+    public async Task<ActionResult<AuthResponse>> UpgradeGuest(UpgradeGuestRequest request)
+    {
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user == null) return NotFound();
+        if (!user.IsGuest) return BadRequest("Account is not a guest account.");
+
+        // Check email uniqueness
+        var existingEmail = await _userManager.FindByEmailAsync(request.Email);
+        if (existingEmail != null) return BadRequest("Email is already in use.");
+
+        user.Email = request.Email;
+        user.NormalizedEmail = request.Email.ToUpperInvariant();
+        user.IsGuest = false;
+
+        var passwordResult = await _userManager.AddPasswordAsync(user, request.Password);
+        if (!passwordResult.Succeeded)
+        {
+            // Guests have a random password set, so remove it first then add the real one
+            await _userManager.RemovePasswordAsync(user);
+            passwordResult = await _userManager.AddPasswordAsync(user, request.Password);
+            if (!passwordResult.Succeeded)
+                return BadRequest(passwordResult.Errors);
+        }
+
+        await _userManager.UpdateAsync(user);
+
+        var response = await CreateAuthResponseAsync(user);
+        return Ok(response);
+    }
+
     private async Task BroadcastProfileUpdate(string userId, UserDto dto)
     {
         var serverIds = await _db.ServerMembers
@@ -274,7 +304,7 @@ public class AuthController : ControllerBase
     }
 
     private static UserDto ToUserDto(AppUser user) =>
-        new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus);
+        new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus, IsGuest: user.IsGuest);
 
     private async Task<bool> IsInviteOnlyAsync()
     {
@@ -295,45 +325,11 @@ public class AuthController : ControllerBase
 
     private async Task<AuthResponse> CreateAuthResponseAsync(AppUser user)
     {
-        var refresh = CreateRefreshToken(user, out var refreshToken);
+        var refresh = TokenService.CreateRefreshToken(user, out var refreshToken);
         _db.RefreshTokens.Add(refresh);
         await _db.SaveChangesAsync();
 
         var accessToken = _tokenService.CreateToken(user);
         return new AuthResponse(accessToken, refreshToken, ToUserDto(user));
-    }
-
-    private static RefreshToken CreateRefreshToken(AppUser user, out string rawToken)
-    {
-        rawToken = GenerateRefreshToken();
-        return new RefreshToken
-        {
-            Id = Guid.NewGuid(),
-            UserId = user.Id,
-            TokenHash = HashToken(rawToken),
-            CreatedAt = DateTime.UtcNow,
-            ExpiresAt = DateTime.UtcNow.AddDays(GetRefreshTokenLifetimeDays())
-        };
-    }
-
-    private static string GenerateRefreshToken()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(64);
-        return Convert.ToBase64String(bytes)
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
-    }
-
-    private static string HashToken(string token)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static int GetRefreshTokenLifetimeDays()
-    {
-        var value = Environment.GetEnvironmentVariable("REFRESH_TOKEN_DAYS");
-        return int.TryParse(value, out var days) && days > 0 ? days : DefaultRefreshTokenDays;
     }
 }

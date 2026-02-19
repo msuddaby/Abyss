@@ -3,7 +3,7 @@ import api from '../services/api.js';
 import { resetConnection } from '../services/signalr.js';
 import { clearTurnCredentials } from '../services/turn.js';
 import { getStorage } from '../storage.js';
-import type { User } from '../types/index.js';
+import type { User, Server } from '../types/index.js';
 
 interface AuthState {
   user: User | null;
@@ -11,9 +11,12 @@ interface AuthState {
   refreshToken: string | null;
   isAuthenticated: boolean;
   isSysadmin: boolean;
+  isGuest: boolean;
   initialized: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string, displayName: string, inviteCode?: string) => Promise<void>;
+  guestJoin: (code: string, username: string, displayName: string) => Promise<{ server: Server }>;
+  upgradeAccount: (email: string, password: string) => Promise<void>;
   logout: () => void;
   initialize: () => Promise<void>;
   updateProfile: (data: { displayName?: string; bio?: string; status?: string }) => Promise<void>;
@@ -34,12 +37,26 @@ const getSysadminFromToken = (token: string | null): boolean => {
   }
 };
 
+const getGuestFromToken = (token: string | null): boolean => {
+  if (!token) return false;
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return false;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=');
+    const json = JSON.parse(atob(base64));
+    return json.isGuest === true || json.isGuest === 'true';
+  } catch {
+    return false;
+  }
+};
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: (() => { try { const u = getStorage().getItem('user'); return u ? JSON.parse(u) : null; } catch { return null; } })(),
   token: (() => { try { return getStorage().getItem('token'); } catch { return null; } })(),
   refreshToken: (() => { try { return getStorage().getItem('refreshToken'); } catch { return null; } })(),
   isAuthenticated: (() => { try { const s = getStorage(); return !!(s.getItem('token') && s.getItem('user')); } catch { return false; } })(),
   isSysadmin: (() => { try { return getSysadminFromToken(getStorage().getItem('token')); } catch { return false; } })(),
+  isGuest: (() => { try { return getGuestFromToken(getStorage().getItem('token')); } catch { return false; } })(),
   initialized: false,
 
   initialize: async () => {
@@ -66,6 +83,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       user: savedUser,
       isAuthenticated: true,
       isSysadmin: getSysadminFromToken(storedToken),
+      isGuest: getGuestFromToken(storedToken),
     });
     try {
       const res = await api.get(`/auth/profile/${savedUser.id}`);
@@ -96,7 +114,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     s.setItem('token', token);
     s.setItem('refreshToken', refreshToken);
     s.setItem('user', JSON.stringify(user));
-    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
+    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token), isGuest: false });
   },
 
   register: async (username, email, password, displayName, inviteCode) => {
@@ -106,7 +124,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     s.setItem('token', token);
     s.setItem('refreshToken', refreshToken);
     s.setItem('user', JSON.stringify(user));
-    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token) });
+    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: getSysadminFromToken(token), isGuest: false });
+  },
+
+  guestJoin: async (code, username, displayName) => {
+    const res = await api.post(`/invites/${code}/guest-join`, { username, displayName });
+    const { token, refreshToken, user, server } = res.data;
+    const s = getStorage();
+    s.setItem('token', token);
+    s.setItem('refreshToken', refreshToken);
+    s.setItem('user', JSON.stringify(user));
+    set({ token, refreshToken, user, isAuthenticated: true, isSysadmin: false, isGuest: true });
+    return { server };
+  },
+
+  upgradeAccount: async (email, password) => {
+    const res = await api.post('/auth/upgrade', { email, password });
+    const { token, refreshToken, user } = res.data;
+    const s = getStorage();
+    s.setItem('token', token);
+    s.setItem('refreshToken', refreshToken);
+    s.setItem('user', JSON.stringify(user));
+    set({ token, refreshToken, user, isGuest: false, isSysadmin: getSysadminFromToken(token) });
   },
 
   logout: () => {
@@ -120,7 +159,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     s.removeItem('user');
     resetConnection();
     clearTurnCredentials();
-    set({ token: null, refreshToken: null, user: null, isAuthenticated: false, isSysadmin: false, initialized: true });
+    set({ token: null, refreshToken: null, user: null, isAuthenticated: false, isSysadmin: false, isGuest: false, initialized: true });
   },
 
   updateProfile: async (data) => {
