@@ -773,7 +773,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       setInputError(null);
     } catch (err) {
       console.error("Failed to send message:", err);
-      addToast('Failed to send message.', 'error');
+      addToast('Message not sent — connection lost. Try again.', 'error');
     } finally {
       setSending(false);
     }

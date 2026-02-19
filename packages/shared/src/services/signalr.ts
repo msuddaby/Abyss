@@ -284,6 +284,11 @@ export async function healthCheck() {
     console.debug(`[SignalR] ping ok ${Date.now() - pingStart}ms`);
     consecutivePingFailures = 0;
   } catch (err) {
+    // Ignore failures caused by an intentional restart tearing down the connection
+    if (intentionalStop) {
+      pingInFlight = false;
+      return;
+    }
     consecutivePingFailures += 1;
     console.warn(`[SignalR] ping failed ${Date.now() - pingStart}ms failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} state=${conn.state}`, (err as Error)?.message);
     if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
