@@ -5,7 +5,24 @@ import { isElectron } from '../services/electronNotifications.js';
 import { useVoiceStore } from './voiceStore.js';
 import { useAuthStore } from './authStore.js';
 import { useServerStore } from './serverStore.js';
+import { getStorage } from '../storage.js';
 import type { Message, Reaction } from '../types/index.js';
+
+const TTS_USERS_KEY = 'ttsUsers';
+
+function loadTtsUsers(): Set<string> {
+  try {
+    const raw = getStorage().getItem(TTS_USERS_KEY);
+    if (raw) return new Set(JSON.parse(raw));
+  } catch {}
+  return new Set<string>();
+}
+
+function saveTtsUsers(users: Set<string>) {
+  try {
+    getStorage().setItem(TTS_USERS_KEY, JSON.stringify([...users]));
+  } catch {}
+}
 
 interface VoiceChatState {
   messages: Message[];
@@ -146,10 +163,19 @@ export const useVoiceChatStore = create<VoiceChatState>((set, get) => ({
     const next = new Set(get().ttsUsers);
     if (next.has(userId)) next.delete(userId);
     else next.add(userId);
+    saveTtsUsers(next);
     set({ ttsUsers: next });
   },
 
   clear: () => {
-    set({ messages: [], channelId: null, loading: false, hasMore: false, unreadCount: 0, toastMessage: null, ttsUsers: new Set<string>() });
+    set({ messages: [], channelId: null, loading: false, hasMore: false, unreadCount: 0, toastMessage: null });
   },
 }));
+
+/**
+ * Hydrate TTS user preferences from persistent storage.
+ * Must be called AFTER setStorage() so the adapter is available.
+ */
+export function hydrateTtsUsers() {
+  useVoiceChatStore.setState({ ttsUsers: loadTtsUsers() });
+}

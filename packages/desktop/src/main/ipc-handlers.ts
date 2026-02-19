@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron';
+import { execFile, ChildProcess } from 'child_process';
 import Store from 'electron-store';
 import { GlobalShortcutManager } from './global-shortcuts';
 import { AutoLaunchManager } from './auto-launch';
@@ -7,6 +8,9 @@ import { UpdateManager } from './update-manager';
 import { getLinuxIdleSeconds } from './linux-idle';
 
 const store = new Store();
+
+// TTS fallback via espeak-ng for Linux (Chromium speechSynthesis is broken)
+let ttsProcess: ChildProcess | null = null;
 
 // Shared idle validation state for Windows
 let lastReportedIdle = 0;
@@ -50,6 +54,26 @@ export function setupIpcHandlers(
   // Show desktop notification
   ipcMain.on('show-notification', (_event, title: string, body: string, data?: any) => {
     showNotification(window, title, body, data);
+  });
+
+  // TTS via espeak-ng (fallback for Linux where Chromium speechSynthesis is broken)
+  ipcMain.on('tts-speak', (_event, text: string) => {
+    if (ttsProcess) {
+      ttsProcess.kill();
+      ttsProcess = null;
+    }
+    ttsProcess = execFile('espeak-ng', [text], (error) => {
+      if (error && (error as any).killed) return; // cancelled
+      if (error) console.error('[TTS] espeak-ng error:', error.message);
+      ttsProcess = null;
+    });
+  });
+
+  ipcMain.on('tts-cancel', () => {
+    if (ttsProcess) {
+      ttsProcess.kill();
+      ttsProcess = null;
+    }
   });
 
   // Check if window is focused

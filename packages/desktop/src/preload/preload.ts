@@ -134,6 +134,16 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('screen-share-selected', sourceId);
   },
 
+  // TTS fallback via espeak-ng (for Linux where Chromium speechSynthesis is broken)
+  tts: {
+    speak: (text: string) => {
+      ipcRenderer.send('tts-speak', text);
+    },
+    cancel: () => {
+      ipcRenderer.send('tts-cancel');
+    },
+  },
+
   // Auto-launch on startup
   autoLaunch: {
     isEnabled: async () => {

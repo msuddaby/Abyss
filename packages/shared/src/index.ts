@@ -28,7 +28,7 @@ export { useSearchStore } from './stores/searchStore.js';
 export { useSignalRStore } from './stores/signalrStore.js';
 export { useAppConfigStore } from './stores/appConfigStore.js';
 export { useToastStore } from './stores/toastStore.js';
-export { useVoiceChatStore } from './stores/voiceChatStore.js';
+export { useVoiceChatStore, hydrateTtsUsers } from './stores/voiceChatStore.js';
 export { useNotificationSettingsStore } from './stores/notificationSettingsStore.js';
 export { useUserPreferencesStore } from './stores/userPreferencesStore.js';
 export { useMediaProviderStore } from './stores/mediaProviderStore.js';
