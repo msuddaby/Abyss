@@ -151,6 +151,11 @@ export default function MainLayout() {
         {showSignalRBanner && (
           <div className={`signalr-status-banner ${signalRStatus}`}>
             <span>{signalRMessage}</span>
+            {signalRStatus === 'disconnected' && (
+              <button className="signalr-reload-btn" onClick={() => window.location.reload()}>
+                Reload
+              </button>
+            )}
           </div>
         )}
         <UpdateBanner />

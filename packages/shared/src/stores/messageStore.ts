@@ -116,6 +116,8 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     // Cache miss: fetch from API with loading state (original behavior)
     set({ loading: true, messages: [], hasMore: true, hasNewer: false, currentChannelId: channelId });
     const res = await api.get(`/channels/${channelId}/messages?limit=100`);
+    // Guard against stale response: another fetchMessages may have changed the active channel
+    if (get().currentChannelId !== channelId) return;
     set({ messages: res.data, loading: false, hasMore: res.data.length >= 100, hasNewer: false });
     get().fetchPinnedMessages(channelId).catch(() => {});
   },

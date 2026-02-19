@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
-import { useAuthStore } from '@abyss/shared';
+import { useAuthStore, onBeforeLogout } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import QuickJoinPage from './pages/QuickJoinPage';
@@ -48,23 +48,19 @@ function App() {
     });
   }, [initialized]);
 
-  // Register/unregister push token based on auth state
+  // Register push token and set up pre-logout cleanup
   useEffect(() => {
-    if (!initialized || !Capacitor.isNativePlatform()) return;
+    if (!initialized || !Capacitor.isNativePlatform() || !isAuthenticated) return;
 
-    if (isAuthenticated) {
-      import('./services/pushNotifications').then(({ registerForPushNotifications }) => {
-        registerForPushNotifications();
-      });
-    }
+    let unsubscribe: (() => void) | undefined;
 
-    return () => {
-      if (isAuthenticated) {
-        import('./services/pushNotifications').then(({ unregisterPushToken }) => {
-          unregisterPushToken();
-        });
-      }
-    };
+    import('./services/pushNotifications').then(({ registerForPushNotifications, unregisterPushToken }) => {
+      registerForPushNotifications();
+      // Register cleanup to run BEFORE auth is cleared so the API call succeeds
+      unsubscribe = onBeforeLogout(() => unregisterPushToken());
+    });
+
+    return () => { unsubscribe?.(); };
   }, [isAuthenticated, initialized]);
 
   // Pause all animations globally when window is not visible

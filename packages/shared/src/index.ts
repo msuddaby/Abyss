@@ -15,7 +15,7 @@ export type { TurnCredentials } from './services/turn.js';
 export { showDesktopNotification, isElectron, navigateToNotification, setupNotificationClickListener } from './services/electronNotifications.js';
 
 // Stores
-export { useAuthStore } from './stores/authStore.js';
+export { useAuthStore, onBeforeLogout } from './stores/authStore.js';
 export { useServerStore } from './stores/serverStore.js';
 export { useMessageStore } from './stores/messageStore.js';
 export { useVoiceStore, hydrateVoiceStore } from './stores/voiceStore.js';

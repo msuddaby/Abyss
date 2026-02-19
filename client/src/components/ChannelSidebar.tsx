@@ -71,12 +71,12 @@ export default function ChannelSidebar() {
     if (activeChannel && activeChannel.type === 'Text') {
       if (currentChannelId !== activeChannel.id) {
         const switchChannel = async () => {
+          // Leave/join SignalR groups best-effort — don't let failures block message fetch.
+          // SignalR may be reconnecting, which would reject ensureConnected().
           if (currentChannelId) {
-            await leaveChannel(currentChannelId);
+            leaveChannel(currentChannelId).catch(() => {});
           }
-          // Join SignalR group BEFORE fetching messages so any message sent
-          // during/after the fetch is caught by the group subscription
-          await joinChannel(activeChannel.id);
+          joinChannel(activeChannel.id).catch(() => {});
           fetchMessages(activeChannel.id);
         };
         switchChannel().catch(console.error);

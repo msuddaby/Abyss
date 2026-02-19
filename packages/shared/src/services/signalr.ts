@@ -73,6 +73,30 @@ export function startConnection(): Promise<signalR.HubConnection> {
   if (conn.state === signalR.HubConnectionState.Connected) {
     return Promise.resolve(conn);
   }
+  // If the library is auto-reconnecting, wait for it to finish instead of
+  // calling start() (which would throw "not in Disconnected state").
+  if (conn.state === signalR.HubConnectionState.Reconnecting) {
+    if (!startPromise) {
+      startPromise = new Promise<signalR.HubConnection>((resolve, reject) => {
+        const unsub = onReconnected(() => {
+          unsub();
+          startPromise = null;
+          resolve(conn);
+        });
+        // If reconnection fails and connection closes, the onclose handler
+        // will call scheduleReconnect which eventually calls startConnection
+        // again. Time-box the wait so callers aren't stuck forever.
+        setTimeout(() => {
+          unsub();
+          if (startPromise) {
+            startPromise = null;
+            reject(new Error("Timed out waiting for reconnect"));
+          }
+        }, 30000);
+      });
+    }
+    return startPromise;
+  }
   setStatus("connecting");
   if (!startPromise) {
     startPromise = conn

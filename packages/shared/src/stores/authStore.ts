@@ -50,6 +50,15 @@ const getGuestFromToken = (token: string | null): boolean => {
   }
 };
 
+let preLogoutCallbacks: (() => void)[] = [];
+
+/** Register a callback to run before auth state is cleared on logout.
+ *  Returns an unsubscribe function. */
+export function onBeforeLogout(cb: () => void): () => void {
+  preLogoutCallbacks.push(cb);
+  return () => { preLogoutCallbacks = preLogoutCallbacks.filter(c => c !== cb); };
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: (() => { try { const u = getStorage().getItem('user'); return u ? JSON.parse(u) : null; } catch { return null; } })(),
   token: (() => { try { return getStorage().getItem('token'); } catch { return null; } })(),
@@ -149,6 +158,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    // Run pre-logout callbacks while auth token is still valid
+    // (e.g. unregister push token from server)
+    for (const cb of preLogoutCallbacks) {
+      try { cb(); } catch { /* best-effort */ }
+    }
+    preLogoutCallbacks = [];
+
     const s = getStorage();
     const refreshToken = s.getItem('refreshToken');
     if (refreshToken) {
