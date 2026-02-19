@@ -46,12 +46,14 @@ export function getConnection(): signalR.HubConnection {
   connection.keepAliveIntervalInMilliseconds = 15000;
   connection.serverTimeoutInMilliseconds = 60000;
 
-  connection.onreconnecting(() => {
+  connection.onreconnecting((err) => {
+    console.warn('[SignalR] onreconnecting', err?.message ?? '(no error)');
     reconnectingSince = Date.now();
     setStatus("reconnecting");
   });
 
   connection.onreconnected(() => {
+    console.log('[SignalR] onreconnected');
     reconnectingSince = null;
     reconnectAttempts = 0;
     consecutivePingFailures = 0;
@@ -59,7 +61,8 @@ export function getConnection(): signalR.HubConnection {
     fireReconnectCallbacks();
   });
 
-  connection.onclose(() => {
+  connection.onclose((err) => {
+    console.warn('[SignalR] onclose', err?.message ?? '(no error)');
     reconnectingSince = null;
     setStatus("disconnected");
     if (!suspended) {
@@ -201,6 +204,7 @@ function clearReconnectTimer() {
 
 function scheduleReconnect(reason: string) {
   if (reconnectTimer) return;
+  console.warn(`[SignalR] scheduleReconnect reason=${reason} attempt=${reconnectAttempts}`);
   setStatus("reconnecting", reason);
   const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
   reconnectAttempts += 1;
@@ -214,6 +218,9 @@ function scheduleReconnect(reason: string) {
 
 async function healthCheck() {
   const conn = getConnection();
+  if (conn.state !== signalR.HubConnectionState.Connected) {
+    console.debug(`[SignalR] healthCheck state=${conn.state}`);
+  }
   if (conn.state === signalR.HubConnectionState.Disconnected) {
     scheduleReconnect("disconnected");
     return;
@@ -230,6 +237,7 @@ async function healthCheck() {
   if (conn.state !== signalR.HubConnectionState.Connected) return;
   if (pingInFlight) return;
   pingInFlight = true;
+  const pingStart = Date.now();
   try {
     await Promise.race([
       conn.invoke("Ping"),
@@ -237,9 +245,11 @@ async function healthCheck() {
         setTimeout(() => reject(new Error("Ping timeout")), PING_TIMEOUT_MS),
       ),
     ]);
+    console.debug(`[SignalR] ping ok ${Date.now() - pingStart}ms`);
     consecutivePingFailures = 0;
-  } catch {
+  } catch (err) {
     consecutivePingFailures += 1;
+    console.warn(`[SignalR] ping failed ${Date.now() - pingStart}ms failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD}`, (err as Error)?.message);
     if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
       consecutivePingFailures = 0;
       scheduleReconnect("ping-failed");
