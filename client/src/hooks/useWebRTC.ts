@@ -127,7 +127,22 @@ function cleanupP2PConnections(preserveLocalAudio = false) {
     audio.remove();
   });
   screenAudioElements.clear();
-  cleanupAnalysers();
+  // When preserving local audio, keep the AudioContext alive — the
+  // NoiseSuppressor's processing chain depends on it.
+  if (preserveLocalAudio) {
+    // Only clean up analyser nodes, not the AudioContext itself
+    stopAnalyserLoop();
+    stopAudioKeepAlive();
+    const store = useVoiceStore.getState();
+    for (const [userId, entry] of analysers) {
+      entry.source.disconnect();
+      entry.analysisStream.getTracks().forEach((t) => t.stop());
+      store.setSpeaking(userId, false);
+    }
+    analysers.clear();
+  } else {
+    cleanupAnalysers();
+  }
   peerStreams.clear();
   gainNodes.forEach((entry) => entry.source.disconnect());
   gainNodes.clear();
