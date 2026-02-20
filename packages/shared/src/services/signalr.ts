@@ -471,7 +471,16 @@ export async function healthCheck() {
     console.warn(`[SignalR] ping failed ${Date.now() - pingStart}ms failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} state=${conn.state}`, (err as Error)?.message);
     if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
       consecutivePingFailures = 0;
-      scheduleReconnect("ping-failed");
+      const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+      if (inActiveVoiceCall) {
+        recordReconnectDebug("healthCheck", "ping-failed threshold reached but reconnect suppressed during active voice", {
+          err,
+          level: "warn",
+          conn,
+        });
+      } else {
+        scheduleReconnect("ping-failed");
+      }
     }
   } finally {
     pingInFlight = false;
