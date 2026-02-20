@@ -216,6 +216,16 @@ else
 builder.Services.AddSignalR(options =>
 {
     options.EnableDetailedErrors = true;
+    // Browsers throttle WebSocket traffic for backgrounded tabs at the process
+    // level.  The default ClientTimeoutInterval (30s) is too aggressive — the
+    // server kills the connection before the user tabs back.  120s gives plenty
+    // of breathing room for typical tab-away durations.
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(120);
+    options.KeepAliveInterval = TimeSpan.FromSeconds(30);
+    // Default is 1 — serialises ALL hub invocations per connection.
+    // When the client sends a burst of state-refresh calls on tab-focus,
+    // a lightweight Ping gets stuck behind heavy DB queries and times out.
+    options.MaximumParallelInvocationsPerClient = 5;
     options.AddFilter<RateLimitFilter>();
 });
 

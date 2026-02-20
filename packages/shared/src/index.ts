@@ -9,6 +9,7 @@ export * from './types/index.js';
 export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken, ensureFreshToken } from './services/api.js';
 export { getConnection, startConnection, ensureConnected, stopConnection, suspendConnection, resetConnection, onReconnected, healthCheck, focusReconnect, resilientInvoke, getLastReconnectDebugInfo } from './services/signalr.js';
 export type { SignalRReconnectDebugInfo } from './services/signalr.js';
+export type { SignalRConnection } from './services/signalr.protocol.js';
 export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
 export { connectToLiveKit, disconnectFromLiveKit, sfuToggleMute, sfuSetDeafened, sfuSetUserVolume, sfuSetScreenAudioVolume, sfuSetInputDevice, sfuReplaceAudioTrack, sfuPublishScreenShare, sfuUnpublishScreenShare, sfuPublishCamera, sfuUnpublishCamera, getSfuScreenStream, getSfuCameraStream, getSfuLocalCameraStream, getSfuLocalScreenStream, sfuUpdateScreenShareQuality, sfuUpdateCameraQuality, getLiveKitRoom, isInSfuMode } from './services/livekitService.js';
 export { deriveChannelKey, exportKeyBytes, clearChannelKey, clearAllKeys } from './services/e2eeKeyManager.js';

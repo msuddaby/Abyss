@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import type { HubConnection } from "@microsoft/signalr";
+import type { SignalRConnection } from "@abyss/shared";
 import {
   ensureConnected,
   getConnection,
@@ -309,7 +309,7 @@ const audioElements: Map<string, HTMLAudioElement> = new Map();
 const screenAudioElements: Map<string, HTMLAudioElement> = new Map();
 const screenVideoStreams: Map<string, MediaStream> = new Map();
 const pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
-let listenersRegisteredForConnection: HubConnection | null = null;
+let listenersRegisteredForConnection: SignalRConnection | null = null;
 let currentOutputDeviceId: string = "default";
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
@@ -2667,7 +2667,7 @@ export async function stopWatching() {
 }
 
 async function handleUserJoinedVoice(
-  conn: HubConnection,
+  conn: SignalRConnection,
   userId: string,
   displayName: string,
 ) {
@@ -2724,7 +2724,7 @@ async function handleUserJoinedVoice(
   });
 }
 
-function replayBufferedUserJoinedVoiceEvents(conn: HubConnection) {
+function replayBufferedUserJoinedVoiceEvents(conn: SignalRConnection) {
   if (bufferedUserJoinedVoiceEvents.size === 0) return;
   const bufferedEvents = Array.from(bufferedUserJoinedVoiceEvents.entries());
   bufferedUserJoinedVoiceEvents.clear();
@@ -2746,7 +2746,7 @@ function cancelInitialParticipantWait() {
   bufferedUserJoinedVoiceEvents.clear();
 }
 
-function completeInitialParticipantWait(conn: HubConnection) {
+function completeInitialParticipantWait(conn: SignalRConnection) {
   waitingForInitialParticipants = false;
   if (initialParticipantsTimeout) {
     clearTimeout(initialParticipantsTimeout);
@@ -2755,7 +2755,7 @@ function completeInitialParticipantWait(conn: HubConnection) {
   replayBufferedUserJoinedVoiceEvents(conn);
 }
 
-function beginInitialParticipantWait(conn: HubConnection) {
+function beginInitialParticipantWait(conn: SignalRConnection) {
   cancelInitialParticipantWait();
   waitingForInitialParticipants = true;
   initialParticipantsTimeout = setTimeout(() => {

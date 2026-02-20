@@ -20,7 +20,7 @@ import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { useRateLimitStore } from '../stores/rateLimitStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
-import type { HubConnection } from '@microsoft/signalr';
+import type { SignalRConnection } from '../services/signalr.protocol.js';
 import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
@@ -105,7 +105,7 @@ function playVoiceSound(url: string | null | undefined, fallbackPath: string) {
   }
 }
 
-export function fetchServerState(conn: HubConnection, serverId: string) {
+export function fetchServerState(conn: SignalRConnection, serverId: string) {
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
     useServerStore.getState().setVoiceChannelUsers(data);
   }).catch(console.error);
@@ -141,7 +141,7 @@ export function fetchServerState(conn: HubConnection, serverId: string) {
   useSoundboardStore.getState().fetchClips(serverId);
 }
 
-export function refreshSignalRState(conn: HubConnection) {
+export function refreshSignalRState(conn: SignalRConnection) {
   conn.invoke('GetAllServerUnreads').then((unreads: { serverId: string; hasUnread: boolean; mentionCount: number }[]) => {
     useUnreadStore.getState().setServerUnreads(unreads);
   }).catch(console.error);
@@ -166,7 +166,7 @@ export function refreshSignalRState(conn: HubConnection) {
   }
 }
 
-export async function rejoinActiveChannel(conn: HubConnection) {
+export async function rejoinActiveChannel(conn: SignalRConnection) {
   const { isDmMode, activeDmChannel } = useDmStore.getState();
   const { activeChannel } = useServerStore.getState();
   const channelId = isDmMode ? activeDmChannel?.id : (activeChannel?.type === 'Text' ? activeChannel.id : null);
@@ -630,29 +630,35 @@ export function useSignalRListeners() {
   // missed while backgrounded (zombie connection, throttled WebSocket, etc.)
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    let lastRefresh = 0;
+    let refreshInFlight = false;
 
     const handleFocus = async (source: 'window-focus' | 'visibility-visible') => {
-      if (Date.now() - lastRefresh < 5000) return;
-      lastRefresh = Date.now();
+      // Guard against concurrent runs — the visibility-visible and window-focus
+      // events can fire seconds apart when the user tabs in then clicks on the
+      // window. A second round of focusReconnect + state refresh invocations
+      // floods the serialized hub pipeline and causes ping timeouts.
+      if (refreshInFlight) return;
+      refreshInFlight = true;
 
-      // Messages via HTTP — works even when SignalR is dead
-      const { currentChannelId, fetchMessages } = useMessageStore.getState();
-      if (currentChannelId) fetchMessages(currentChannelId);
+      try {
+        // Messages via HTTP — works even when SignalR is dead
+        const { currentChannelId, fetchMessages } = useMessageStore.getState();
+        if (currentChannelId) fetchMessages(currentChannelId);
 
-      // Single ping check — if it fails, restart immediately (no 2-failure wait).
-      // Only refresh presence/unreads via SignalR if the connection is alive,
-      // otherwise the invocations would just get canceled and spam errors.
-      const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
-      console.log(`[SignalR] focus refresh source=${source} inVoiceCall=${inActiveVoiceCall}`);
-      const alive = await focusReconnect({ restartOnFailure: !inActiveVoiceCall });
-      if (alive) {
-        const conn = getConnection();
-        const server = useServerStore.getState().activeServer;
-        if (server) fetchServerState(conn, server.id);
-        refreshSignalRState(conn);
-      } else {
-        console.warn(`[SignalR] focus refresh source=${source} skipped SignalR state refresh (connection not alive)`);
+        const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+        console.log(`[SignalR] focus refresh source=${source} inVoiceCall=${inActiveVoiceCall}`);
+        const alive = await focusReconnect({ restartOnFailure: !inActiveVoiceCall });
+        if (alive) {
+          const conn = getConnection();
+          const server = useServerStore.getState().activeServer;
+          if (server) fetchServerState(conn, server.id);
+          refreshSignalRState(conn);
+        } else {
+          console.warn(`[SignalR] focus refresh source=${source} skipped SignalR state refresh (connection not alive)`);
+        }
+      } finally {
+        // Keep the guard up for 5s to suppress rapid successive focus events
+        setTimeout(() => { refreshInFlight = false; }, 5000);
       }
     };
 
