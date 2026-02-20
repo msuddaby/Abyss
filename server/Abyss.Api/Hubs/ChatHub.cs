@@ -1063,28 +1063,11 @@ public class ChatHub : Hub
 
         if (reconnectingToSameChannel)
         {
-            var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
-            if (wasSharing)
-            {
-                await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
-                var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-                foreach (var userId in recipients)
-                {
-                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
-                }
-            }
-
-            var hadCamera = _voiceState.RemoveCameraUser(channelGuid, UserId);
-            if (hadCamera)
-            {
-                await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
-                var camRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-                foreach (var userId in camRecipients)
-                {
-                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
-                }
-            }
-
+            // Lightweight reconnect: just update the connection ID.
+            // Don't remove screen share / camera state — WebRTC tracks are
+            // independent of SignalR and may still be flowing (especially in
+            // Electron or during background re-registration while gaming).
+            // The client reconciles these on visibility change if needed.
             _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
             if (!canSpeak)
             {

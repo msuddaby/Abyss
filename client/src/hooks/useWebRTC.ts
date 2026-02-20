@@ -3954,11 +3954,26 @@ export function useWebRTC() {
       const channelId = useVoiceStore.getState().currentChannelId;
       if (!channelId) return;
 
-      // If tab is hidden, delay rejoin until tab becomes visible
-      // getUserMedia requires user gesture or visible tab
       if (document.hidden) {
-        pendingVisibilityRejoin = true;
-        console.log("SignalR reconnected but tab is hidden, will rejoin when visible");
+        // Tab is hidden (e.g. user is gaming). We can't do getUserMedia or a full
+        // rejoin, but we MUST re-register with the server immediately — otherwise
+        // the grace period expires and the server kicks us from voice.
+        // This is lightweight: just tells the server our new connection ID.
+        const conn = getConnection();
+        const vs = useVoiceStore.getState();
+        try {
+          await Promise.race([
+            conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Background re-register timeout")), 10000)),
+          ]);
+          console.log("SignalR reconnected while hidden — re-registered with server (voice preserved)");
+          // No need for pendingVisibilityRejoin — server state is current.
+          // WebRTC P2P connections are independent of SignalR and may still be working.
+          // When tab becomes visible, the periodic reconciliation will fix any peer drift.
+        } catch (err) {
+          console.warn("Failed to re-register voice while hidden, will full-rejoin on visibility:", err);
+          pendingVisibilityRejoin = true;
+        }
         return;
       }
       await attemptVoiceRejoin("signalr-reconnect");
@@ -3980,14 +3995,48 @@ export function useWebRTC() {
         return;
       }
 
-      // Only rejoin if SignalR actually reconnected while hidden (the proper trigger).
-      // Previously this also had a "disconnectedRecovery" path that fired when
-      // connectionState wasn't "connected" — but that was overeager and raced
-      // with other reconnect paths, causing unnecessary teardown/rejoin cycles.
       if (pendingVisibilityRejoin) {
+        // SignalR reconnected while hidden but background re-registration failed.
+        // Need a full rejoin (teardown + getUserMedia + rejoin).
         const conn = getConnection();
         if (conn.state === "Connected") {
           await attemptVoiceRejoin("visibility-pending");
+        }
+      } else {
+        // Background re-registration succeeded (or no reconnect happened).
+        // Do a lightweight peer reconciliation: verify WebRTC connections are
+        // still healthy and fix any that died during the background period.
+        // This is instant — no teardown, no getUserMedia, no audible disruption.
+        const conn = getConnection();
+        if (conn.state === "Connected") {
+          conn.invoke("GetVoiceChannelUsers", channelId)
+            .then((users: Record<string, string>) => {
+              const authoritative = new Map(Object.entries(users));
+              useVoiceStore.getState().setParticipants(authoritative);
+
+              if (isInSfuMode() || useVoiceStore.getState().connectionMode === 'sfu' || useVoiceStore.getState().connectionMode === 'attempting-sfu') {
+                return;
+              }
+
+              const currentUser = useAuthStore.getState().user;
+              const myId = currentUser?.id;
+              for (const peerId of peers.keys()) {
+                if (!authoritative.has(peerId)) {
+                  console.log("Visibility reconciliation: closing stale peer", peerId);
+                  closePeer(peerId);
+                }
+              }
+              if (localStream) {
+                for (const [userId, displayName] of authoritative) {
+                  if (userId === myId) continue;
+                  if (!peers.has(userId)) {
+                    console.log("Visibility reconciliation: creating missing peer for", userId);
+                    void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                  }
+                }
+              }
+            })
+            .catch(() => {});
         }
       }
     };

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
@@ -20,6 +21,8 @@ public class NotificationDispatchService : BackgroundService
     private static readonly Channel<string> _awayReplayQueue =
         System.Threading.Channels.Channel.CreateUnbounded<string>(
             new UnboundedChannelOptions { SingleReader = true });
+
+    private static readonly Regex MentionRegex = new(@"<@([a-zA-Z0-9-]+)>", RegexOptions.Compiled);
 
     private readonly IServiceProvider _services;
     private readonly ILogger<NotificationDispatchService> _logger;
@@ -157,9 +160,10 @@ public class NotificationDispatchService : BackgroundService
         var channel = notification.Channel;
         var isDm = channel.Type == ChannelType.DM;
         var channelName = isDm ? $"@{author.DisplayName}" : $"#{channel.Name}";
-        var contentPreview = notification.Message.Content.Length > 100
-            ? notification.Message.Content[..100] + "..."
-            : notification.Message.Content;
+        var resolvedContent = await ResolveMentionsAsync(db, notification.Message.Content);
+        var contentPreview = resolvedContent.Length > 100
+            ? resolvedContent[..100] + "..."
+            : resolvedContent;
         var badgeCount = await db.Notifications
             .CountAsync(n => n.UserId == notification.UserId && !n.IsRead);
 
@@ -368,5 +372,22 @@ public class NotificationDispatchService : BackgroundService
         }
 
         await db.SaveChangesAsync();
+    }
+
+    private static async Task<string> ResolveMentionsAsync(AppDbContext db, string content)
+    {
+        var matches = MentionRegex.Matches(content);
+        if (matches.Count == 0) return content;
+
+        var userIds = matches.Select(m => m.Groups[1].Value).Distinct().ToList();
+        var displayNames = await db.Users
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => u.DisplayName);
+
+        return MentionRegex.Replace(content, match =>
+        {
+            var userId = match.Groups[1].Value;
+            return displayNames.TryGetValue(userId, out var name) ? $"@{name}" : "@Unknown";
+        });
     }
 }
