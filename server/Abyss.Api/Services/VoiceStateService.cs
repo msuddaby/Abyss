@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Linq;
 using Abyss.Api.DTOs;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 
 namespace Abyss.Api.Services;
 
@@ -330,13 +332,32 @@ public class VoiceStateService
     }
 
     /// <summary>
-    /// Remove voice users whose LastSeen is older than the given threshold.
-    /// Returns list of (channelId, userId) pairs that were cleaned up.
+    /// Refresh LastSeen for voice users that still have an active SignalR connection.
+    /// This prevents the cleanup service from evicting users whose P2P audio is still
+    /// working even though their SignalR connection churned.
     /// </summary>
-    public List<(Guid ChannelId, string UserId)> CleanupStaleConnections(TimeSpan maxAge)
+    public void RefreshActiveUsers(Func<string, bool> hasActiveConnection)
+    {
+        foreach (var (_, users) in _voiceChannels)
+        {
+            foreach (var (userId, state) in users)
+            {
+                if (hasActiveConnection(userId))
+                {
+                    state.LastSeen = DateTime.UtcNow;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Remove voice users whose LastSeen is older than the given threshold.
+    /// Returns list of (channelId, userId, wasSharing, hadCamera) tuples that were cleaned up.
+    /// </summary>
+    public List<(Guid ChannelId, string UserId, bool WasSharing, bool HadCamera)> CleanupStaleConnections(TimeSpan maxAge)
     {
         var cutoff = DateTime.UtcNow - maxAge;
-        var removed = new List<(Guid, string)>();
+        var removed = new List<(Guid, string, bool, bool)>();
 
         foreach (var (channelId, users) in _voiceChannels)
         {
@@ -347,10 +368,10 @@ public class VoiceStateService
                     users.TryRemove(userId, out _);
                     _voiceConnections.TryRemove(userId, out _);
                     _userChannels.TryRemove(userId, out _);
-                    RemoveScreenSharer(channelId, userId);
-                    RemoveCameraUser(channelId, userId);
+                    var wasSharing = RemoveScreenSharer(channelId, userId);
+                    var hadCamera = RemoveCameraUser(channelId, userId);
                     RemoveRelayUser(channelId, userId);
-                    removed.Add((channelId, userId));
+                    removed.Add((channelId, userId, wasSharing, hadCamera));
                 }
             }
 
@@ -366,11 +387,23 @@ public class VoiceStateCleanupService : BackgroundService
 {
     private readonly VoiceStateService _voiceState;
     private readonly ILogger<VoiceStateCleanupService> _logger;
+    private readonly IHubContext<Abyss.Api.Hubs.ChatHub> _hubContext;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public VoiceStateCleanupService(VoiceStateService voiceState, ILogger<VoiceStateCleanupService> logger)
+    // Voice state now persists across SignalR disconnections (P2P audio is independent).
+    // Only clean up sessions that have been truly abandoned for hours.
+    private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(2);
+
+    public VoiceStateCleanupService(
+        VoiceStateService voiceState,
+        ILogger<VoiceStateCleanupService> logger,
+        IHubContext<Abyss.Api.Hubs.ChatHub> hubContext,
+        IServiceScopeFactory scopeFactory)
     {
         _voiceState = voiceState;
         _logger = logger;
+        _hubContext = hubContext;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -379,10 +412,54 @@ public class VoiceStateCleanupService : BackgroundService
         {
             await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
 
-            var removed = _voiceState.CleanupStaleConnections(TimeSpan.FromMinutes(10));
-            if (removed.Count > 0)
+            try
             {
+                // Refresh LastSeen for users that still have an active SignalR connection.
+                // This keeps their voice state alive even if no voice-specific activity
+                // has occurred (e.g. they're just listening, not sending signals).
+                _voiceState.RefreshActiveUsers(userId =>
+                    Abyss.Api.Hubs.ChatHub._connections.Values.Any(v => v == userId));
+
+                var removed = _voiceState.CleanupStaleConnections(StaleThreshold);
+                if (removed.Count == 0) continue;
+
                 _logger.LogWarning("Cleaned up {Count} stale voice connections", removed.Count);
+
+                // Send proper signals for each removed user so other clients update
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<Abyss.Api.Data.AppDbContext>();
+                var perms = scope.ServiceProvider.GetRequiredService<PermissionService>();
+
+                foreach (var (channelId, userId, wasSharing, hadCamera) in removed)
+                {
+                    var channelIdStr = channelId.ToString();
+
+                    // Notify voice group
+                    if (wasSharing)
+                        await _hubContext.Clients.Group($"voice:{channelIdStr}").SendAsync("ScreenShareStopped", userId);
+                    if (hadCamera)
+                        await _hubContext.Clients.Group($"voice:{channelIdStr}").SendAsync("CameraStopped", userId);
+                    await _hubContext.Clients.Group($"voice:{channelIdStr}").SendAsync("UserLeftVoice", userId);
+
+                    // Notify sidebar
+                    var channel = await db.Channels.FindAsync(channelId);
+                    if (channel?.ServerId != null)
+                    {
+                        var recipients = await perms.GetUserIdsWithChannelPermissionAsync(channelId, Abyss.Api.Models.Permission.ViewChannel);
+                        foreach (var recipientId in recipients)
+                        {
+                            if (wasSharing)
+                                await _hubContext.Clients.Group($"user:{recipientId}").SendAsync("ScreenShareStoppedInChannel", channelIdStr, userId);
+                            if (hadCamera)
+                                await _hubContext.Clients.Group($"user:{recipientId}").SendAsync("CameraStoppedInChannel", channelIdStr, userId);
+                            await _hubContext.Clients.Group($"user:{recipientId}").SendAsync("VoiceUserLeftChannel", channelIdStr, userId, (string?)null);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Error during voice state cleanup");
             }
         }
     }

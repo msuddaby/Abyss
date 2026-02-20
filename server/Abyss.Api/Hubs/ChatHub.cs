@@ -26,13 +26,10 @@ public class ChatHub : Hub
     private const int MaxAttachmentsPerMessage = 10;
     private const int MaxPinnedMessagesPerChannel = 50;
     private const string MaxMessageLengthKey = "MaxMessageLength";
-    private static readonly TimeSpan VoiceDisconnectGracePeriod = TimeSpan.FromSeconds(30);
-
     // Track online users: connectionId -> userId
     internal static readonly ConcurrentDictionary<string, string> _connections = new();
     // Track which channel each user is actively viewing: userId -> channelId
     private static readonly ConcurrentDictionary<string, Guid> _activeChannels = new();
-    private static readonly ConcurrentDictionary<string, PendingVoiceDisconnect> _pendingVoiceDisconnects = new();
 
     // Guest activity tracking: userId -> last DB write time (throttle to once per hour)
     private static readonly ConcurrentDictionary<string, DateTime> _guestActivityWrites = new();
@@ -41,17 +38,6 @@ public class ChatHub : Hub
     internal static readonly ConcurrentDictionary<string, DateTime> _lastHeartbeats = new();
     // Users that were auto-set to Away by the server (so we can restore on reconnect)
     internal static readonly ConcurrentDictionary<string, byte> _serverAutoAway = new();
-
-    private sealed class PendingVoiceDisconnect
-    {
-        public PendingVoiceDisconnect(string? expectedVoiceConnectionId)
-        {
-            ExpectedVoiceConnectionId = expectedVoiceConnectionId;
-        }
-
-        public string? ExpectedVoiceConnectionId { get; }
-        public CancellationTokenSource Cancellation { get; } = new();
-    }
 
     public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics, HubRateLimiter rateLimiter)
     {
@@ -90,31 +76,6 @@ public class ChatHub : Hub
         return prefs;
     }
 
-    private static void CancelPendingVoiceDisconnect(string userId)
-    {
-        if (_pendingVoiceDisconnects.TryRemove(userId, out var pending))
-        {
-            pending.Cancellation.Cancel();
-        }
-    }
-
-    private static PendingVoiceDisconnect ReplacePendingVoiceDisconnect(string userId, string? expectedVoiceConnectionId)
-    {
-        var pending = new PendingVoiceDisconnect(expectedVoiceConnectionId);
-
-        while (true)
-        {
-            if (_pendingVoiceDisconnects.TryAdd(userId, pending))
-            {
-                return pending;
-            }
-
-            if (_pendingVoiceDisconnects.TryRemove(userId, out var existing))
-            {
-                existing.Cancellation.Cancel();
-            }
-        }
-    }
 
     private async Task SendCurrentVoiceChannelStateToCaller(Guid channelGuid, string channelId)
     {
@@ -373,104 +334,13 @@ public class ChatHub : Hub
             NotificationDispatchService.EnqueueOfflineReplay(UserId);
         }
 
-        // Leave voice if this was the voice connection (or user is fully offline).
-        // Voice is tied to a specific connection (WebRTC peers), so clean up
-        // even if the user has other connections open (e.g. another browser tab).
-        var isVoiceConn = _voiceState.IsVoiceConnection(UserId, Context.ConnectionId);
-        if (isVoiceConn || !stillOnline)
-        {
-            var initialVoiceChannel = _voiceState.GetUserChannel(UserId);
-            if (initialVoiceChannel.HasValue)
-            {
-                var expectedVoiceConnectionId = _voiceState.GetVoiceConnectionId(UserId);
-                var pendingDisconnect = ReplacePendingVoiceDisconnect(UserId, expectedVoiceConnectionId);
-
-                try
-                {
-                    await Task.Delay(VoiceDisconnectGracePeriod, pendingDisconnect.Cancellation.Token);
-                }
-                catch (TaskCanceledException)
-                {
-                    await base.OnDisconnectedAsync(exception);
-                    return;
-                }
-                finally
-                {
-                    if (_pendingVoiceDisconnects.TryGetValue(UserId, out var currentPending) &&
-                        ReferenceEquals(currentPending, pendingDisconnect))
-                    {
-                        _pendingVoiceDisconnects.TryRemove(UserId, out _);
-                    }
-
-                    pendingDisconnect.Cancellation.Dispose();
-                }
-
-                // User rejoined voice before grace window ended.
-                if (pendingDisconnect.ExpectedVoiceConnectionId is { } expectedConnId &&
-                    !_voiceState.IsVoiceConnection(UserId, expectedConnId))
-                {
-                    await base.OnDisconnectedAsync(exception);
-                    return;
-                }
-
-                var voiceChannel = _voiceState.GetUserChannel(UserId);
-                if (!voiceChannel.HasValue || voiceChannel.Value != initialVoiceChannel.Value)
-                {
-                    await base.OnDisconnectedAsync(exception);
-                    return;
-                }
-
-                // Atomically remove screen share / camera state (no TOCTOU)
-                var wasSharing = _voiceState.RemoveScreenSharer(voiceChannel.Value, UserId);
-                if (wasSharing)
-                {
-                    await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("ScreenShareStopped", UserId);
-                }
-
-                var hadCamera = _voiceState.RemoveCameraUser(voiceChannel.Value, UserId);
-                if (hadCamera)
-                {
-                    await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("CameraStopped", UserId);
-                }
-
-                _voiceState.LeaveChannel(voiceChannel.Value, UserId);
-                await Clients.Group($"voice:{voiceChannel.Value}").SendAsync("UserLeftVoice", UserId);
-                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"channel:{voiceChannel.Value}");
-
-                // Handle watch party host promotion or cleanup
-                await HandleWatchPartyLeave(voiceChannel.Value);
-
-                await CleanupVoiceChatIfEmpty(voiceChannel.Value);
-
-                // Notify server group so sidebar updates
-                var channel = await _db.Channels.FindAsync(voiceChannel.Value);
-                if (channel?.ServerId != null)
-                {
-                    if (wasSharing)
-                    {
-                        var recipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
-                        foreach (var userId in recipients)
-                        {
-                            await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", voiceChannel.Value.ToString(), UserId);
-                        }
-                    }
-                    if (hadCamera)
-                    {
-                        var camRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
-                        foreach (var userId in camRecipients)
-                        {
-                            await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", voiceChannel.Value.ToString(), UserId);
-                        }
-                    }
-                    var leaveSoundUrl = await GetSoundUrl(UserId, "leave");
-                    var leftRecipients = await GetUserIdsWithChannelPermission(voiceChannel.Value, Permission.ViewChannel);
-                    foreach (var userId in leftRecipients)
-                    {
-                        await Clients.Group($"user:{userId}").SendAsync("VoiceUserLeftChannel", voiceChannel.Value.ToString(), UserId, leaveSoundUrl);
-                    }
-                }
-            }
-        }
+        // Voice state is NOT cleaned up here. WebRTC P2P audio is independent
+        // of SignalR — it keeps flowing even when the signaling connection dies
+        // (e.g. during gaming, browser throttling, network changes). The user's
+        // voice state persists so other clients keep their peer connections alive.
+        // Cleanup only happens when:
+        //   1. User explicitly calls LeaveVoiceChannel (disconnect button / beforeunload)
+        //   2. VoiceStateCleanupService detects genuinely stale sessions (hours later)
 
         await base.OnDisconnectedAsync(exception);
     }
@@ -1026,7 +896,7 @@ public class ChatHub : Hub
     }
 
     // Voice channels
-    public async Task JoinVoiceChannel(string channelId, bool isMuted = false, bool isDeafened = false)
+    public async Task JoinVoiceChannel(string channelId, bool isMuted = false, bool isDeafened = false, bool isReconnecting = false)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
 
@@ -1050,7 +920,6 @@ public class ChatHub : Hub
         }
 
         var canSpeak = await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.Speak);
-        CancelPendingVoiceDisconnect(UserId);
 
         var effectiveMuted = isMuted || !canSpeak;
         var currentChannel = _voiceState.GetUserChannel(UserId);
@@ -1071,6 +940,52 @@ public class ChatHub : Hub
             _voiceState.UpdateConnectionId(UserId, Context.ConnectionId);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
             await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
+            return;
+        }
+
+        // Soft rejoin: client was in voice but grace period expired and cleaned up
+        // server-side state. Re-add to voice state and notify peers, but DON'T send
+        // ChannelRelayActive or WatchPartyActive (prevents SFU upgrade/watch party
+        // reset during reconnection). Don't play join sounds.
+        if (isReconnecting && !currentChannel.HasValue)
+        {
+            _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
+            if (!canSpeak)
+            {
+                _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);
+            }
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
+
+            // Send participant list + active media to caller (they need to reconcile peers)
+            var users = _voiceState.GetChannelUsersDisplayNames(channelGuid);
+            await Clients.Caller.SendAsync("VoiceChannelUsers", users);
+
+            var currentSharers = _voiceState.GetScreenSharers(channelGuid);
+            if (currentSharers.Count > 0)
+                await Clients.Caller.SendAsync("ActiveSharers", currentSharers);
+
+            var currentCameras = _voiceState.GetCameraUsers(channelGuid);
+            if (currentCameras.Count > 0)
+                await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
+
+            // Deliberately omit ChannelRelayActive and WatchPartyActive —
+            // sending them would force an SFU upgrade or reset watch party state.
+
+            // Notify voice group so peers create WebRTC connections
+            await Clients.OthersInGroup($"voice:{channelId}").SendAsync("UserJoinedVoice", UserId, DisplayName);
+
+            // Notify sidebar without join sound (this is a reconnect, not a real join)
+            if (voiceChannel.ServerId != null)
+            {
+                var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
+                var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
+                foreach (var userId in recipients)
+                {
+                    await Clients.Group($"user:{userId}").SendAsync("VoiceUserJoinedChannel", channelId, UserId, state, (string?)null);
+                }
+            }
+
             return;
         }
 
@@ -1207,7 +1122,6 @@ public class ChatHub : Hub
 
     public async Task LeaveVoiceChannel(string channelId)
     {
-        CancelPendingVoiceDisconnect(UserId);
         var currentChannel = _voiceState.GetUserChannel(UserId);
         if (!currentChannel.HasValue) return;
         var channelGuid = currentChannel.Value;

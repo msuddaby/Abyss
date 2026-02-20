@@ -81,6 +81,10 @@ const REJOIN_COOLDOWN_MS = 5000;
 // any async work enqueued before cleanup can detect the session ended and bail.
 let voiceSessionId = 0;
 
+// Flag set during SignalR reconnection so that VoiceChannelUsers handler knows
+// to close stale peers before reconciliation (grace period had expired on server).
+let reconnectingVoice = false;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // SFU fallback detection
 // ──────────────────────────────────────────────────────────────────────────────
@@ -127,7 +131,22 @@ function cleanupP2PConnections(preserveLocalAudio = false) {
     audio.remove();
   });
   screenAudioElements.clear();
-  cleanupAnalysers();
+  // When preserving local audio, keep the AudioContext alive — the
+  // NoiseSuppressor's processing chain depends on it.
+  if (preserveLocalAudio) {
+    // Only clean up analyser nodes, not the AudioContext itself
+    stopAnalyserLoop();
+    stopAudioKeepAlive();
+    const store = useVoiceStore.getState();
+    for (const [userId, entry] of analysers) {
+      entry.source.disconnect();
+      entry.analysisStream.getTracks().forEach((t) => t.stop());
+      store.setSpeaking(userId, false);
+    }
+    analysers.clear();
+  } else {
+    cleanupAnalysers();
+  }
   peerStreams.clear();
   gainNodes.forEach((entry) => entry.source.disconnect());
   gainNodes.clear();
@@ -2032,10 +2051,12 @@ function createPeerConnection(
 
 interface ClosePeerOptions {
   preserveZombieRecreateCooldown?: boolean;
+  /** Skip counting this close as a P2P failure (e.g. user left, reconnect cleanup) */
+  skipFailureCount?: boolean;
 }
 
 function closePeer(peerId: string, options: ClosePeerOptions = {}) {
-  const { preserveZombieRecreateCooldown = false } = options;
+  const { preserveZombieRecreateCooldown = false, skipFailureCount = false } = options;
   // Clear "new state" timer
   const newTimer = iceNewStateTimers.get(peerId);
   if (newTimer) { clearTimeout(newTimer); iceNewStateTimers.delete(peerId); }
@@ -2043,8 +2064,9 @@ function closePeer(peerId: string, options: ClosePeerOptions = {}) {
   if (pc) {
     console.log(`[peer] Closing peer ${peerId} (connectionState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
     // If the peer never made it past "checking", count it as a P2P failure
-    // so the fallback threshold accumulates even when peers leave/rejoin
-    if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'new') {
+    // so the fallback threshold accumulates even when peers leave/rejoin.
+    // Skip counting when the close is from a normal leave or reconnect cleanup.
+    if (!skipFailureCount && (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'new')) {
       p2pFailedPeers.add(peerId);
       useVoiceStore.getState().incrementP2PFailures();
       console.log(`[closePeer] Counted as P2P failure (iceState=${pc.iceConnectionState}, failureCount=${useVoiceStore.getState().p2pFailureCount})`);
@@ -2954,10 +2976,16 @@ function setupSignalRListeners() {
     console.log(`UserLeftVoice: ${userId}`);
     bufferedUserJoinedVoiceEvents.delete(userId);
     useVoiceStore.getState().removeParticipant(userId);
-    closePeer(userId);
+    closePeer(userId, { skipFailureCount: true });
   });
 
   conn.on("ChannelRelayActive", () => {
+    // During reconnect, the server suppresses this signal. But as a safety net,
+    // ignore it if we're in a reconnecting state to prevent SFU upgrade.
+    if (reconnectingVoice) {
+      console.log('[relay] Ignoring ChannelRelayActive during reconnect');
+      return;
+    }
     console.log('[relay] Channel has relay users');
     channelRelayDetected = true;
 
@@ -3208,23 +3236,41 @@ function setupSignalRListeners() {
     const pendingFromBuffer = new Set(bufferedUserJoinedVoiceEvents.keys());
 
     completeInitialParticipantWait(conn);
-    console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
+
+    // If this signal arrived during a reconnect (grace period had expired on server,
+    // soft rejoin happened), close ALL stale peers and reset P2P failure state.
+    // The other side already destroyed their peers (they got UserLeftVoice from the
+    // grace period), so our peers are zombies. Start fresh.
+    const isReconnectJoin = reconnectingVoice;
+    if (isReconnectJoin) {
+      reconnectingVoice = false;
+      console.log(`VoiceChannelUsers received (reconnect): ${authoritative.size} participants — closing stale peers`);
+      p2pFailedPeers.clear();
+      useVoiceStore.getState().resetP2PFailures();
+      for (const peerId of peers.keys()) {
+        closePeer(peerId, { skipFailureCount: true });
+      }
+    } else {
+      console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
+    }
 
     // Reconcile WebRTC peers against authoritative participant list
     // Skip P2P peer creation/management when in SFU mode
     if (isInSfuMode() || useVoiceStore.getState().connectionMode === 'sfu' || useVoiceStore.getState().connectionMode === 'attempting-sfu') {
       console.log('[reconcile] Skipping P2P reconciliation (SFU mode)');
-    } else if (shouldFallbackToSFU()) {
+    } else if (!isReconnectJoin && shouldFallbackToSFU()) {
       console.log('[reconcile] P2P failure threshold reached, falling back to SFU');
       void fallbackToSFU('P2P connection failed (accumulated failures across peer reconnects)');
     } else {
       const currentUser = useAuthStore.getState().user;
       const myId = currentUser?.id;
       // Close peers for users no longer in the channel
-      for (const peerId of peers.keys()) {
-        if (!authoritative.has(peerId)) {
-          console.log(`Reconciliation: closing stale peer ${peerId}`);
-          closePeer(peerId);
+      if (!isReconnectJoin) {
+        for (const peerId of peers.keys()) {
+          if (!authoritative.has(peerId)) {
+            console.log(`Reconciliation: closing stale peer ${peerId}`);
+            closePeer(peerId);
+          }
         }
       }
       // Create peers for users present on server but missing locally (not during initial join —
@@ -3233,9 +3279,9 @@ function setupSignalRListeners() {
         for (const [userId, displayName] of authoritative) {
           if (userId === myId) continue;
           if (!peers.has(userId) && !pendingFromBuffer.has(userId)) {
-            console.log(`Reconciliation: creating missing peer for ${userId}`);
+            console.log(`${isReconnectJoin ? 'Reconnect' : 'Reconciliation'}: creating peer for ${userId}`);
             void handleUserJoinedVoice(conn, userId, displayName).catch((err) => {
-              console.warn(`Reconciliation: failed to create peer for ${userId}:`, err);
+              console.warn(`${isReconnectJoin ? 'Reconnect' : 'Reconciliation'}: failed to create peer for ${userId}:`, err);
             });
           }
         }
@@ -4093,7 +4139,10 @@ export function useWebRTC() {
 
   // Re-register with server after SignalR reconnects.
   // NEVER tear down working voice here — WebRTC is independent of SignalR.
-  // Just update the server's connection ID and let peer reconciliation handle the rest.
+  // Passes isReconnecting=true so the server knows to use the appropriate path:
+  // - If user is still in voice state (grace period < 120s): silent connId update, no signals
+  // - If grace period expired: soft rejoin that sends VoiceChannelUsers (triggers stale peer
+  //   cleanup via reconnectingVoice flag) but skips ChannelRelayActive/WatchPartyActive
   useEffect(() => {
     return onReconnected(async () => {
       if (intentionalLeave) return;
@@ -4102,45 +4151,60 @@ export function useWebRTC() {
 
       const conn = getConnection();
       const vs = useVoiceStore.getState();
+
+      // Set flag BEFORE invoke so VoiceChannelUsers handler (fired during invoke
+      // if grace period expired) knows to close stale peers and reset P2P state.
+      reconnectingVoice = true;
+
       try {
         await Promise.race([
-          conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
+          conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, true),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Voice re-register timeout")), 10000)),
         ]);
-        console.log("SignalR reconnected — re-registered voice with server (no disruption)");
 
-        // If tab is visible, immediately reconcile peers to fix any that died
-        if (!document.hidden) {
-          conn.invoke("GetVoiceChannelUsers", channelId)
-            .then((users: Record<string, string>) => {
-              const authoritative = new Map(Object.entries(users));
-              useVoiceStore.getState().setParticipants(authoritative);
+        if (reconnectingVoice) {
+          // reconnectingVoice still true = silent reconnect (no VoiceChannelUsers
+          // signal received, grace period hadn't expired). No stale peers to clean.
+          reconnectingVoice = false;
+          console.log("SignalR reconnected — silent re-registration (no disruption)");
 
-              if (isInSfuMode() || vs.connectionMode === 'sfu' || vs.connectionMode === 'attempting-sfu') return;
+          // If tab is visible, do lightweight peer reconciliation
+          if (!document.hidden) {
+            conn.invoke("GetVoiceChannelUsers", channelId)
+              .then((users: Record<string, string>) => {
+                const authoritative = new Map(Object.entries(users));
+                useVoiceStore.getState().setParticipants(authoritative);
 
-              const myId = useAuthStore.getState().user?.id;
-              for (const peerId of peers.keys()) {
-                if (!authoritative.has(peerId)) {
-                  console.log("Reconnect reconciliation: closing stale peer", peerId);
-                  closePeer(peerId);
-                }
-              }
-              if (localStream) {
-                for (const [userId, displayName] of authoritative) {
-                  if (userId === myId) continue;
-                  if (!peers.has(userId)) {
-                    console.log("Reconnect reconciliation: creating missing peer for", userId);
-                    void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                if (isInSfuMode() || vs.connectionMode === 'sfu' || vs.connectionMode === 'attempting-sfu') return;
+
+                const myId = useAuthStore.getState().user?.id;
+                for (const peerId of peers.keys()) {
+                  if (!authoritative.has(peerId)) {
+                    console.log("Reconnect reconciliation: closing stale peer", peerId);
+                    closePeer(peerId, { skipFailureCount: true });
                   }
                 }
-              }
-            })
-            .catch(() => {});
+                if (localStream) {
+                  for (const [userId, displayName] of authoritative) {
+                    if (userId === myId) continue;
+                    if (!peers.has(userId)) {
+                      console.log("Reconnect reconciliation: creating missing peer for", userId);
+                      void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                    }
+                  }
+                }
+              })
+              .catch(() => {});
+          }
+        } else {
+          // reconnectingVoice was cleared by VoiceChannelUsers handler = soft rejoin
+          // (grace period had expired, server sent full participant list, handler
+          // already closed stale peers and started creating new ones).
+          console.log("SignalR reconnected — soft rejoin (grace period had expired, peers recreated)");
         }
       } catch (err) {
+        reconnectingVoice = false;
         console.warn("Failed to re-register voice after reconnect:", err);
-        // Only fall back to full rejoin if re-registration failed AND tab is hidden
-        // (can't do getUserMedia while hidden). If visible, try full rejoin now.
         if (document.hidden) {
           pendingVisibilityRejoin = true;
         } else {
@@ -4213,6 +4277,24 @@ export function useWebRTC() {
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  // Clean up voice on tab/window close so the server immediately removes the user
+  // instead of waiting for the background cleanup service (hours later).
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const channelId = useVoiceStore.getState().currentChannelId;
+      if (!channelId) return;
+      const conn = getConnection();
+      // Fire and forget — page is unloading, can't await
+      try {
+        conn.invoke("LeaveVoiceChannel", channelId);
+      } catch {
+        // Connection may already be dead — that's fine
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
 
   return { joinVoice, leaveVoice, startScreenShare, stopScreenShare, startCamera, stopCamera, switchCamera };
