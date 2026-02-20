@@ -159,6 +159,9 @@ export class SignalRProxy implements SignalRConnection {
     switch (msg.type) {
       case 'event': {
         const set = this.handlers.get(msg.name);
+        if (msg.name === 'ReceiveMessage' || msg.name === 'ReactionAdded' || msg.name === 'ReactionRemoved') {
+          console.log(`[SignalR Proxy] event=${msg.name} handlers=${set?.size ?? 0} hidden=${document.hidden}`);
+        }
         if (set) {
           for (const handler of set) {
             try {
@@ -167,6 +170,8 @@ export class SignalRProxy implements SignalRConnection {
               console.error(`[SignalR Proxy] handler error for ${msg.name}:`, err);
             }
           }
+        } else if (msg.name === 'ReceiveMessage') {
+          console.warn(`[SignalR Proxy] ReceiveMessage arrived but NO HANDLERS registered!`);
         }
         break;
       }

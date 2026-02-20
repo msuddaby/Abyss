@@ -20,12 +20,12 @@ public class HubRateLimiter
         [Category.Pin]        = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Typing]     = new(30,  TimeSpan.FromSeconds(10)),
         [Category.Presence]   = new(20,  TimeSpan.FromSeconds(10)),
-        [Category.VoiceState] = new(30, TimeSpan.FromSeconds(5)),
+        [Category.VoiceState] = new(50, TimeSpan.FromSeconds(5)),
         [Category.Streaming]  = new(20, TimeSpan.FromSeconds(5)),
         [Category.WatchParty] = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Soundboard] = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Query]      = new(100, TimeSpan.FromSeconds(10)),
-        [Category.Navigation] = new(30, TimeSpan.FromSeconds(5)),
+        [Category.Navigation] = new(50, TimeSpan.FromSeconds(5)),
     };
 
     private static readonly Dictionary<string, Category> MethodCategories = new()

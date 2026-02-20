@@ -186,9 +186,14 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     set((s) => {
       // Active channel: append to messages
       if (message.channelId === s.currentChannelId) {
-        if (s.messages.some((m) => m.id === message.id)) return s;
+        if (s.messages.some((m) => m.id === message.id)) {
+          console.log(`[messageStore] addMessage DUPLICATE — msgId=${message.id} channelId=${message.channelId}`);
+          return s;
+        }
+        console.log(`[messageStore] addMessage APPENDED — msgId=${message.id} channelId=${message.channelId} totalMsgs=${s.messages.length + 1}`);
         return { messages: [...s.messages, message] };
       }
+      console.log(`[messageStore] addMessage SKIPPED — msgId=${message.id} msgChannel=${message.channelId} currentChannel=${s.currentChannelId}`);
       // Cached channel: append to cache so it's there on switch-back
       const cached = s.channelCache[message.channelId];
       if (cached && !cached.messages.some((m) => m.id === message.id)) {

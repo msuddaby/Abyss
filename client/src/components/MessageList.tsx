@@ -44,10 +44,12 @@ export default function MessageList() {
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   useEffect(() => {
+    console.log(`[MessageList] effect MOUNT — registering handlers (channelId=${currentChannelId})`);
     incomingSoundRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/message-sent.mp3`);
     incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
     const handler = async (message: Message) => {
+      console.log(`[MessageList] ReceiveMessage handler fired — msgId=${message.id} channelId=${message.channelId} currentChannel=${currentChannelId}`);
       addMessage(message);
       const isFromOtherUser =
         message.authorId && message.authorId !== currentUserId;
@@ -124,6 +126,7 @@ export default function MessageList() {
     conn.on("MessagePinned", pinHandler);
     conn.on("MessageUnpinned", unpinHandler);
     return () => {
+      console.log(`[MessageList] effect CLEANUP — deregistering handlers (channelId=${currentChannelId})`);
       incomingSoundRef.current = null;
       conn.off("ReceiveMessage", handler);
       conn.off("MessageEdited", editHandler);

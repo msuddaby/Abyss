@@ -83,13 +83,14 @@ function createConnection(): signalR.HubConnection {
   connection.serverTimeoutInMilliseconds = 120_000;
 
   // Pre-register all events so they get forwarded to the main thread.
-  // When the document is hidden, skip forwarding to avoid building up a
-  // postMessage backlog (Firefox throttles worker→main delivery for
-  // backgrounded tabs). The main thread's visibility-change refresh will
-  // catch up on missed state.
+  // Events are always forwarded, even when the tab is hidden — the browser
+  // naturally queues worker→main postMessages and delivers them when visible.
+  // Suppressing events while hidden caused messages to be permanently lost.
   for (const name of ALL_SIGNALR_EVENTS) {
     connection.on(name, (...args: unknown[]) => {
-      if (documentHidden) return;
+      if (name === 'ReceiveMessage' || name === 'ReactionAdded' || name === 'ReactionRemoved') {
+        log('log', `[SignalR Worker] FORWARDING ${name} hidden=${documentHidden}`);
+      }
       post({ type: 'event', name, args });
     });
   }
@@ -453,12 +454,10 @@ self.onmessage = (e: MessageEvent<MainToWorkerMessage>) => {
     case 'visibility-change': {
       const wasHidden = documentHidden;
       documentHidden = msg.hidden;
+      log('warn', `[SignalR Worker] visibility-change: hidden=${msg.hidden} (was=${wasHidden})`);
       if (wasHidden && !documentHidden && connection) {
         log('warn', `[SignalR Worker] tab became visible — connState=${connection.state} lastActivity=${Date.now() - lastActivity}ms ago pingInFlight=${pingInFlight}`);
         consecutivePingFailures = 0;
-        // Don't fire healthCheck() here — the main thread sends a focus-reconnect
-        // message right after visibility change, which does its own ping. Firing
-        // both creates a double-ping race and wastes a serialized invocation slot.
       }
       break;
     }

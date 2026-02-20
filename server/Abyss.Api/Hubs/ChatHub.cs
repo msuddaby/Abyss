@@ -1055,6 +1055,19 @@ public class ChatHub : Hub
         var effectiveMuted = isMuted || !canSpeak;
         var currentChannel = _voiceState.GetUserChannel(UserId);
         var currentVoiceConnectionId = _voiceState.GetVoiceConnectionId(UserId);
+
+        // Silent refresh: user is already in this channel on this same connection
+        // (e.g. client-side SFU/WebRTC recovery after a backgrounded tab).
+        // Just send them current state — no leave/join broadcasts, no sounds.
+        if (currentChannel.HasValue &&
+            currentChannel.Value == channelGuid &&
+            string.Equals(currentVoiceConnectionId, Context.ConnectionId, StringComparison.Ordinal))
+        {
+            _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, canSpeak ? null : true, null);
+            await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
+            return;
+        }
+
         var reconnectingToSameChannel =
             currentChannel.HasValue &&
             currentChannel.Value == channelGuid &&

@@ -47,8 +47,8 @@ const iceRestartInFlight: Set<string> = new Set();
 // Per-peer cooldown to prevent rapid ICE restart loops (exponential backoff)
 const lastIceRestartTime: Map<string, number> = new Map();
 const iceRestartAttempts: Map<string, number> = new Map();
-const ICE_RESTART_BASE_COOLDOWN = 30_000; // 30s base cooldown
-const ICE_RESTART_MAX_COOLDOWN = 120_000; // 2 min max cooldown
+const ICE_RESTART_BASE_COOLDOWN = 5_000; // 5s base cooldown
+const ICE_RESTART_MAX_COOLDOWN = 60_000; // 1 min max cooldown
 const MAX_ICE_RESTARTS = 5;
 
 // Timestamp of the last joinVoice or rejoin — the input device effect skips
@@ -78,7 +78,7 @@ let voiceSessionId = 0;
 // SFU fallback detection
 // ──────────────────────────────────────────────────────────────────────────────
 const p2pFailedPeers = new Set<string>();
-const P2P_FAILURE_THRESHOLD = 1; // Fall back after first ICE failure
+const P2P_FAILURE_THRESHOLD = 3; // Fall back after multiple ICE failures
 
 function shouldFallbackToSFU(): boolean {
   const voiceState = useVoiceStore.getState();
@@ -94,13 +94,17 @@ function shouldFallbackToSFU(): boolean {
 // Tear down P2P connections without leaving the voice channel or setting
 // connectionState to "disconnected". Used during P2P → SFU transition so the
 // participant list and SignalR group membership stay intact.
-function cleanupP2PConnections() {
+// When preserveLocalAudio is true, keep localStream/noiseSuppressor/peerStream
+// and the shared AudioContext alive so they can be reused for SFU publishing.
+function cleanupP2PConnections(preserveLocalAudio = false) {
   voiceSessionId++;
-  if (noiseSuppressor) {
-    noiseSuppressor.destroy();
-    noiseSuppressor = null;
+  if (!preserveLocalAudio) {
+    if (noiseSuppressor) {
+      noiseSuppressor.destroy();
+      noiseSuppressor = null;
+    }
+    peerStream = null;
   }
-  peerStream = null;
   peers.forEach((pc) => pc.close());
   peers.clear();
   audioElements.forEach((audio) => {
@@ -115,7 +119,21 @@ function cleanupP2PConnections() {
     audio.remove();
   });
   screenAudioElements.clear();
-  cleanupAnalysers();
+  // When preserving local audio, keep the AudioContext alive — the
+  // NoiseSuppressor's processing chain depends on it.
+  if (preserveLocalAudio) {
+    stopAnalyserLoop();
+    stopAudioKeepAlive();
+    const store = useVoiceStore.getState();
+    for (const [userId, entry] of analysers) {
+      entry.source.disconnect();
+      entry.analysisStream.getTracks().forEach((t) => t.stop());
+      store.setSpeaking(userId, false);
+    }
+    analysers.clear();
+  } else {
+    cleanupAnalysers();
+  }
   peerStreams.clear();
   gainNodes.forEach((entry) => entry.source.disconnect());
   gainNodes.clear();
@@ -138,7 +156,7 @@ function cleanupP2PConnections() {
   iceNewStateTimers.clear();
   cancelInitialParticipantWait();
   stopStatsCollection();
-  if (localStream) {
+  if (!preserveLocalAudio && localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
   }
@@ -1751,7 +1769,7 @@ function applyIncomingRemoteTrack(
     audio
       .play()
       .then(() => {
-        console.log(`[applyTrack] Mic audio play() succeeded for ${peerId} (paused=${audio!.paused})`);
+        console.log(`[applyTrack] Mic audio play() succeeded for ${peerId} (paused=${audio!.paused} readyState=${audio!.readyState} srcObject=${!!audio!.srcObject} tracks=${(audio!.srcObject as MediaStream)?.getAudioTracks().map(t => `${t.id.slice(0,8)} enabled=${t.enabled} readyState=${t.readyState} muted=${t.muted}`).join(',')})`);
         useVoiceStore.getState().setNeedsAudioUnlock(false);
       })
       .catch((err) => {
@@ -1868,13 +1886,22 @@ function createPeerConnection(
   };
 
   pc.oniceconnectionstatechange = () => {
-    console.log(`ICE state for ${peerId}: ${pc.iceConnectionState}`);
+    console.log(`ICE state for ${peerId}: ${pc.iceConnectionState} (hidden=${document.hidden})`);
     const voiceState = useVoiceStore.getState();
 
     // Clear "new state" timer once ICE progresses past "new"
     if (pc.iceConnectionState !== 'new') {
       const newTimer = iceNewStateTimers.get(peerId);
       if (newTimer) { clearTimeout(newTimer); iceNewStateTimers.delete(peerId); }
+    }
+
+    // While the tab is hidden, don't react to ICE "disconnected"/"failed" —
+    // browsers routinely deprioritize backgrounded WebRTC connections, causing
+    // transient ICE disruptions that self-heal once the tab becomes visible.
+    // Acting on them while hidden destroys the P2P session unnecessarily.
+    if (document.hidden && (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed" || pc.iceConnectionState === "checking")) {
+      console.log(`[ICE] Ignoring ${pc.iceConnectionState} for ${peerId} while tab is hidden`);
+      return;
     }
 
     if (pc.iceConnectionState === "checking") {
@@ -1981,6 +2008,10 @@ function createPeerConnection(
   if (existingNewTimer) clearTimeout(existingNewTimer);
   const newStateTimer = setTimeout(() => {
     iceNewStateTimers.delete(peerId);
+    // Don't trigger SFU fallback while the tab is hidden — the remote peer
+    // may also be backgrounded and unable to answer our offer. The visibility
+    // handler will check for stuck peers when the tab becomes visible.
+    if (document.hidden) return;
     if (pc.iceConnectionState === 'new' && peers.get(peerId) === pc) {
       console.warn(`[ice] Peer ${peerId} stuck at "new" for ${ICE_NEW_STATE_TIMEOUT_MS}ms (offer likely unanswered)`);
       p2pFailedPeers.add(peerId);
@@ -2010,13 +2041,6 @@ function closePeer(peerId: string, options: ClosePeerOptions = {}) {
   const pc = peers.get(peerId);
   if (pc) {
     console.log(`[peer] Closing peer ${peerId} (connectionState=${pc.connectionState}, iceState=${pc.iceConnectionState}, sigState=${pc.signalingState}, senders=${pc.getSenders().length}, receivers=${pc.getReceivers().length})`);
-    // If the peer never made it past "checking", count it as a P2P failure
-    // so the fallback threshold accumulates even when peers leave/rejoin
-    if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'new') {
-      p2pFailedPeers.add(peerId);
-      useVoiceStore.getState().incrementP2PFailures();
-      console.log(`[closePeer] Counted as P2P failure (iceState=${pc.iceConnectionState}, failureCount=${useVoiceStore.getState().p2pFailureCount})`);
-    }
     pc.close();
     peers.delete(peerId);
   }
@@ -2666,10 +2690,15 @@ export async function stopWatching() {
   store.bumpScreenStreamVersion();
 }
 
+interface HandleUserJoinedVoiceOptions {
+  forceOffer?: boolean;
+}
+
 async function handleUserJoinedVoice(
   conn: SignalRConnection,
   userId: string,
   displayName: string,
+  options?: HandleUserJoinedVoiceOptions,
 ) {
   useVoiceStore.getState().addParticipant(userId, displayName);
 
@@ -2709,6 +2738,17 @@ async function handleUserJoinedVoice(
         const sender = pc.addTrack(camTrack, cameraStream);
         cameraTrackSenders.set(userId, sender);
       }
+    }
+
+    // Deterministic offer direction: only the "impolite" peer (lower ID)
+    // sends the initial offer. The "polite" peer (higher ID) creates the PC
+    // and adds tracks, then waits for the remote's offer. This eliminates
+    // glare (simultaneous offers) on initial join. Periodic reconciliation
+    // overrides this with forceOffer to ensure recovery.
+    const isPolite = currentUser!.id > userId;
+    if (isPolite && !options?.forceOffer) {
+      console.log(`[join] Polite peer (myId > ${userId.slice(0,8)}) — waiting for remote offer`);
+      return;
     }
 
     const offer = await pc.createOffer();
@@ -2765,7 +2805,7 @@ function beginInitialParticipantWait(conn: SignalRConnection) {
   }, INITIAL_PARTICIPANTS_TIMEOUT_MS);
 }
 
-async function attemptVoiceRejoin(reason: string) {
+async function attemptVoiceRejoin(reason: string, options?: { silent?: boolean }) {
   if (rejoinInProgress) {
     console.log(`Rejoin already in progress, skipping (${reason})`);
     return;
@@ -2779,8 +2819,9 @@ async function attemptVoiceRejoin(reason: string) {
     return;
   }
 
-  console.log(`Attempting voice rejoin (${reason}):`, channelId);
-  useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
+  const silent = options?.silent ?? false;
+  console.log(`Attempting voice rejoin (${reason}${silent ? ', silent' : ''}):`, channelId);
+  if (!silent) useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
 
   // Clean up stale WebRTC state
   cleanupAll();
@@ -2843,11 +2884,11 @@ async function attemptVoiceRejoin(reason: string) {
     const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
     useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
 
-    useToastStore.getState().addToast("Reconnected to voice channel", "success");
+    if (!silent) useToastStore.getState().addToast("Reconnected to voice channel", "success");
   } catch (err) {
     cancelInitialParticipantWait();
     console.error(`Failed to rejoin voice (${reason}):`, err);
-    useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
+    if (!silent) useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
     // Full cleanup on failure — drop user out of voice
     cleanupAll();
     useVoiceStore.getState().setCurrentChannel(null);
@@ -3809,6 +3850,17 @@ export function useWebRTC() {
           return;
         }
 
+        // Set currentChannelId IMMEDIATELY after JoinVoiceChannel succeeds.
+        // The VoiceChannelUsers reconciliation (triggered by JoinVoiceChannel)
+        // creates peers and sends offers. When the remote peer responds,
+        // ReceiveSignal checks currentChannelId and silently drops signals if
+        // it's null. On fast networks (especially localhost), the answer can
+        // arrive before the code below reaches setCurrentChannel.
+        // Set lastVoiceJoinTime BEFORE setCurrentChannel so the device switching
+        // effect (which depends on currentChannelId) is properly skipped.
+        lastVoiceJoinTime = Date.now();
+        setCurrentChannel(channelId);
+
         // Yield to event loop so queued SignalR events (ChannelRelayActive) can process
         await new Promise(resolve => setTimeout(resolve, 0));
 
@@ -3816,7 +3868,6 @@ export function useWebRTC() {
         if (channelRelayDetected) {
           console.log('[join] Channel has relay users, connecting via SFU');
           cleanupP2PConnections();
-          setCurrentChannel(channelId);
           await connectToLiveKit(channelId);
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
           startAudioKeepAlive();
@@ -3833,7 +3884,6 @@ export function useWebRTC() {
         // Prevent the input device effect from re-obtaining a stream
         // — joinVoice already has the right stream
         lastVoiceJoinTime = Date.now();
-        setCurrentChannel(channelId);
 
         // Start collecting connection quality stats
         startStatsCollection();
@@ -3934,7 +3984,7 @@ export function useWebRTC() {
                 if (userId === myId) continue;
                 if (!peers.has(userId)) {
                   console.log(`Periodic reconciliation: creating missing peer for ${userId}`);
-                  void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                  void handleUserJoinedVoice(conn, userId, displayName, { forceOffer: true }).catch(console.error);
                 }
               }
             }
@@ -3973,15 +4023,55 @@ export function useWebRTC() {
         return;
       }
 
-      const connectionState = useVoiceStore.getState().connectionState;
-      const forcedRejoinFromHiddenReconnect = pendingVisibilityRejoin;
-      const disconnectedRecovery = connectionState !== "connected" && !localStream;
-
-      if (forcedRejoinFromHiddenReconnect || disconnectedRecovery) {
+      // If SignalR reconnected while hidden and we deferred the rejoin, do it now.
+      if (pendingVisibilityRejoin) {
         const conn = getConnection();
         if (conn.state === "Connected") {
-          await attemptVoiceRejoin(forcedRejoinFromHiddenReconnect ? "visibility-pending" : "visibility-recovery");
+          await attemptVoiceRejoin("visibility-pending");
         }
+        return;
+      }
+
+      // ICE state changes are suppressed while the tab is hidden to prevent
+      // destroying a healthy P2P session. Now that we're visible, give ICE
+      // a few seconds to self-recover, then check for any peers stuck in
+      // a terminal state ("failed") or never-negotiated state ("new").
+      if (peers.size > 0) {
+        setTimeout(() => {
+          if (document.hidden) return;
+          let needsReconciliation = false;
+          for (const [pid, pc] of peers) {
+            if (pc.iceConnectionState === "failed") {
+              console.warn(`[ICE] Peer ${pid} still failed after tab visible, restarting`);
+              restartIceForPeer(pid, { force: true, reason: "post-hidden-failed" });
+            } else if (pc.iceConnectionState === "disconnected") {
+              console.warn(`[ICE] Peer ${pid} still disconnected after tab visible, restarting`);
+              restartIceForPeer(pid, { reason: "post-hidden-disconnected" });
+            } else if (pc.iceConnectionState === "checking") {
+              // "checking" state changes are suppressed while hidden, so the
+              // normal 10s checking-timeout timer was never started. Restart ICE
+              // now that we're visible again.
+              console.warn(`[ICE] Peer ${pid} still at "checking" after tab visible, restarting`);
+              restartIceForPeer(pid, { reason: "post-hidden-checking" });
+            } else if (pc.iceConnectionState === "new") {
+              // Offer/answer never completed (e.g. both peers were backgrounded).
+              // Close the stale peer so reconciliation can recreate it.
+              console.warn(`[ICE] Peer ${pid} still at "new" after tab visible, closing for re-creation`);
+              closePeer(pid);
+              needsReconciliation = true;
+            }
+          }
+          // Trigger reconciliation to recreate closed peers via silent refresh
+          if (needsReconciliation) {
+            const cid = useVoiceStore.getState().currentChannelId;
+            if (cid) {
+              const conn = getConnection();
+              const vs = useVoiceStore.getState();
+              conn.invoke("JoinVoiceChannel", cid, vs.isMuted, vs.isDeafened)
+                .catch((err: any) => console.warn('[ICE] Reconciliation JoinVoiceChannel failed:', err));
+            }
+          }
+        }, 3000);
       }
     };
 

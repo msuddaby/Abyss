@@ -172,6 +172,7 @@ export async function rejoinActiveChannel(conn: SignalRConnection) {
   const channelId = isDmMode ? activeDmChannel?.id : (activeChannel?.type === 'Text' ? activeChannel.id : null);
   if (!channelId) return;
   try {
+    console.log(`[SignalR] rejoinActiveChannel — channelId=${channelId}`);
     await conn.invoke('JoinChannel', channelId);
     useMessageStore.getState().fetchMessages(channelId);
   } catch (err) {
@@ -650,6 +651,9 @@ export function useSignalRListeners() {
         const alive = await focusReconnect({ restartOnFailure: !inActiveVoiceCall });
         if (alive) {
           const conn = getConnection();
+          // Re-join the channel group — group membership can be lost if the
+          // underlying connection was silently replaced or timed out server-side.
+          rejoinActiveChannel(conn);
           const server = useServerStore.getState().activeServer;
           if (server) fetchServerState(conn, server.id);
           refreshSignalRState(conn);
