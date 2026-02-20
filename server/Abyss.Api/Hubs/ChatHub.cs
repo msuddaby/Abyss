@@ -924,11 +924,14 @@ public class ChatHub : Hub
         var effectiveMuted = isMuted || !canSpeak;
         var currentChannel = _voiceState.GetUserChannel(UserId);
         var currentVoiceConnectionId = _voiceState.GetVoiceConnectionId(UserId);
+        // User is already in this channel with a different connection ID — just update
+        // the connection ID silently. No need to check if the old connection is dead
+        // (voice state persists across disconnects, and restartConnection can create
+        // the new connection before OnDisconnectedAsync removes the old one).
         var reconnectingToSameChannel =
             currentChannel.HasValue &&
             currentChannel.Value == channelGuid &&
-            !string.Equals(currentVoiceConnectionId, Context.ConnectionId, StringComparison.Ordinal) &&
-            (string.IsNullOrEmpty(currentVoiceConnectionId) || !_connections.ContainsKey(currentVoiceConnectionId));
+            !string.Equals(currentVoiceConnectionId, Context.ConnectionId, StringComparison.Ordinal);
 
         if (reconnectingToSameChannel)
         {
