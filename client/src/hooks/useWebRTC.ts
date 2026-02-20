@@ -344,6 +344,8 @@ const screenVideoStreams: Map<string, MediaStream> = new Map();
 const pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
 let listenersRegisteredForConnection: HubConnection | null = null;
 let currentOutputDeviceId: string = "default";
+let voiceReconnectSubRefCount = 0;
+let voiceReconnectSubCleanup: (() => void) | null = null;
 
 // Per-viewer screen track senders: viewerUserId -> RTCRtpSender[]
 const screenTrackSenders: Map<string, RTCRtpSender[]> = new Map();
@@ -3038,6 +3040,114 @@ async function attemptVoiceReregister(reason: string): Promise<boolean> {
   }
 }
 
+async function handleVoiceSignalRReconnected(): Promise<void> {
+  logVoiceReconnect("onReconnected callback fired");
+  if (intentionalLeave) {
+    logVoiceReconnect("onReconnected skipped (intentional leave)");
+    return;
+  }
+  const channelId = useVoiceStore.getState().currentChannelId;
+  if (!channelId) {
+    logVoiceReconnect("onReconnected skipped (no active voice channel)");
+    return;
+  }
+
+  const conn = getConnection();
+  const vs = useVoiceStore.getState();
+  let reconnectStage = "JoinVoiceChannel(re-register)";
+
+  // Set flag BEFORE invoke so VoiceChannelUsers handler (fired during invoke
+  // if grace period expired) knows to close stale peers and reset P2P state.
+  reconnectingVoice = true;
+  logVoiceReconnect(`onReconnected starting voice re-register channel=${channelId}`);
+
+  try {
+    await Promise.race([
+      conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, true),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("Voice re-register timeout")), 10000)),
+    ]);
+
+    if (reconnectingVoice) {
+      // reconnectingVoice still true = silent reconnect (no VoiceChannelUsers
+      // signal received, grace period hadn't expired). No stale peers to clean.
+      reconnectingVoice = false;
+      logVoiceReconnect("SignalR reconnected — silent re-registration (no disruption)");
+
+      // If tab is visible, do lightweight peer reconciliation
+      if (!document.hidden) {
+        reconnectStage = "GetVoiceChannelUsers(silent-reregister)";
+        conn.invoke("GetVoiceChannelUsers", channelId)
+          .then((users: Record<string, string>) => {
+            const authoritative = new Map(Object.entries(users));
+            useVoiceStore.getState().setParticipants(authoritative);
+
+            if (isInSfuMode() || vs.connectionMode === 'sfu' || vs.connectionMode === 'attempting-sfu') return;
+
+            const myId = useAuthStore.getState().user?.id;
+            for (const peerId of peers.keys()) {
+              if (!authoritative.has(peerId)) {
+                console.log("Reconnect reconciliation: closing stale peer", peerId);
+                closePeer(peerId, { skipFailureCount: true });
+              }
+            }
+            if (localStream) {
+              for (const [userId, displayName] of authoritative) {
+                if (userId === myId) continue;
+                if (!peers.has(userId)) {
+                  console.log("Reconnect reconciliation: creating missing peer for", userId);
+                  void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            warnVoiceReconnect("onReconnected silent re-registration participant sync failed", err);
+          });
+      } else {
+        logVoiceReconnect("onReconnected skipped participant sync (tab hidden)");
+      }
+    } else {
+      // reconnectingVoice was cleared by VoiceChannelUsers handler = soft rejoin
+      // (server sent authoritative participant list; handler reconciled peers).
+      logVoiceReconnect("SignalR reconnected — soft rejoin (authoritative participant sync)");
+    }
+  } catch (err) {
+    reconnectingVoice = false;
+    console.warn("Failed to re-register voice after reconnect:", err);
+    warnVoiceReconnect(`onReconnected voice re-register failed stage=${reconnectStage}`, err);
+    if (document.hidden) {
+      pendingVisibilityRejoin = true;
+      logVoiceReconnect("pendingVisibilityRejoin=true reason=onReconnected-failure-hidden");
+    } else if (isSfuVoiceSessionActive()) {
+      const recovered = await attemptVoiceReregister("reconnect-reregister-failed-sfu");
+      if (!recovered) {
+        pendingVisibilityRejoin = true;
+        logVoiceReconnect("pendingVisibilityRejoin=true reason=sfu-reregister-retry-failed");
+      }
+    } else {
+      await attemptVoiceRejoin("reconnect-reregister-failed");
+    }
+  }
+}
+
+function acquireVoiceReconnectSubscription() {
+  voiceReconnectSubRefCount += 1;
+  if (voiceReconnectSubCleanup) return;
+  voiceReconnectSubCleanup = onReconnected(() => {
+    void handleVoiceSignalRReconnected();
+  });
+  logVoiceReconnect(`installed onReconnected subscription refCount=${voiceReconnectSubRefCount}`);
+}
+
+function releaseVoiceReconnectSubscription() {
+  voiceReconnectSubRefCount = Math.max(0, voiceReconnectSubRefCount - 1);
+  if (voiceReconnectSubRefCount === 0 && voiceReconnectSubCleanup) {
+    voiceReconnectSubCleanup();
+    voiceReconnectSubCleanup = null;
+    logVoiceReconnect("removed onReconnected subscription");
+  }
+}
+
 function setupSignalRListeners() {
   const conn = getConnection();
   if (listenersRegisteredForConnection === conn) return;
@@ -4258,95 +4368,10 @@ export function useWebRTC() {
   // - If grace period expired: soft rejoin that sends VoiceChannelUsers (triggers stale peer
   //   cleanup via reconnectingVoice flag) but skips ChannelRelayActive/WatchPartyActive
   useEffect(() => {
-    return onReconnected(async () => {
-      logVoiceReconnect("onReconnected callback fired");
-      if (intentionalLeave) {
-        logVoiceReconnect("onReconnected skipped (intentional leave)");
-        return;
-      }
-      const channelId = useVoiceStore.getState().currentChannelId;
-      if (!channelId) {
-        logVoiceReconnect("onReconnected skipped (no active voice channel)");
-        return;
-      }
-
-      const conn = getConnection();
-      const vs = useVoiceStore.getState();
-      let reconnectStage = "JoinVoiceChannel(re-register)";
-
-      // Set flag BEFORE invoke so VoiceChannelUsers handler (fired during invoke
-      // if grace period expired) knows to close stale peers and reset P2P state.
-      reconnectingVoice = true;
-      logVoiceReconnect(`onReconnected starting voice re-register channel=${channelId}`);
-
-      try {
-        await Promise.race([
-          conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, true),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Voice re-register timeout")), 10000)),
-        ]);
-
-        if (reconnectingVoice) {
-          // reconnectingVoice still true = silent reconnect (no VoiceChannelUsers
-          // signal received, grace period hadn't expired). No stale peers to clean.
-          reconnectingVoice = false;
-          logVoiceReconnect("SignalR reconnected — silent re-registration (no disruption)");
-
-          // If tab is visible, do lightweight peer reconciliation
-          if (!document.hidden) {
-            reconnectStage = "GetVoiceChannelUsers(silent-reregister)";
-            conn.invoke("GetVoiceChannelUsers", channelId)
-              .then((users: Record<string, string>) => {
-                const authoritative = new Map(Object.entries(users));
-                useVoiceStore.getState().setParticipants(authoritative);
-
-                if (isInSfuMode() || vs.connectionMode === 'sfu' || vs.connectionMode === 'attempting-sfu') return;
-
-                const myId = useAuthStore.getState().user?.id;
-                for (const peerId of peers.keys()) {
-                  if (!authoritative.has(peerId)) {
-                    console.log("Reconnect reconciliation: closing stale peer", peerId);
-                    closePeer(peerId, { skipFailureCount: true });
-                  }
-                }
-                if (localStream) {
-                  for (const [userId, displayName] of authoritative) {
-                    if (userId === myId) continue;
-                    if (!peers.has(userId)) {
-                      console.log("Reconnect reconciliation: creating missing peer for", userId);
-                      void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
-                    }
-                  }
-                }
-              })
-              .catch((err) => {
-                warnVoiceReconnect("onReconnected silent re-registration participant sync failed", err);
-              });
-          } else {
-            logVoiceReconnect("onReconnected skipped participant sync (tab hidden)");
-          }
-        } else {
-          // reconnectingVoice was cleared by VoiceChannelUsers handler = soft rejoin
-          // (server sent authoritative participant list; handler reconciled peers).
-          logVoiceReconnect("SignalR reconnected — soft rejoin (authoritative participant sync)");
-        }
-      } catch (err) {
-        reconnectingVoice = false;
-        console.warn("Failed to re-register voice after reconnect:", err);
-        warnVoiceReconnect(`onReconnected voice re-register failed stage=${reconnectStage}`, err);
-        if (document.hidden) {
-          pendingVisibilityRejoin = true;
-          logVoiceReconnect("pendingVisibilityRejoin=true reason=onReconnected-failure-hidden");
-        } else if (isSfuVoiceSessionActive()) {
-          const recovered = await attemptVoiceReregister("reconnect-reregister-failed-sfu");
-          if (!recovered) {
-            pendingVisibilityRejoin = true;
-            logVoiceReconnect("pendingVisibilityRejoin=true reason=sfu-reregister-retry-failed");
-          }
-        } else {
-          await attemptVoiceRejoin("reconnect-reregister-failed");
-        }
-      }
-    });
+    acquireVoiceReconnectSubscription();
+    return () => {
+      releaseVoiceReconnectSubscription();
+    };
   }, []);
 
   // Handle tab visibility changes - rejoin voice if we missed reconnection while hidden

@@ -23,6 +23,8 @@ let suspended = false;
 let intentionalStop = false;
 let lastActivity = 0;
 let networkDebounce: ReturnType<typeof setTimeout> | null = null;
+let restartPromise: Promise<void> | null = null;
+let restartInFlightReason: string | null = null;
 let reconnectDebugSeq = 0;
 
 export interface SignalRReconnectDebugInfo {
@@ -278,6 +280,17 @@ export function resetConnection(): void {
 }
 
 async function restartConnection(reason: string): Promise<void> {
+  if (restartPromise) {
+    recordReconnectDebug(
+      "restartConnection",
+      `join existing restart reason=${reason} inFlightReason=${restartInFlightReason ?? "unknown"}`,
+      { level: "warn", conn: connection },
+    );
+    return restartPromise;
+  }
+
+  restartInFlightReason = reason;
+  restartPromise = (async () => {
   const conn = getConnection();
   console.log(`[SignalR] restartConnection reason=${reason} state=${conn.state}`);
   recordReconnectDebug("restartConnection", `begin reason=${reason}`, {
@@ -326,6 +339,16 @@ async function restartConnection(reason: string): Promise<void> {
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
   }
+  })().finally(() => {
+    recordReconnectDebug("restartConnection", `end reason=${reason}`, {
+      level: "debug",
+      conn: connection,
+    });
+    restartInFlightReason = null;
+    restartPromise = null;
+  });
+
+  return restartPromise;
 }
 
 function startHealthMonitor() {
@@ -365,6 +388,13 @@ function clearReconnectTimer() {
 }
 
 function scheduleReconnect(reason: string) {
+  if (restartPromise) {
+    recordReconnectDebug("scheduleReconnect", `ignored reason=${reason} (restart in-flight: ${restartInFlightReason ?? "unknown"})`, {
+      level: "debug",
+      conn: connection,
+    });
+    return;
+  }
   const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
   if (reconnectTimer) {
     recordReconnectDebug("scheduleReconnect", `ignored reason=${reason} (timer already scheduled)`, {
@@ -537,9 +567,17 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
       level: "warn",
       conn: connection,
     });
-    clearReconnectTimer();
-    reconnectAttempts = 0;
-    await restartConnection("invoke-failed");
+    if (restartPromise) {
+      recordReconnectDebug("resilientInvoke", `method=${method} waiting for in-flight restart (${restartInFlightReason ?? "unknown"})`, {
+        level: "warn",
+        conn: connection,
+      });
+      await restartPromise;
+    } else {
+      clearReconnectTimer();
+      reconnectAttempts = 0;
+      await restartConnection("invoke-failed");
+    }
     try {
       await doInvoke();
     } catch (retryErr) {
