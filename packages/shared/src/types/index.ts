@@ -366,6 +366,8 @@ export interface AdminUsersResponse {
 export interface AdminSettings {
   inviteOnly: boolean;
   maxMessageLength: number;
+  forceRelayMode: boolean;
+  liveKitConfigured: boolean;
   codes: Invite[];
 }
 

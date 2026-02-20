@@ -31,6 +31,8 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [savingMaxMessageLength, setSavingMaxMessageLength] = useState(false);
   const [maxMessageLengthInput, setMaxMessageLengthInput] = useState<string>('');
   const setMaxMessageLength = useAppConfigStore((s) => s.setMaxMessageLength);
+  const [savingForceRelay, setSavingForceRelay] = useState(false);
+  const setForceRelayMode = useAppConfigStore((s) => s.setForceRelayMode);
 
   // Pagination state
   const [serverPage, setServerPage] = useState(0);
@@ -233,6 +235,21 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setError(err?.response?.data || 'Failed to update max message length.');
     } finally {
       setSavingMaxMessageLength(false);
+    }
+  };
+
+  const updateForceRelayMode = async (enabled: boolean) => {
+    if (!settings) return;
+    setSavingForceRelay(true);
+    setError(null);
+    try {
+      await api.put('/admin/settings/force-relay-mode', { forceRelayMode: enabled });
+      setSettings({ ...settings, forceRelayMode: enabled });
+      setForceRelayMode(enabled);
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to update force relay mode.');
+    } finally {
+      setSavingForceRelay(false);
     }
   };
 
@@ -1005,6 +1022,22 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                     disabled={savingInviteOnly || !settings}
                   >
                     {savingInviteOnly ? 'Saving...' : (settings?.inviteOnly ? 'Disable' : 'Enable')}
+                  </button>
+                </div>
+                <div className="us-card admin-setting-card">
+                  <div>
+                    <div className="admin-setting-title">Force Relay Mode</div>
+                    <div className="admin-setting-desc">
+                      Route all voice through the relay server (LiveKit SFU) instead of peer-to-peer.
+                      {!settings?.liveKitConfigured && ' LiveKit is not configured on this server.'}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => updateForceRelayMode(!(settings?.forceRelayMode ?? false))}
+                    disabled={savingForceRelay || !settings || !settings.liveKitConfigured}
+                  >
+                    {savingForceRelay ? 'Saving...' : (settings?.forceRelayMode ? 'Disable' : 'Enable')}
                   </button>
                 </div>
                 <div className="us-card admin-setting-card admin-code-card">

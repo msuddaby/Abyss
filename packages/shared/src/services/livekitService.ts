@@ -19,6 +19,10 @@ interface LiveKitTokenResponse {
 }
 
 let currentRoom: Room | null = null;
+// Whether we manually published a mic track (e.g. RNNoise-processed) rather than
+// letting LiveKit capture its own. When true, mute/unmute uses publication-level
+// mute instead of setMicrophoneEnabled (which would destroy and recapture the track).
+let isManualMicPublish = false;
 
 // Audio elements created for remote participants (cleaned up on disconnect)
 const sfuAudioElements = new Map<string, HTMLAudioElement>();
@@ -37,7 +41,7 @@ const sfuGainNodes = new Map<string, SfuGainEntry>();
 const sfuScreenStreams = new Map<string, MediaStream>();
 const sfuCameraStreams = new Map<string, MediaStream>();
 
-export async function connectToLiveKit(channelId: string): Promise<void> {
+export async function connectToLiveKit(channelId: string, options?: { skipAudioPublish?: boolean }): Promise<void> {
   console.log('[livekit] Connecting to SFU for channel:', channelId);
 
   const voiceState = useVoiceStore.getState();
@@ -105,8 +109,10 @@ export async function connectToLiveKit(channelId: string): Promise<void> {
       voiceState.addParticipant(participant.identity, participant.name || participant.identity);
     }
 
-    // Publish local audio
-    await publishAudio();
+    // Publish local audio (unless caller will publish a processed track manually)
+    if (!options?.skipAudioPublish) {
+      await publishAudio();
+    }
 
   } catch (err) {
     console.error('[livekit] Connection failed:', err);
@@ -265,9 +271,54 @@ async function publishAudio(): Promise<void> {
   }
 }
 
+/**
+ * Publish a pre-processed audio track (e.g. from RNNoise) to LiveKit.
+ * The caller manages the mic capture and processing chain; LiveKit only
+ * receives the processed output.
+ */
+export async function sfuPublishProcessedAudio(track: MediaStreamTrack): Promise<void> {
+  if (!currentRoom) return;
+  isManualMicPublish = true;
+  await currentRoom.localParticipant.publishTrack(track, {
+    source: Track.Source.Microphone,
+  });
+  console.log('[livekit] Published processed audio track');
+
+  // Apply initial mute state (PTT starts muted until key is held)
+  const voiceState = useVoiceStore.getState();
+  const shouldBeMuted = voiceState.isMuted ||
+    (voiceState.voiceMode === 'push-to-talk' && !voiceState.isPttActive);
+  if (shouldBeMuted) {
+    const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
+    if (pub) await pub.mute();
+  }
+}
+
+/**
+ * Replace the currently published mic audio track with a new one.
+ * Used when toggling RNNoise mid-call (swapping between raw and processed tracks).
+ */
+export async function sfuReplaceAudioTrack(newTrack: MediaStreamTrack): Promise<void> {
+  if (!currentRoom) return;
+  const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
+  if (!pub?.track) return;
+  await pub.track.replaceTrack(newTrack);
+  console.log('[livekit] Replaced audio track');
+}
+
 export async function sfuToggleMute(muted: boolean): Promise<void> {
   if (!currentRoom) return;
-  await currentRoom.localParticipant.setMicrophoneEnabled(!muted);
+  if (isManualMicPublish) {
+    // When we manually published the track (RNNoise), use publication-level
+    // mute/unmute to avoid LiveKit destroying and recapturing the mic.
+    const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
+    if (pub) {
+      if (muted) await pub.mute();
+      else await pub.unmute();
+    }
+  } else {
+    await currentRoom.localParticipant.setMicrophoneEnabled(!muted);
+  }
 }
 
 export function sfuSetDeafened(deafened: boolean): void {
@@ -347,9 +398,16 @@ export function sfuSetUserVolume(userId: string, volume: number): void {
 
 export async function sfuSetInputDevice(deviceId: string): Promise<void> {
   if (!currentRoom) return;
+  // When using manual mic publish (RNNoise), device switching is handled
+  // by useWebRTC which recaptures the mic and calls noiseSuppressor.replaceInput().
+  if (isManualMicPublish) return;
+  const voiceState = useVoiceStore.getState();
   await currentRoom.localParticipant.setMicrophoneEnabled(false);
   await currentRoom.localParticipant.setMicrophoneEnabled(true, {
     deviceId: deviceId !== 'default' ? deviceId : undefined,
+    autoGainControl: voiceState.autoGainControl,
+    echoCancellation: voiceState.echoCancellation,
+    noiseSuppression: voiceState.noiseSuppression,
   });
 }
 
@@ -556,6 +614,7 @@ function cleanup(): void {
   sfuScreenStreams.clear();
   sfuCameraStreams.clear();
   currentRoom = null;
+  isManualMicPublish = false;
 }
 
 export function getLiveKitRoom(): Room | null {

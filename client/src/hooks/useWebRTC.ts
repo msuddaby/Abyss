@@ -18,6 +18,8 @@ import {
   sfuSetDeafened,
   sfuSetScreenAudioVolume,
   sfuSetInputDevice,
+  sfuPublishProcessedAudio,
+  sfuReplaceAudioTrack,
   sfuPublishScreenShare,
   sfuUnpublishScreenShare,
   sfuPublishCamera,
@@ -29,6 +31,7 @@ import {
   sfuUpdateScreenShareQuality,
   sfuUpdateCameraQuality,
   isInSfuMode,
+  useAppConfigStore,
 } from "@abyss/shared";
 import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
@@ -89,6 +92,7 @@ function shouldFallbackToSFU(): boolean {
   const voiceState = useVoiceStore.getState();
   if (voiceState.connectionMode === 'sfu' || voiceState.connectionMode === 'attempting-sfu') return false;
   if (voiceState.forceSfuMode) return true;
+  if (useAppConfigStore.getState().forceRelayMode) return true;
   // Use cumulative failure count (not unique peer count) so a single peer
   // failing twice (e.g. after ICE restart) still triggers the fallback.
   if (voiceState.p2pFailureCount >= P2P_FAILURE_THRESHOLD) return true;
@@ -99,13 +103,17 @@ function shouldFallbackToSFU(): boolean {
 // Tear down P2P connections without leaving the voice channel or setting
 // connectionState to "disconnected". Used during P2P → SFU transition so the
 // participant list and SignalR group membership stay intact.
-function cleanupP2PConnections() {
+// When preserveLocalAudio is true, keep localStream/noiseSuppressor/peerStream
+// alive so they can be reused for SFU publishing.
+function cleanupP2PConnections(preserveLocalAudio = false) {
   voiceSessionId++;
-  if (noiseSuppressor) {
-    noiseSuppressor.destroy();
-    noiseSuppressor = null;
+  if (!preserveLocalAudio) {
+    if (noiseSuppressor) {
+      noiseSuppressor.destroy();
+      noiseSuppressor = null;
+    }
+    peerStream = null;
   }
-  peerStream = null;
   peers.forEach((pc) => pc.close());
   peers.clear();
   audioElements.forEach((audio) => {
@@ -143,7 +151,7 @@ function cleanupP2PConnections() {
   iceNewStateTimers.clear();
   cancelInitialParticipantWait();
   stopStatsCollection();
-  if (localStream) {
+  if (!preserveLocalAudio && localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
   }
@@ -168,12 +176,13 @@ async function fallbackToSFU(reason: string): Promise<void> {
 
   try {
     // Tear down P2P connections but stay in the SignalR voice group.
-    // This preserves the participant list and avoids leave/join sound
-    // spam for other users in the channel.
-    cleanupP2PConnections();
+    // Preserve local audio (mic + RNNoise) so we can reuse it for SFU.
+    cleanupP2PConnections(/* preserveLocalAudio */ true);
 
-    // Connect via LiveKit SFU (sets mode to 'sfu' on success)
-    await connectToLiveKit(channelId);
+    // Connect via LiveKit SFU — skip auto-publish so we can publish
+    // our RNNoise-processed track instead.
+    await connectToLiveKit(channelId, { skipAudioPublish: true });
+    await captureAndPublishForSfu();
 
     // Notify other peers in the channel that relay is active
     const conn = getConnection();
@@ -825,6 +834,59 @@ async function applySuppressor(rawStream: MediaStream): Promise<void> {
     // Fallback — suppressor failed, use raw stream
     peerStream = rawStream;
   }
+}
+
+/**
+ * Capture microphone, apply RNNoise if enabled, and publish the processed
+ * track to LiveKit. Used when entering SFU mode so the same RNNoise pipeline
+ * is used for relay as for P2P.
+ */
+async function captureAndPublishForSfu(): Promise<void> {
+  const vs = useVoiceStore.getState();
+
+  // Capture mic if we don't already have a localStream (force-SFU path)
+  if (!localStream) {
+    const audioConstraints: MediaTrackConstraints = {
+      // Browser-level processing as baseline (RNNoise adds on top)
+      noiseSuppression: vs.noiseSuppression,
+      echoCancellation: vs.echoCancellation,
+      autoGainControl: vs.autoGainControl,
+    };
+    const deviceId = vs.inputDeviceId;
+    if (deviceId && deviceId !== 'default') {
+      audioConstraints.deviceId = { exact: deviceId };
+    } else {
+      const resolved = await resolveDefaultInputDevice();
+      if (resolved !== 'default') {
+        audioConstraints.deviceId = { exact: resolved };
+      }
+    }
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    } catch (firstErr: any) {
+      if (firstErr?.name === 'OverconstrainedError' || firstErr?.name === 'NotFoundError') {
+        console.warn(`[sfu] Saved audio device unavailable (${firstErr.name}), falling back to default`);
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: { noiseSuppression: vs.noiseSuppression, echoCancellation: vs.echoCancellation, autoGainControl: vs.autoGainControl },
+        });
+      } else {
+        throw firstErr;
+      }
+    }
+  }
+
+  // Apply RNNoise if not already active
+  if (!peerStream) {
+    await applySuppressor(localStream);
+  }
+
+  // Get the track to publish (processed if RNNoise is active, raw otherwise)
+  const streamToPublish = getPeerStream();
+  if (!streamToPublish) return;
+  const audioTrack = streamToPublish.getAudioTracks()[0];
+  if (!audioTrack) return;
+
+  await sfuPublishProcessedAudio(audioTrack);
 }
 
 function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & {
@@ -3378,10 +3440,71 @@ export function useWebRTC() {
     if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) {
       return;
     }
-    // In SFU mode, delegate device switching to LiveKit
+    // In SFU mode, handle device switching ourselves when using RNNoise,
+    // otherwise delegate to LiveKit
     if (isInSfuMode()) {
-      void sfuSetInputDevice(inputDeviceId);
-      return;
+      if (!localStream) {
+        // No manual mic capture — let LiveKit handle it
+        void sfuSetInputDevice(inputDeviceId);
+        return;
+      }
+      // We manage the mic — recapture with new device and rewire RNNoise
+      let cancelled = false;
+      (async () => {
+        try {
+          const vs = useVoiceStore.getState();
+          const audioConstraints: MediaTrackConstraints = {
+            noiseSuppression: vs.noiseSuppression,
+            echoCancellation: vs.echoCancellation,
+            autoGainControl: vs.autoGainControl,
+          };
+          if (inputDeviceId && inputDeviceId !== 'default') {
+            audioConstraints.deviceId = { exact: inputDeviceId };
+          } else {
+            const resolved = await resolveDefaultInputDevice();
+            if (resolved !== 'default') {
+              audioConstraints.deviceId = { exact: resolved };
+            }
+          }
+          let newStream: MediaStream;
+          try {
+            newStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+          } catch (firstErr: any) {
+            if (firstErr?.name === 'OverconstrainedError' || firstErr?.name === 'NotFoundError') {
+              console.warn(`[sfu] Saved device unavailable (${firstErr.name}), falling back to default`);
+              newStream = await navigator.mediaDevices.getUserMedia({
+                audio: { noiseSuppression: vs.noiseSuppression, echoCancellation: vs.echoCancellation, autoGainControl: vs.autoGainControl },
+              });
+            } else {
+              throw firstErr;
+            }
+          }
+          if (cancelled) {
+            newStream.getTracks().forEach(t => t.stop());
+            return;
+          }
+          const oldStream = localStream;
+          localStream = newStream;
+          if (noiseSuppressor) {
+            // Swap the RNNoise input — output track stays the same,
+            // so the LiveKit sender doesn't need updating.
+            noiseSuppressor.replaceInput(newStream);
+          } else {
+            // No RNNoise — replace the track on the LiveKit publication
+            peerStream = newStream;
+            const newTrack = newStream.getAudioTracks()[0];
+            if (newTrack) await sfuReplaceAudioTrack(newTrack);
+          }
+          if (oldStream && oldStream !== newStream) {
+            oldStream.getTracks().forEach(t => t.stop());
+          }
+          console.log('[sfu] Input device switched');
+        } catch (err) {
+          console.error('[sfu] Failed to switch input device:', err);
+          useToastStore.getState().addToast('Failed to switch microphone.', 'error');
+        }
+      })();
+      return () => { cancelled = true; };
     }
     let cancelled = false;
     (async () => {
@@ -3426,11 +3549,13 @@ export function useWebRTC() {
     // Skip if we just joined — applySuppressor already ran
     if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) return;
 
+    const inSfu = isInSfuMode();
+
     let cancelled = false;
     (async () => {
       try {
         if (noiseSuppression && !noiseSuppressor) {
-          // Enable: create suppressor, replace peer tracks with processed output
+          // Enable: create suppressor, replace peer/SFU tracks with processed output
           const suppressor = await createNoiseSuppressor();
           const ctx = ensureAudioContext();
           const processed = await suppressor.initialize(localStream!, ctx);
@@ -3443,7 +3568,45 @@ export function useWebRTC() {
             peerStream = processed;
             const processedTrack = processed.getAudioTracks()[0];
             if (processedTrack) {
-              // Collect screen-audio track IDs to skip
+              if (inSfu) {
+                // SFU: replace the track on the LiveKit publication
+                await sfuReplaceAudioTrack(processedTrack);
+              } else {
+                // P2P: replace track on each peer connection sender
+                const screenAudioTrackIds = new Set<string>();
+                for (const senders of screenTrackSenders.values()) {
+                  for (const s of senders) {
+                    if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+                  }
+                }
+                for (const [peerId, pc] of peers) {
+                  const sender = pc.getSenders().find(
+                    s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
+                  );
+                  if (sender) {
+                    try {
+                      await sender.replaceTrack(processedTrack);
+                    } catch (err) {
+                      console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
+                    }
+                  }
+                }
+              }
+            }
+            console.log("[noiseSuppression] RNNoise enabled mid-call");
+          }
+        } else if (!noiseSuppression && noiseSuppressor) {
+          // Disable: destroy suppressor, replace tracks with raw localStream
+          noiseSuppressor.destroy();
+          noiseSuppressor = null;
+          peerStream = localStream;
+          const rawTrack = localStream!.getAudioTracks()[0];
+          if (rawTrack) {
+            if (inSfu) {
+              // SFU: replace the track on the LiveKit publication
+              await sfuReplaceAudioTrack(rawTrack);
+            } else {
+              // P2P: replace track on each peer connection sender
               const screenAudioTrackIds = new Set<string>();
               for (const senders of screenTrackSenders.values()) {
                 for (const s of senders) {
@@ -3456,37 +3619,10 @@ export function useWebRTC() {
                 );
                 if (sender) {
                   try {
-                    await sender.replaceTrack(processedTrack);
+                    await sender.replaceTrack(rawTrack);
                   } catch (err) {
                     console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
                   }
-                }
-              }
-            }
-            console.log("[noiseSuppression] RNNoise enabled mid-call");
-          }
-        } else if (!noiseSuppression && noiseSuppressor) {
-          // Disable: destroy suppressor, replace peer tracks with raw localStream
-          noiseSuppressor.destroy();
-          noiseSuppressor = null;
-          peerStream = localStream;
-          const rawTrack = localStream!.getAudioTracks()[0];
-          if (rawTrack) {
-            const screenAudioTrackIds = new Set<string>();
-            for (const senders of screenTrackSenders.values()) {
-              for (const s of senders) {
-                if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
-              }
-            }
-            for (const [peerId, pc] of peers) {
-              const sender = pc.getSenders().find(
-                s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
-              );
-              if (sender) {
-                try {
-                  await sender.replaceTrack(rawTrack);
-                } catch (err) {
-                  console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
                 }
               }
             }
@@ -3705,8 +3841,10 @@ export function useWebRTC() {
             new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
           ]);
 
-          // Connect via LiveKit
-          await connectToLiveKit(channelId);
+          // Connect via LiveKit — skip auto-publish so we can capture mic
+          // ourselves and apply RNNoise before publishing to the SFU.
+          await connectToLiveKit(channelId, { skipAudioPublish: true });
+          await captureAndPublishForSfu();
 
           // Notify other peers in the channel that relay is active
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
@@ -3809,9 +3947,11 @@ export function useWebRTC() {
         // If relay users exist in this channel, skip P2P and connect via SFU
         if (channelRelayDetected) {
           console.log('[join] Channel has relay users, connecting via SFU');
-          cleanupP2PConnections();
+          // Preserve local audio (mic + RNNoise) so we can reuse for SFU
+          cleanupP2PConnections(/* preserveLocalAudio */ true);
           setCurrentChannel(channelId);
-          await connectToLiveKit(channelId);
+          await connectToLiveKit(channelId, { skipAudioPublish: true });
+          await captureAndPublishForSfu();
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
           voiceState.setConnectionState('connected');
           lastVoiceJoinTime = Date.now();
@@ -3947,36 +4087,62 @@ export function useWebRTC() {
     return () => clearInterval(interval);
   }, [currentChannelId]);
 
-  // Auto-rejoin voice channel after SignalR reconnects (e.g. server restart)
+  // Re-register with server after SignalR reconnects.
+  // NEVER tear down working voice here — WebRTC is independent of SignalR.
+  // Just update the server's connection ID and let peer reconciliation handle the rest.
   useEffect(() => {
     return onReconnected(async () => {
       if (intentionalLeave) return;
       const channelId = useVoiceStore.getState().currentChannelId;
       if (!channelId) return;
 
-      if (document.hidden) {
-        // Tab is hidden (e.g. user is gaming). We can't do getUserMedia or a full
-        // rejoin, but we MUST re-register with the server immediately — otherwise
-        // the grace period expires and the server kicks us from voice.
-        // This is lightweight: just tells the server our new connection ID.
-        const conn = getConnection();
-        const vs = useVoiceStore.getState();
-        try {
-          await Promise.race([
-            conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Background re-register timeout")), 10000)),
-          ]);
-          console.log("SignalR reconnected while hidden — re-registered with server (voice preserved)");
-          // No need for pendingVisibilityRejoin — server state is current.
-          // WebRTC P2P connections are independent of SignalR and may still be working.
-          // When tab becomes visible, the periodic reconciliation will fix any peer drift.
-        } catch (err) {
-          console.warn("Failed to re-register voice while hidden, will full-rejoin on visibility:", err);
-          pendingVisibilityRejoin = true;
+      const conn = getConnection();
+      const vs = useVoiceStore.getState();
+      try {
+        await Promise.race([
+          conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Voice re-register timeout")), 10000)),
+        ]);
+        console.log("SignalR reconnected — re-registered voice with server (no disruption)");
+
+        // If tab is visible, immediately reconcile peers to fix any that died
+        if (!document.hidden) {
+          conn.invoke("GetVoiceChannelUsers", channelId)
+            .then((users: Record<string, string>) => {
+              const authoritative = new Map(Object.entries(users));
+              useVoiceStore.getState().setParticipants(authoritative);
+
+              if (isInSfuMode() || vs.connectionMode === 'sfu' || vs.connectionMode === 'attempting-sfu') return;
+
+              const myId = useAuthStore.getState().user?.id;
+              for (const peerId of peers.keys()) {
+                if (!authoritative.has(peerId)) {
+                  console.log("Reconnect reconciliation: closing stale peer", peerId);
+                  closePeer(peerId);
+                }
+              }
+              if (localStream) {
+                for (const [userId, displayName] of authoritative) {
+                  if (userId === myId) continue;
+                  if (!peers.has(userId)) {
+                    console.log("Reconnect reconciliation: creating missing peer for", userId);
+                    void handleUserJoinedVoice(conn, userId, displayName).catch(console.error);
+                  }
+                }
+              }
+            })
+            .catch(() => {});
         }
-        return;
+      } catch (err) {
+        console.warn("Failed to re-register voice after reconnect:", err);
+        // Only fall back to full rejoin if re-registration failed AND tab is hidden
+        // (can't do getUserMedia while hidden). If visible, try full rejoin now.
+        if (document.hidden) {
+          pendingVisibilityRejoin = true;
+        } else {
+          await attemptVoiceRejoin("reconnect-reregister-failed");
+        }
       }
-      await attemptVoiceRejoin("signalr-reconnect");
     });
   }, []);
 

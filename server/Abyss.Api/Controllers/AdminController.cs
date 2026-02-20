@@ -15,17 +15,20 @@ public class AdminController : ControllerBase
     private readonly AppDbContext _db;
     private readonly Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> _hub;
     private readonly Services.PermissionService _perms;
+    private readonly Services.LiveKitService _liveKit;
     private const string InviteOnlyKey = "InviteOnly";
     private const string MaxMessageLengthKey = "MaxMessageLength";
+    private const string ForceRelayModeKey = "ForceRelayMode";
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-    public AdminController(AppDbContext db, Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> hub, Services.PermissionService perms)
+    public AdminController(AppDbContext db, Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> hub, Services.PermissionService perms, Services.LiveKitService liveKit)
     {
         _db = db;
         _hub = hub;
         _perms = perms;
+        _liveKit = liveKit;
     }
 
     private bool IsSysadmin() => User.HasClaim("sysadmin", "true");
@@ -172,6 +175,7 @@ public class AdminController : ControllerBase
 
         var inviteOnly = await GetInviteOnlyAsync();
         var maxMessageLength = await GetMaxMessageLengthAsync();
+        var forceRelayMode = await GetForceRelayModeAsync();
         var codes = await _db.Invites
             .Where(i => i.ServerId == null)
             .OrderByDescending(c => c.CreatedAt)
@@ -186,7 +190,7 @@ public class AdminController : ControllerBase
                 c.LastUsedAt))
             .ToListAsync();
 
-        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, codes));
+        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, forceRelayMode, _liveKit.IsConfigured, codes));
     }
 
     [HttpPut("settings/invite-only")]
@@ -206,6 +210,18 @@ public class AdminController : ControllerBase
         await SetMaxMessageLengthAsync(clamped);
         await _hub.Clients.All.SendAsync("ConfigUpdated", new { maxMessageLength = clamped });
         return Ok(new { maxMessageLength = clamped });
+    }
+
+    [HttpPut("settings/force-relay-mode")]
+    public async Task<IActionResult> UpdateForceRelayMode(UpdateForceRelayModeRequest request)
+    {
+        if (!IsSysadmin()) return Forbid();
+        if (request.ForceRelayMode && !_liveKit.IsConfigured)
+            return BadRequest("Cannot enable relay mode — LiveKit is not configured on this server.");
+
+        await SetForceRelayModeAsync(request.ForceRelayMode);
+        await _hub.Clients.All.SendAsync("ConfigUpdated", new { forceRelayMode = request.ForceRelayMode });
+        return Ok(new { forceRelayMode = request.ForceRelayMode });
     }
 
     [HttpPost("invite-codes")]
@@ -260,6 +276,30 @@ public class AdminController : ControllerBase
         if (row == null)
         {
             row = new Models.AppConfig { Key = InviteOnlyKey, Value = enabled.ToString() };
+            _db.AppConfigs.Add(row);
+        }
+        else
+        {
+            row.Value = enabled.ToString();
+            row.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task<bool> GetForceRelayModeAsync()
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == ForceRelayModeKey);
+        if (row == null) return false;
+        return bool.TryParse(row.Value, out var value) && value;
+    }
+
+    private async Task SetForceRelayModeAsync(bool enabled)
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == ForceRelayModeKey);
+        if (row == null)
+        {
+            row = new Models.AppConfig { Key = ForceRelayModeKey, Value = enabled.ToString() };
             _db.AppConfigs.Add(row);
         }
         else

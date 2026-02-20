@@ -497,10 +497,16 @@ export function useSignalRListeners() {
         useRateLimitStore.getState().setRateLimit(method, retrySeconds);
       });
 
-      conn.on('ConfigUpdated', (payload: { maxMessageLength: number } | number) => {
-        const value = typeof payload === 'number' ? payload : payload?.maxMessageLength;
-        if (typeof value === 'number' && value > 0) {
-          useAppConfigStore.getState().setMaxMessageLength(value);
+      conn.on('ConfigUpdated', (payload: { maxMessageLength?: number; forceRelayMode?: boolean } | number) => {
+        if (typeof payload === 'number') {
+          if (payload > 0) useAppConfigStore.getState().setMaxMessageLength(payload);
+        } else {
+          if (typeof payload?.maxMessageLength === 'number' && payload.maxMessageLength > 0) {
+            useAppConfigStore.getState().setMaxMessageLength(payload.maxMessageLength);
+          }
+          if (typeof payload?.forceRelayMode === 'boolean') {
+            useAppConfigStore.getState().setForceRelayMode(payload.forceRelayMode);
+          }
         }
       });
 

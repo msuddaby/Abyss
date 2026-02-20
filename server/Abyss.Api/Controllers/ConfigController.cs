@@ -13,6 +13,7 @@ public class ConfigController : ControllerBase
 {
     private readonly AppDbContext _db;
     private const string MaxMessageLengthKey = "MaxMessageLength";
+    private const string ForceRelayModeKey = "ForceRelayMode";
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
 
@@ -24,13 +25,20 @@ public class ConfigController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<AppConfigDto>> Get()
     {
-        var row = await _db.AppConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.Key == MaxMessageLengthKey);
-        var maxMessageLength = row == null || string.IsNullOrWhiteSpace(row.Value)
+        var rows = await _db.AppConfigs.AsNoTracking()
+            .Where(c => c.Key == MaxMessageLengthKey || c.Key == ForceRelayModeKey)
+            .ToListAsync();
+
+        var msgRow = rows.FirstOrDefault(r => r.Key == MaxMessageLengthKey);
+        var maxMessageLength = msgRow == null || string.IsNullOrWhiteSpace(msgRow.Value)
             ? DefaultMaxMessageLength
-            : (int.TryParse(row.Value, out var value)
+            : (int.TryParse(msgRow.Value, out var value)
                 ? Math.Clamp(value, 1, MaxMessageLengthUpperBound)
                 : DefaultMaxMessageLength);
 
-        return Ok(new AppConfigDto(maxMessageLength));
+        var relayRow = rows.FirstOrDefault(r => r.Key == ForceRelayModeKey);
+        var forceRelayMode = relayRow != null && bool.TryParse(relayRow.Value, out var relay) && relay;
+
+        return Ok(new AppConfigDto(maxMessageLength, forceRelayMode));
     }
 }
