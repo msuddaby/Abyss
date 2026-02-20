@@ -93,7 +93,7 @@ export type WorkerToMainMessage =
 
 export interface SignalRConnection {
   on(event: string, handler: (...args: any[]) => void): void;
-  off(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler?: (...args: any[]) => void): void;
   invoke(method: string, ...args: unknown[]): Promise<any>;
   readonly state: string;
 }

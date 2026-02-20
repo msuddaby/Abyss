@@ -23,8 +23,6 @@ let reconnectDebugSeq = 0;
 // Fallback: direct HubConnection when Worker is unavailable
 let directConnection: import("@microsoft/signalr").HubConnection | null = null;
 let directHealthInterval: ReturnType<typeof setInterval> | null = null;
-let directLastActivity = 0;
-
 const supportsWorker = typeof Worker !== "undefined";
 
 export interface SignalRReconnectDebugInfo {
@@ -166,7 +164,6 @@ async function createDirectConnection(): Promise<import("@microsoft/signalr").Hu
 
   directConnection.onreconnected(() => {
     recordDebug("direct.onreconnected", "reconnected", { level: "log" });
-    directLastActivity = Date.now();
     setStatus("connected");
     fireReconnectCallbacks();
   });
@@ -223,7 +220,6 @@ export function startConnection(): Promise<SignalRConnection> {
       const conn = await createDirectConnection();
       if (conn.state === "Connected") return conn;
       await conn.start();
-      directLastActivity = Date.now();
       startDirectHealthMonitor();
       setStatus("connected");
       return conn;
@@ -313,7 +309,6 @@ export async function focusReconnect(options: FocusReconnectOptions = {}): Promi
       directConnection.invoke("Ping"),
       new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), 4000)),
     ]);
-    directLastActivity = Date.now();
     return true;
   } catch {
     return false;
@@ -335,7 +330,6 @@ export async function healthCheck(): Promise<void> {
       directConnection.invoke("Ping"),
       new Promise((_, reject) => setTimeout(() => reject(new Error("Ping timeout")), 4000)),
     ]);
-    directLastActivity = Date.now();
   } catch {
     // Auto-reconnect will handle it
   }
