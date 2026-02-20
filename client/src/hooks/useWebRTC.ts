@@ -225,7 +225,10 @@ const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, { frameRate: 
 async function applyBitrateToSender(sender: RTCRtpSender, maxBitrate: number) {
   const params = sender.getParameters();
   if (!params.encodings || params.encodings.length === 0) {
-    params.encodings = [{}];
+    // setParameters cannot add new encoding entries — only modify existing ones.
+    // On Linux/Chromium encodings is empty until after first negotiation.
+    // Initial bitrate should be set via addTransceiver sendEncodings instead.
+    return;
   }
   params.encodings[0].maxBitrate = maxBitrate;
   await sender.setParameters(params);
@@ -2231,7 +2234,9 @@ async function startScreenShareInternal() {
   voiceState.setScreenShareLoading(true);
   try {
     if (isInSfuMode()) {
-      // SFU mode: LiveKit handles capture + publish
+      // SFU mode: LiveKit handles capture + publish.
+      // On Linux, sfuPublishScreenShare uses getUserMedia+chromeMediaSource internally
+      // because desktopCapturer.getSources crashes PipeWire on many setups.
       const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
       await sfuPublishScreenShare({
         maxFramerate: screenPreset.frameRate,
@@ -2248,9 +2253,9 @@ async function startScreenShareInternal() {
     const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
 
     if (isLinuxElectron) {
-      // On Linux Electron, use getUserMedia with chromeMediaSource to avoid the
-      // PipeWire double-dialog issue (getDisplayMedia + setDisplayMediaRequestHandler
-      // each trigger separate PipeWire portal sessions)
+      // On Linux Electron, desktopCapturer.getSources crashes PipeWire on many setups.
+      // Use getUserMedia with chromeMediaSource instead — captures the full desktop
+      // without requiring a portal source picker.
       screenStream = await navigator.mediaDevices.getUserMedia({
         video: {
           mandatory: {
@@ -2269,7 +2274,7 @@ async function startScreenShareInternal() {
 
     const videoTracks = screenStream.getVideoTracks();
     const audioTracks = screenStream.getAudioTracks();
-    console.log(`[screenShare] Started screen capture: ${videoTracks.length} video + ${audioTracks.length} audio tracks (isLinuxElectron=${isLinuxElectron})`);
+    console.log(`[screenShare] Started screen capture: ${videoTracks.length} video + ${audioTracks.length} audio tracks`);
     const videoTrack = videoTracks[0];
 
     // Handle browser "Stop sharing" button
@@ -2531,12 +2536,15 @@ async function addCameraTrackToPeer(
     // Send track-info before adding track
     await sendTrackInfo(conn, peerId, "camera", videoTrack.id);
 
-    const sender = pc.addTrack(videoTrack, cameraStream);
-    cameraTrackSenders.set(peerId, sender);
-
-    // Apply bitrate limit
+    // Use addTransceiver with sendEncodings to set bitrate at creation time —
+    // addTrack + setParameters fails on Linux/Chromium because encodings is empty
+    // before negotiation and setParameters cannot add new encoding entries.
     const camPreset = CAMERA_QUALITY_CONSTRAINTS[useVoiceStore.getState().cameraQuality];
-    await applyBitrateToSender(sender, camPreset.maxBitrate);
+    const cameraTransceiver = pc.addTransceiver(videoTrack, {
+      streams: [cameraStream],
+      sendEncodings: [{ maxBitrate: camPreset.maxBitrate }],
+    });
+    cameraTrackSenders.set(peerId, cameraTransceiver.sender);
 
     // Renegotiate
     if (pc.signalingState === "stable" && pc.iceConnectionState !== "failed") {
@@ -2567,11 +2575,20 @@ async function addVideoTrackForViewer(viewerUserId: string) {
     const existingSenders = pc.getSenders();
     console.log(`[screenShare] Adding screen tracks for viewer ${viewerUserId} (existing senders: ${existingSenders.map(s => `${s.track?.kind}:${s.track?.id.slice(0,8)}`).join(", ")})`);
 
-    // Add video tracks with track-info so the receiver knows it's a screen track
+    const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[useVoiceStore.getState().screenShareQuality];
+
+    // Add video tracks with track-info so the receiver knows it's a screen track.
+    // Use addTransceiver with sendEncodings to set bitrate at creation time —
+    // addTrack + setParameters fails on Linux/Chromium because encodings is empty
+    // before negotiation and setParameters cannot add new encoding entries.
     for (const track of activeScreenStream.getVideoTracks()) {
       await sendTrackInfo(conn, viewerUserId, "screen", track.id);
       console.log(`[screenShare] Adding screen video track for viewer ${viewerUserId} (trackId=${track.id.slice(0,8)})`);
-      senders.push(pc.addTrack(track, activeScreenStream));
+      const transceiver = pc.addTransceiver(track, {
+        streams: [activeScreenStream],
+        sendEncodings: [{ maxBitrate: screenPreset.maxBitrate }],
+      });
+      senders.push(transceiver.sender);
     }
 
     // Add audio tracks (tab/system audio) with a distinct track-info type
@@ -2585,14 +2602,6 @@ async function addVideoTrackForViewer(viewerUserId: string) {
 
     if (senders.length === 0) return;
     screenTrackSenders.set(viewerUserId, senders);
-
-    // Apply bitrate limit to video senders
-    const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[useVoiceStore.getState().screenShareQuality];
-    for (const sender of senders) {
-      if (sender.track?.kind === "video") {
-        await applyBitrateToSender(sender, screenPreset.maxBitrate);
-      }
-    }
 
     // Only renegotiate if signaling state is stable and ICE isn't failed
     if (

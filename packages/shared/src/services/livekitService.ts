@@ -4,6 +4,7 @@ import {
   Track,
   ConnectionState,
   ExternalE2EEKeyProvider,
+  LocalVideoTrack,
   type RemoteTrack,
   type RemoteParticipant,
   type RemoteTrackPublication,
@@ -23,6 +24,12 @@ let currentRoom: Room | null = null;
 // letting LiveKit capture its own. When true, mute/unmute uses publication-level
 // mute instead of setMicrophoneEnabled (which would destroy and recapture the track).
 let isManualMicPublish = false;
+
+// On Linux Electron, desktopCapturer.getSources crashes PipeWire on many setups,
+// so screen share uses getUserMedia+chromeMediaSource and a manually published
+// LocalVideoTrack instead of setScreenShareEnabled (which calls getDisplayMedia).
+let linuxScreenShareTrack: LocalVideoTrack | null = null;
+let linuxScreenShareStream: MediaStream | null = null;
 
 // Audio elements created for remote participants (cleaned up on disconnect)
 const sfuAudioElements = new Map<string, HTMLAudioElement>();
@@ -396,6 +403,37 @@ export async function sfuPublishScreenShare(opts?: {
 }): Promise<void> {
   if (!currentRoom) return;
   console.log('[livekit] Publishing screen share', opts);
+
+  // On Linux Electron, desktopCapturer.getSources crashes PipeWire, so getDisplayMedia
+  // (used internally by setScreenShareEnabled) is unavailable. Capture via
+  // getUserMedia+chromeMediaSource and publish as a LocalVideoTrack directly.
+  const isLinuxElectron = (window as any).electron?.platform === 'linux';
+  if (isLinuxElectron) {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          maxFrameRate: opts?.maxFramerate ?? 30,
+        },
+      } as any,
+      audio: false,
+    });
+    const mediaTrack = stream.getVideoTracks()[0];
+    linuxScreenShareStream = stream;
+    linuxScreenShareTrack = new LocalVideoTrack(mediaTrack, undefined, true);
+    mediaTrack.onended = () => {
+      sfuUnpublishScreenShare().catch(() => {});
+    };
+    await currentRoom.localParticipant.publishTrack(linuxScreenShareTrack, {
+      source: Track.Source.ScreenShare,
+      videoEncoding: opts?.maxBitrate ? {
+        maxBitrate: opts.maxBitrate,
+        maxFramerate: opts.maxFramerate,
+      } : undefined,
+    });
+    return;
+  }
+
   const publishOpts = {
     screenShareEncoding: opts?.maxBitrate ? {
       maxBitrate: opts.maxBitrate,
@@ -406,7 +444,7 @@ export async function sfuPublishScreenShare(opts?: {
     await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: true }, publishOpts);
   } catch (err: any) {
     if (err?.name === 'NotSupportedError') {
-      // Audio capture via getDisplayMedia is not supported on this platform (e.g. Linux)
+      // Audio capture via getDisplayMedia is not supported on this platform
       console.warn('[livekit] Screen share audio not supported, retrying without audio');
       await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: false }, publishOpts);
     } else {
@@ -418,6 +456,13 @@ export async function sfuPublishScreenShare(opts?: {
 export async function sfuUnpublishScreenShare(): Promise<void> {
   if (!currentRoom) return;
   console.log('[livekit] Unpublishing screen share');
+  if (linuxScreenShareTrack) {
+    await currentRoom.localParticipant.unpublishTrack(linuxScreenShareTrack);
+    linuxScreenShareStream?.getTracks().forEach((t) => t.stop());
+    linuxScreenShareTrack = null;
+    linuxScreenShareStream = null;
+    return;
+  }
   await currentRoom.localParticipant.setScreenShareEnabled(false);
 }
 
@@ -592,6 +637,9 @@ function cleanup(): void {
   sfuScreenAudioElements.clear();
   sfuScreenStreams.clear();
   sfuCameraStreams.clear();
+  linuxScreenShareStream?.getTracks().forEach((t) => t.stop());
+  linuxScreenShareTrack = null;
+  linuxScreenShareStream = null;
   currentRoom = null;
   isManualMicPublish = false;
 }

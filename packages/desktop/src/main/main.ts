@@ -62,6 +62,7 @@ let isQuitting = false;
 
 function setupScreenShareHandler(win: BrowserWindow) {
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    // Non-Linux: show full thumbnail grid picker in the renderer
     try {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
@@ -254,9 +255,9 @@ function createWindow() {
   // Initialize auto-launch manager
   autoLaunchManager = new AutoLaunchManager();
 
-  // Setup screen share handler (intercepts getDisplayMedia)
-  // On Linux, the renderer uses getUserMedia with chromeMediaSource instead of
-  // getDisplayMedia to avoid the PipeWire double-dialog issue
+  // Setup screen share handler (intercepts getDisplayMedia).
+  // On Linux, desktopCapturer.getSources crashes PipeWire on many setups, so the
+  // handler is disabled and Linux uses getUserMedia+chromeMediaSource instead.
   if (process.platform !== 'linux') {
     setupScreenShareHandler(mainWindow);
   }

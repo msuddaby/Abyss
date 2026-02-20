@@ -50,9 +50,10 @@ interface Window {
     showNotification: (title: string, body: string, data?: any) => void;
     onNotificationClicked: (callback: (data: any) => void) => () => void; // Returns unsubscribe function
 
-    // Screen share source picker
+    // Screen share source picker (non-Linux: full thumbnail grid)
     onScreenShareSources: (callback: (sources: ScreenShareSource[]) => void) => () => void;
     selectScreenShareSource: (sourceId: string | null) => void;
+
 
     // Window state
     isFocused: () => Promise<boolean>;
