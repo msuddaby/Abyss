@@ -174,6 +174,7 @@ async function fallbackToSFU(reason: string): Promise<void> {
     const conn = getConnection();
     conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
+    startAudioKeepAlive();
     useToastStore.getState().addToast('Switched to relay mode', 'info');
 
     p2pFailedPeers.clear();
@@ -767,8 +768,10 @@ let vaLastAboveThresholdAt = 0;
 
 // Keep-alive interval to prevent browser from suspending audio
 let audioKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
-// Silent audio nodes to prevent Chrome from throttling the tab when backgrounded.
+// Silent audio keepalive to prevent Chrome from throttling the tab when backgrounded.
 // Chrome treats tabs with active audio output as high-priority and skips timer throttling.
+// Uses its own AudioContext independent of the P2P audioContext so it survives SFU fallback.
+let silentKeepAliveCtx: AudioContext | null = null;
 let silentKeepAliveNodes: { oscillator: OscillatorNode; gain: GainNode } | null = null;
 
 // Track if device resolution is causing issues
@@ -1157,13 +1160,17 @@ function startAudioKeepAlive() {
   // Start a silent oscillator routed through a zero-gain node. Chrome sees
   // active audio output and keeps the tab at full priority even when
   // backgrounded, preventing timer/WebSocket throttling.
-  if (!silentKeepAliveNodes && audioContext && audioContext.state !== "closed") {
+  // Uses its own AudioContext so it survives P2P → SFU transitions.
+  if (!silentKeepAliveNodes) {
     try {
-      const oscillator = audioContext.createOscillator();
-      const gain = audioContext.createGain();
+      if (!silentKeepAliveCtx || silentKeepAliveCtx.state === "closed") {
+        silentKeepAliveCtx = new AudioContext();
+      }
+      const oscillator = silentKeepAliveCtx.createOscillator();
+      const gain = silentKeepAliveCtx.createGain();
       gain.gain.value = 0; // completely silent
       oscillator.connect(gain);
-      gain.connect(audioContext.destination);
+      gain.connect(silentKeepAliveCtx.destination);
       oscillator.start();
       silentKeepAliveNodes = { oscillator, gain };
       console.log("[AudioKeepAlive] Silent oscillator started to prevent tab throttling");
@@ -1207,6 +1214,10 @@ function stopAudioKeepAlive() {
     } catch {}
     silentKeepAliveNodes = null;
   }
+  if (silentKeepAliveCtx && silentKeepAliveCtx.state !== "closed") {
+    silentKeepAliveCtx.close().catch(() => {});
+    silentKeepAliveCtx = null;
+  }
   if (audioKeepAliveInterval) {
     clearInterval(audioKeepAliveInterval);
     audioKeepAliveInterval = null;
@@ -1215,7 +1226,6 @@ function stopAudioKeepAlive() {
 
 function cleanupAnalysers() {
   stopAnalyserLoop();
-  stopAudioKeepAlive();
   const store = useVoiceStore.getState();
   for (const [userId, entry] of analysers) {
     entry.source.disconnect();
@@ -2077,6 +2087,7 @@ function cleanupAll() {
   });
   screenAudioElements.clear();
   cleanupAnalysers();
+  stopAudioKeepAlive();
   peerStreams.clear();
   gainNodes.forEach((entry) => entry.source.disconnect());
   gainNodes.clear();
@@ -3703,6 +3714,7 @@ export function useWebRTC() {
           // Notify other peers in the channel that relay is active
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
+          startAudioKeepAlive();
           voiceState.setConnectionState('connected');
           lastVoiceJoinTime = Date.now();
           startStatsCollection();
@@ -3807,6 +3819,7 @@ export function useWebRTC() {
           setCurrentChannel(channelId);
           await connectToLiveKit(channelId);
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
+          startAudioKeepAlive();
           voiceState.setConnectionState('connected');
           lastVoiceJoinTime = Date.now();
           startStatsCollection();
