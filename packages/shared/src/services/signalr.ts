@@ -138,7 +138,9 @@ function getOrCreateProxy(): SignalRProxy {
   });
 
   // Initialize the worker with the hub URL
-  proxy.sendInit(getApiBase(), "/hubs/chat");
+  // Workers have no window.location, so resolve empty base to an absolute origin
+  const base = getApiBase() || (typeof location !== "undefined" ? location.origin : "");
+  proxy.sendInit(base, "/hubs/chat");
 
   return proxy;
 }
