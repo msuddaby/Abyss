@@ -69,6 +69,11 @@ let pendingVisibilityRejoin = false;
 let channelRelayDetected = false;
 // Guard to prevent concurrent visibility-triggered rejoins
 let rejoinInProgress = false;
+// Flag set when user intentionally leaves voice — prevents auto-rejoin
+let intentionalLeave = false;
+// Timestamp of last successful rejoin — prevents rapid successive rejoins
+let lastRejoinTime = 0;
+const REJOIN_COOLDOWN_MS = 5000;
 
 // Monotonically-increasing session ID — incremented on cleanupAll() so that
 // any async work enqueued before cleanup can detect the session ended and bail.
@@ -2726,8 +2731,17 @@ function beginInitialParticipantWait(conn: HubConnection) {
 }
 
 async function attemptVoiceRejoin(reason: string) {
+  if (intentionalLeave) {
+    console.log(`Skipping voice rejoin — user intentionally left (${reason})`);
+    return;
+  }
   if (rejoinInProgress) {
     console.log(`Rejoin already in progress, skipping (${reason})`);
+    return;
+  }
+  // Cooldown: don't rejoin if we just completed one recently
+  if (lastRejoinTime > 0 && Date.now() - lastRejoinTime < REJOIN_COOLDOWN_MS) {
+    console.log(`Rejoin cooldown active, skipping (${reason})`);
     return;
   }
   rejoinInProgress = true;
@@ -2742,8 +2756,9 @@ async function attemptVoiceRejoin(reason: string) {
   console.log(`Attempting voice rejoin (${reason}):`, channelId);
   useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
 
-  // Clean up stale WebRTC state
+  // Clean up stale WebRTC state — this increments voiceSessionId
   cleanupAll();
+  const sessionAtStart = voiceSessionId;
   useVoiceStore.getState().setScreenSharing(false);
   useVoiceStore.getState().setActiveSharers(new Map());
   useVoiceStore.getState().setWatching(null);
@@ -2753,6 +2768,8 @@ async function attemptVoiceRejoin(reason: string) {
 
   try {
     await initializeTurn();
+    if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after TURN init"); return; }
+
     deviceResolutionFailed = false;
 
     // Re-acquire microphone with current audio settings
@@ -2765,6 +2782,7 @@ async function attemptVoiceRejoin(reason: string) {
     let audioConstraints = base;
     if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
       const resolvedId = await resolveDefaultInputDevice();
+      if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after device resolution"); return; }
       if (resolvedId !== "default") {
         audioConstraints = { ...base, deviceId: { exact: resolvedId } };
       }
@@ -2773,9 +2791,16 @@ async function attemptVoiceRejoin(reason: string) {
     }
 
     localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    if (voiceSessionId !== sessionAtStart) {
+      console.log("Rejoin aborted: session changed after getUserMedia");
+      localStream.getTracks().forEach((t) => t.stop());
+      localStream = null;
+      return;
+    }
 
     // Initialize noise suppressor (creates processed peerStream)
     await applySuppressor(localStream);
+    if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after suppressor"); return; }
 
     // Apply mute state
     const shouldEnable = !vs.isMuted && (vs.voiceMode === "voice-activity" || vs.isPttActive);
@@ -2795,7 +2820,11 @@ async function attemptVoiceRejoin(reason: string) {
     lastVoiceJoinTime = Date.now();
     const conn = getConnection();
     beginInitialParticipantWait(conn);
-    await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
+    await Promise.race([
+      conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
+    ]);
+    if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after JoinVoiceChannel"); return; }
 
     startStatsCollection();
 
@@ -2803,6 +2832,7 @@ async function attemptVoiceRejoin(reason: string) {
     const channel = useServerStore.getState().channels.find((c) => c.id === channelId);
     useVoiceChatStore.getState().setChannel(channelId, channel?.persistentChat);
 
+    lastRejoinTime = Date.now();
     useToastStore.getState().addToast("Reconnected to voice channel", "success");
   } catch (err) {
     cancelInitialParticipantWait();
@@ -3638,6 +3668,7 @@ export function useWebRTC() {
   const joinVoice = useCallback(
     async (channelId: string) => {
       useVoiceStore.getState().setJoiningVoice(true);
+      intentionalLeave = false;
       pendingVisibilityRejoin = false;
       rejoinInProgress = false;
       try {
@@ -3647,7 +3678,10 @@ export function useWebRTC() {
             await disconnectFromLiveKit();
           }
           const conn = getConnection();
-          await conn.invoke("LeaveVoiceChannel", currentChannelId);
+          await Promise.race([
+            conn.invoke("LeaveVoiceChannel", currentChannelId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("LeaveVoiceChannel timeout")), 5000)),
+          ]);
           cleanupAll();
         }
 
@@ -3666,7 +3700,10 @@ export function useWebRTC() {
           // Join SignalR voice group first (for sidebar/state updates)
           const conn = getConnection();
           const voiceState = useVoiceStore.getState();
-          await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
+          await Promise.race([
+            conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
+          ]);
 
           // Connect via LiveKit
           await connectToLiveKit(channelId);
@@ -3743,12 +3780,10 @@ export function useWebRTC() {
         const conn = getConnection();
         beginInitialParticipantWait(conn);
         try {
-          await conn.invoke(
-            "JoinVoiceChannel",
-            channelId,
-            voiceState.isMuted,
-            voiceState.isDeafened,
-          );
+          await Promise.race([
+            conn.invoke("JoinVoiceChannel", channelId, voiceState.isMuted, voiceState.isDeafened),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
+          ]);
         } catch (err) {
           cancelInitialParticipantWait();
           console.error("Failed to join voice channel:", err);
@@ -3807,36 +3842,45 @@ export function useWebRTC() {
   );
 
   const leaveVoice = useCallback(async () => {
-    try {
-      // Disconnect from LiveKit if in SFU mode
-      if (isInSfuMode()) {
-        await disconnectFromLiveKit();
-      }
-      if (currentChannelId) {
-        const conn = getConnection();
-        await conn.invoke("LeaveVoiceChannel", currentChannelId);
-      }
-    } catch (error) {
-      console.warn("Failed to notify server when leaving voice channel:", error);
-    } finally {
-      pendingVisibilityRejoin = false;
-      rejoinInProgress = false;
-      cleanupAll();
-      p2pFailedPeers.clear();
-      setCurrentChannel(null);
-      setParticipants(new Map());
-      useVoiceStore.getState().setScreenSharing(false);
-      useVoiceStore.getState().setActiveSharers(new Map());
-      useVoiceStore.getState().setWatching(null);
-      useVoiceStore.getState().setCameraOn(false);
-      useVoiceStore.getState().setActiveCameras(new Map());
-      useVoiceStore.getState().setFocusedUserId(null);
-      useVoiceStore.getState().setVoiceChatOpen(false);
-      useVoiceStore.getState().setConnectionMode('p2p');
-      useVoiceStore.getState().setFallbackReason(null);
-      useVoiceStore.getState().resetP2PFailures();
-      useVoiceChatStore.getState().clear();
-      useWatchPartyStore.getState().setActiveParty(null);
+    // Set intentional leave flag FIRST to prevent auto-rejoin from racing
+    intentionalLeave = true;
+    pendingVisibilityRejoin = false;
+    rejoinInProgress = false;
+
+    // Immediate local cleanup — don't wait for server response
+    cleanupAll();
+    p2pFailedPeers.clear();
+    setCurrentChannel(null);
+    setParticipants(new Map());
+    useVoiceStore.getState().setScreenSharing(false);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
+    useVoiceStore.getState().setVoiceChatOpen(false);
+    useVoiceStore.getState().setConnectionMode('p2p');
+    useVoiceStore.getState().setFallbackReason(null);
+    useVoiceStore.getState().resetP2PFailures();
+    useVoiceChatStore.getState().clear();
+    useWatchPartyStore.getState().setActiveParty(null);
+
+    // Disconnect from LiveKit if in SFU mode (fire and forget)
+    if (isInSfuMode()) {
+      disconnectFromLiveKit().catch(() => {});
+    }
+
+    // Notify server with timeout — fire and forget so button is never stuck
+    if (currentChannelId) {
+      const conn = getConnection();
+      Promise.race([
+        conn.invoke("LeaveVoiceChannel", currentChannelId),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Leave timeout")), 5000),
+        ),
+      ]).catch((error) => {
+        console.warn("Failed to notify server when leaving voice channel:", error);
+      });
     }
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
@@ -3906,6 +3950,7 @@ export function useWebRTC() {
   // Auto-rejoin voice channel after SignalR reconnects (e.g. server restart)
   useEffect(() => {
     return onReconnected(async () => {
+      if (intentionalLeave) return;
       const channelId = useVoiceStore.getState().currentChannelId;
       if (!channelId) return;
 
@@ -3924,6 +3969,10 @@ export function useWebRTC() {
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (document.hidden) return;
+      if (intentionalLeave) {
+        pendingVisibilityRejoin = false;
+        return;
+      }
 
       const channelId = useVoiceStore.getState().currentChannelId;
       if (!channelId) {
@@ -3931,14 +3980,14 @@ export function useWebRTC() {
         return;
       }
 
-      const connectionState = useVoiceStore.getState().connectionState;
-      const forcedRejoinFromHiddenReconnect = pendingVisibilityRejoin;
-      const disconnectedRecovery = connectionState !== "connected" && !localStream;
-
-      if (forcedRejoinFromHiddenReconnect || disconnectedRecovery) {
+      // Only rejoin if SignalR actually reconnected while hidden (the proper trigger).
+      // Previously this also had a "disconnectedRecovery" path that fired when
+      // connectionState wasn't "connected" — but that was overeager and raced
+      // with other reconnect paths, causing unnecessary teardown/rejoin cycles.
+      if (pendingVisibilityRejoin) {
         const conn = getConnection();
         if (conn.state === "Connected") {
-          await attemptVoiceRejoin(forcedRejoinFromHiddenReconnect ? "visibility-pending" : "visibility-recovery");
+          await attemptVoiceRejoin("visibility-pending");
         }
       }
     };

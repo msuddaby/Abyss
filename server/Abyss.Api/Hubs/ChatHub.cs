@@ -26,7 +26,7 @@ public class ChatHub : Hub
     private const int MaxAttachmentsPerMessage = 10;
     private const int MaxPinnedMessagesPerChannel = 50;
     private const string MaxMessageLengthKey = "MaxMessageLength";
-    private static readonly TimeSpan VoiceDisconnectGracePeriod = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan VoiceDisconnectGracePeriod = TimeSpan.FromSeconds(30);
 
     // Track online users: connectionId -> userId
     internal static readonly ConcurrentDictionary<string, string> _connections = new();
