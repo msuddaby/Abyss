@@ -767,6 +767,9 @@ let vaLastAboveThresholdAt = 0;
 
 // Keep-alive interval to prevent browser from suspending audio
 let audioKeepAliveInterval: ReturnType<typeof setInterval> | null = null;
+// Silent audio nodes to prevent Chrome from throttling the tab when backgrounded.
+// Chrome treats tabs with active audio output as high-priority and skips timer throttling.
+let silentKeepAliveNodes: { oscillator: OscillatorNode; gain: GainNode } | null = null;
 
 // Track if device resolution is causing issues
 let deviceResolutionFailed = false;
@@ -1151,6 +1154,24 @@ function stopAnalyserLoop() {
 function startAudioKeepAlive() {
   if (audioKeepAliveInterval) return;
 
+  // Start a silent oscillator routed through a zero-gain node. Chrome sees
+  // active audio output and keeps the tab at full priority even when
+  // backgrounded, preventing timer/WebSocket throttling.
+  if (!silentKeepAliveNodes && audioContext && audioContext.state !== "closed") {
+    try {
+      const oscillator = audioContext.createOscillator();
+      const gain = audioContext.createGain();
+      gain.gain.value = 0; // completely silent
+      oscillator.connect(gain);
+      gain.connect(audioContext.destination);
+      oscillator.start();
+      silentKeepAliveNodes = { oscillator, gain };
+      console.log("[AudioKeepAlive] Silent oscillator started to prevent tab throttling");
+    } catch (err) {
+      console.warn("[AudioKeepAlive] Failed to start silent oscillator:", err);
+    }
+  }
+
   audioKeepAliveInterval = setInterval(() => {
     // Keep audio context running
     if (audioContext && audioContext.state === "suspended") {
@@ -1178,6 +1199,14 @@ function startAudioKeepAlive() {
 }
 
 function stopAudioKeepAlive() {
+  if (silentKeepAliveNodes) {
+    try {
+      silentKeepAliveNodes.oscillator.stop();
+      silentKeepAliveNodes.oscillator.disconnect();
+      silentKeepAliveNodes.gain.disconnect();
+    } catch {}
+    silentKeepAliveNodes = null;
+  }
   if (audioKeepAliveInterval) {
     clearInterval(audioKeepAliveInterval);
     audioKeepAliveInterval = null;
