@@ -41,7 +41,7 @@ const sfuGainNodes = new Map<string, SfuGainEntry>();
 const sfuScreenStreams = new Map<string, MediaStream>();
 const sfuCameraStreams = new Map<string, MediaStream>();
 
-export async function connectToLiveKit(channelId: string, options?: { skipAudioPublish?: boolean }): Promise<void> {
+export async function connectToLiveKit(channelId: string): Promise<void> {
   console.log('[livekit] Connecting to SFU for channel:', channelId);
 
   const voiceState = useVoiceStore.getState();
@@ -109,10 +109,8 @@ export async function connectToLiveKit(channelId: string, options?: { skipAudioP
       voiceState.addParticipant(participant.identity, participant.name || participant.identity);
     }
 
-    // Publish local audio (unless caller will publish a processed track manually)
-    if (!options?.skipAudioPublish) {
-      await publishAudio();
-    }
+    // Publish local audio
+    await publishAudio();
 
   } catch (err) {
     console.error('[livekit] Connection failed:', err);
@@ -272,37 +270,18 @@ async function publishAudio(): Promise<void> {
 }
 
 /**
- * Publish a pre-processed audio track (e.g. from RNNoise) to LiveKit.
- * The caller manages the mic capture and processing chain; LiveKit only
- * receives the processed output.
- */
-export async function sfuPublishProcessedAudio(track: MediaStreamTrack): Promise<void> {
-  if (!currentRoom) return;
-  isManualMicPublish = true;
-  await currentRoom.localParticipant.publishTrack(track, {
-    source: Track.Source.Microphone,
-  });
-  console.log('[livekit] Published processed audio track');
-
-  // Apply initial mute state (PTT starts muted until key is held)
-  const voiceState = useVoiceStore.getState();
-  const shouldBeMuted = voiceState.isMuted ||
-    (voiceState.voiceMode === 'push-to-talk' && !voiceState.isPttActive);
-  if (shouldBeMuted) {
-    const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
-    if (pub) await pub.mute();
-  }
-}
-
-/**
  * Replace the currently published mic audio track with a new one.
- * Used when toggling RNNoise mid-call (swapping between raw and processed tracks).
+ * Used to swap in an RNNoise-processed track after LiveKit has published
+ * its own mic capture, or when toggling RNNoise mid-call.
+ * After replacement, mute/unmute uses publication-level mute instead of
+ * setMicrophoneEnabled (which would destroy and recapture the mic).
  */
 export async function sfuReplaceAudioTrack(newTrack: MediaStreamTrack): Promise<void> {
   if (!currentRoom) return;
   const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Microphone);
   if (!pub?.track) return;
   await pub.track.replaceTrack(newTrack);
+  isManualMicPublish = true;
   console.log('[livekit] Replaced audio track');
 }
 

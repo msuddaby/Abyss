@@ -18,7 +18,6 @@ import {
   sfuSetDeafened,
   sfuSetScreenAudioVolume,
   sfuSetInputDevice,
-  sfuPublishProcessedAudio,
   sfuReplaceAudioTrack,
   sfuPublishScreenShare,
   sfuUnpublishScreenShare,
@@ -179,10 +178,10 @@ async function fallbackToSFU(reason: string): Promise<void> {
     // Preserve local audio (mic + RNNoise) so we can reuse it for SFU.
     cleanupP2PConnections(/* preserveLocalAudio */ true);
 
-    // Connect via LiveKit SFU — skip auto-publish so we can publish
-    // our RNNoise-processed track instead.
-    await connectToLiveKit(channelId, { skipAudioPublish: true });
-    await captureAndPublishForSfu();
+    // Connect via LiveKit SFU (publishes its own mic capture),
+    // then replace with our RNNoise-processed track if active.
+    await connectToLiveKit(channelId);
+    await applyRnnoiseToSfu();
 
     // Notify other peers in the channel that relay is active
     const conn = getConnection();
@@ -837,17 +836,21 @@ async function applySuppressor(rawStream: MediaStream): Promise<void> {
 }
 
 /**
- * Capture microphone, apply RNNoise if enabled, and publish the processed
- * track to LiveKit. Used when entering SFU mode so the same RNNoise pipeline
- * is used for relay as for P2P.
+ * After LiveKit has published its own mic capture via publishAudio(),
+ * capture our own mic, apply RNNoise if enabled, and replace LiveKit's
+ * published track with the processed output. This gives SFU mode the
+ * same RNNoise quality as P2P mode.
+ *
+ * LiveKit's replaceTrack() handles the sender swap and stops the old
+ * (LiveKit-captured) mic track, so there's no double capture.
  */
-async function captureAndPublishForSfu(): Promise<void> {
+async function applyRnnoiseToSfu(): Promise<void> {
   const vs = useVoiceStore.getState();
+  if (!vs.noiseSuppression) return; // nothing to do — LiveKit's browser-level NS is fine
 
-  // Capture mic if we don't already have a localStream (force-SFU path)
+  // Capture our own mic stream for the RNNoise pipeline
   if (!localStream) {
     const audioConstraints: MediaTrackConstraints = {
-      // Browser-level processing as baseline (RNNoise adds on top)
       noiseSuppression: vs.noiseSuppression,
       echoCancellation: vs.echoCancellation,
       autoGainControl: vs.autoGainControl,
@@ -880,13 +883,14 @@ async function captureAndPublishForSfu(): Promise<void> {
     await applySuppressor(localStream);
   }
 
-  // Get the track to publish (processed if RNNoise is active, raw otherwise)
-  const streamToPublish = getPeerStream();
-  if (!streamToPublish) return;
-  const audioTrack = streamToPublish.getAudioTracks()[0];
-  if (!audioTrack) return;
+  // Replace LiveKit's published mic track with our processed output
+  const processedStream = getPeerStream();
+  if (!processedStream) return;
+  const processedTrack = processedStream.getAudioTracks()[0];
+  if (!processedTrack) return;
 
-  await sfuPublishProcessedAudio(audioTrack);
+  await sfuReplaceAudioTrack(processedTrack);
+  console.log('[sfu] RNNoise applied to SFU audio');
 }
 
 function canSetSinkId(audio: HTMLAudioElement): audio is HTMLAudioElement & {
@@ -3841,10 +3845,10 @@ export function useWebRTC() {
             new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
           ]);
 
-          // Connect via LiveKit — skip auto-publish so we can capture mic
-          // ourselves and apply RNNoise before publishing to the SFU.
-          await connectToLiveKit(channelId, { skipAudioPublish: true });
-          await captureAndPublishForSfu();
+          // Connect via LiveKit (publishes its own mic capture),
+          // then replace with our RNNoise-processed track if enabled.
+          await connectToLiveKit(channelId);
+          await applyRnnoiseToSfu();
 
           // Notify other peers in the channel that relay is active
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
@@ -3950,8 +3954,8 @@ export function useWebRTC() {
           // Preserve local audio (mic + RNNoise) so we can reuse for SFU
           cleanupP2PConnections(/* preserveLocalAudio */ true);
           setCurrentChannel(channelId);
-          await connectToLiveKit(channelId, { skipAudioPublish: true });
-          await captureAndPublishForSfu();
+          await connectToLiveKit(channelId);
+          await applyRnnoiseToSfu();
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
           voiceState.setConnectionState('connected');
           lastVoiceJoinTime = Date.now();

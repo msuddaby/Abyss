@@ -50,6 +50,22 @@ public class VoiceStateService
         _userChannels[userId] = channelId;
     }
 
+    /// <summary>
+    /// Lightweight reconnect: update only the SignalR connection ID without
+    /// resetting mute/deafen/server-mute state. Used when the user's SignalR
+    /// connection changed but they never actually left voice.
+    /// </summary>
+    public void UpdateConnectionId(string userId, string connectionId)
+    {
+        _voiceConnections[userId] = connectionId;
+        // Touch LastSeen so heartbeat doesn't think we're stale
+        var channelId = _userChannels.GetValueOrDefault(userId);
+        if (channelId != default && _voiceChannels.TryGetValue(channelId, out var users) && users.TryGetValue(userId, out var state))
+        {
+            state.LastSeen = DateTime.UtcNow;
+        }
+    }
+
     public void LeaveChannel(Guid channelId, string userId)
     {
         var removedFromChannel = false;

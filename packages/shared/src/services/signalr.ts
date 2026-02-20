@@ -30,7 +30,11 @@ export function onReconnected(cb: () => void): () => void {
   };
 }
 
+let lastReconnectFire = 0;
 function fireReconnectCallbacks() {
+  const now = Date.now();
+  if (now - lastReconnectFire < 2000) return; // dedupe — restartConnection + onreconnected can both fire
+  lastReconnectFire = now;
   for (const cb of reconnectCallbacks) cb();
 }
 

@@ -1063,32 +1063,14 @@ public class ChatHub : Hub
 
         if (reconnectingToSameChannel)
         {
-            // Lightweight reconnect: just update the connection ID.
-            // Don't remove screen share / camera state — WebRTC tracks are
-            // independent of SignalR and may still be flowing (especially in
-            // Electron or during background re-registration while gaming).
-            // The client reconciles these on visibility change if needed.
-            _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
-            if (!canSpeak)
-            {
-                _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, true, null);
-            }
-
+            // Truly silent re-registration: update ONLY the SignalR connection ID
+            // and group membership. Don't touch voice state (preserves server-mute,
+            // screen share, camera), don't send ANY signals to other peers, don't
+            // send channel state back to caller (they already have it — WebRTC P2P
+            // connections are independent of SignalR and still working).
+            _voiceState.UpdateConnectionId(UserId, Context.ConnectionId);
             await Groups.AddToGroupAsync(Context.ConnectionId, $"voice:{channelId}");
             await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
-
-            await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
-
-            // Trigger fresh WebRTC negotiation for this recovered session without a synthetic leave event.
-            await Clients.OthersInGroup($"voice:{channelId}").SendAsync("UserJoinedVoice", UserId, DisplayName);
-
-            var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
-            var reconnectRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-            foreach (var userId in reconnectRecipients)
-            {
-                await Clients.Group($"user:{userId}").SendAsync("VoiceUserStateUpdated", channelId, UserId, state);
-            }
-
             return;
         }
 
