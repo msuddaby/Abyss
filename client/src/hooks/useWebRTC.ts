@@ -2909,7 +2909,7 @@ async function attemptVoiceRejoin(reason: string) {
     const conn = getConnection();
     beginInitialParticipantWait(conn);
     await Promise.race([
-      conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened),
+      conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, false),
       new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
     ]);
     if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after JoinVoiceChannel"); return; }
@@ -3969,7 +3969,7 @@ export function useWebRTC() {
         beginInitialParticipantWait(conn);
         try {
           await Promise.race([
-            conn.invoke("JoinVoiceChannel", channelId, voiceState.isMuted, voiceState.isDeafened),
+            conn.invoke("JoinVoiceChannel", channelId, voiceState.isMuted, voiceState.isDeafened, false),
             new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
           ]);
         } catch (err) {
