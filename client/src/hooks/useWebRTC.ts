@@ -4,9 +4,11 @@ import {
   ensureConnected,
   getConnection,
   getTurnCredentials,
+  getLastReconnectDebugInfo,
   onReconnected,
   subscribeTurnCredentials,
   useVoiceStore,
+  useSignalRStore,
   useAuthStore,
   useServerStore,
   useVoiceChatStore,
@@ -2818,30 +2820,66 @@ function beginInitialParticipantWait(conn: HubConnection) {
   }, INITIAL_PARTICIPANTS_TIMEOUT_MS);
 }
 
+function formatReconnectError(err: unknown): string {
+  if (!err) return "(no error)";
+  if (err instanceof Error) return err.stack ? `${err.name}: ${err.message}` : err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function formatSignalRReconnectDiag(): string {
+  const diag = getLastReconnectDebugInfo();
+  if (!diag) return "none";
+  return `diag#${diag.seq} trigger=${diag.trigger} detail=${diag.detail} state=${diag.state}${diag.error ? ` error=${diag.error}` : ""}`;
+}
+
+function voiceReconnectContext(): string {
+  const vs = useVoiceStore.getState();
+  const signalRStatus = useSignalRStore.getState().status;
+  const hidden = typeof document !== "undefined" ? document.hidden : false;
+  return `channel=${vs.currentChannelId ?? "none"} mode=${vs.connectionMode} signalRStatus=${signalRStatus} inSfu=${isInSfuMode()} hidden=${hidden} pendingVisibilityRejoin=${pendingVisibilityRejoin} reconnectingVoice=${reconnectingVoice} rejoinInProgress=${rejoinInProgress} signalR=${formatSignalRReconnectDiag()}`;
+}
+
+function logVoiceReconnect(message: string): void {
+  console.log(`[VoiceReconnect] ${message} | ${voiceReconnectContext()}`);
+}
+
+function warnVoiceReconnect(message: string, err?: unknown): void {
+  const suffix = err ? ` error=${formatReconnectError(err)}` : "";
+  console.warn(`[VoiceReconnect] ${message}${suffix} | ${voiceReconnectContext()}`);
+}
+
 async function attemptVoiceRejoin(reason: string) {
+  logVoiceReconnect(`attemptVoiceRejoin start reason=${reason}`);
   if (intentionalLeave) {
-    console.log(`Skipping voice rejoin — user intentionally left (${reason})`);
+    logVoiceReconnect(`attemptVoiceRejoin skipped reason=${reason} skip=intentional-leave`);
     return;
   }
   if (rejoinInProgress) {
-    console.log(`Rejoin already in progress, skipping (${reason})`);
+    logVoiceReconnect(`attemptVoiceRejoin skipped reason=${reason} skip=rejoin-in-progress`);
     return;
   }
   // Cooldown: don't rejoin if we just completed one recently
   if (lastRejoinTime > 0 && Date.now() - lastRejoinTime < REJOIN_COOLDOWN_MS) {
-    console.log(`Rejoin cooldown active, skipping (${reason})`);
+    logVoiceReconnect(`attemptVoiceRejoin skipped reason=${reason} skip=rejoin-cooldown`);
     return;
   }
   rejoinInProgress = true;
   pendingVisibilityRejoin = false;
+  logVoiceReconnect(`attemptVoiceRejoin marked rejoinInProgress reason=${reason}`);
 
   const channelId = useVoiceStore.getState().currentChannelId;
   if (!channelId) {
+    warnVoiceReconnect(`attemptVoiceRejoin abort reason=${reason} missing-channel`);
     rejoinInProgress = false;
     return;
   }
 
-  console.log(`Attempting voice rejoin (${reason}):`, channelId);
+  logVoiceReconnect(`attemptVoiceRejoin executing reason=${reason} targetChannel=${channelId}`);
   useToastStore.getState().addToast("Reconnecting to voice channel...", "info");
 
   // Clean up stale WebRTC state — this increments voiceSessionId
@@ -2854,6 +2892,7 @@ async function attemptVoiceRejoin(reason: string) {
   useVoiceStore.getState().setActiveCameras(new Map());
   useVoiceStore.getState().setFocusedUserId(null);
 
+  let stage = "initializeTurn";
   try {
     await initializeTurn();
     if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after TURN init"); return; }
@@ -2869,6 +2908,7 @@ async function attemptVoiceRejoin(reason: string) {
     };
     let audioConstraints = base;
     if (!vs.inputDeviceId || vs.inputDeviceId === "default") {
+      stage = "resolveDefaultInputDevice";
       const resolvedId = await resolveDefaultInputDevice();
       if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after device resolution"); return; }
       if (resolvedId !== "default") {
@@ -2878,6 +2918,7 @@ async function attemptVoiceRejoin(reason: string) {
       audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
     }
 
+    stage = "getUserMedia";
     localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     if (voiceSessionId !== sessionAtStart) {
       console.log("Rejoin aborted: session changed after getUserMedia");
@@ -2887,6 +2928,7 @@ async function attemptVoiceRejoin(reason: string) {
     }
 
     // Initialize noise suppressor (creates processed peerStream)
+    stage = "applySuppressor";
     await applySuppressor(localStream);
     if (voiceSessionId !== sessionAtStart) { console.log("Rejoin aborted: session changed after suppressor"); return; }
 
@@ -2908,6 +2950,7 @@ async function attemptVoiceRejoin(reason: string) {
     lastVoiceJoinTime = Date.now();
     const conn = getConnection();
     beginInitialParticipantWait(conn);
+    stage = "JoinVoiceChannel";
     await Promise.race([
       conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, false),
       new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
@@ -2922,9 +2965,11 @@ async function attemptVoiceRejoin(reason: string) {
 
     lastRejoinTime = Date.now();
     useToastStore.getState().addToast("Reconnected to voice channel", "success");
+    logVoiceReconnect(`attemptVoiceRejoin succeeded reason=${reason}`);
   } catch (err) {
     cancelInitialParticipantWait();
-    console.error(`Failed to rejoin voice (${reason}):`, err);
+    console.error(`Failed to rejoin voice (${reason}) at stage=${stage}:`, err);
+    warnVoiceReconnect(`attemptVoiceRejoin failed reason=${reason} stage=${stage}`, err);
     useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
     // Full cleanup on failure — drop user out of voice
     cleanupAll();
@@ -2933,6 +2978,63 @@ async function attemptVoiceRejoin(reason: string) {
     useVoiceChatStore.getState().clear();
   } finally {
     rejoinInProgress = false;
+    logVoiceReconnect(`attemptVoiceRejoin finished reason=${reason}`);
+  }
+}
+
+function isSfuVoiceSessionActive(): boolean {
+  const mode = useVoiceStore.getState().connectionMode;
+  return isInSfuMode() || mode === "sfu" || mode === "attempting-sfu";
+}
+
+async function attemptVoiceReregister(reason: string): Promise<boolean> {
+  if (intentionalLeave) {
+    logVoiceReconnect(`attemptVoiceReregister skipped reason=${reason} skip=intentional-leave`);
+    return false;
+  }
+  const channelId = useVoiceStore.getState().currentChannelId;
+  if (!channelId) {
+    warnVoiceReconnect(`attemptVoiceReregister skipped reason=${reason} skip=missing-channel`);
+    return false;
+  }
+
+  const conn = getConnection();
+  if (conn.state !== "Connected") {
+    warnVoiceReconnect(`attemptVoiceReregister skipped reason=${reason} skip=signalr-not-connected state=${conn.state}`);
+    return false;
+  }
+
+  const vs = useVoiceStore.getState();
+  let stage = "JoinVoiceChannel";
+  logVoiceReconnect(`attemptVoiceReregister start reason=${reason} targetChannel=${channelId}`);
+  try {
+    await Promise.race([
+      conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened, true),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Voice re-register timeout")), 10000),
+      ),
+    ]);
+    pendingVisibilityRejoin = false;
+    logVoiceReconnect(`attemptVoiceReregister succeeded reason=${reason}`);
+
+    if (!document.hidden) {
+      stage = "GetVoiceChannelUsers";
+      conn.invoke("GetVoiceChannelUsers", channelId)
+        .then((users: Record<string, string>) => {
+          const authoritative = new Map(Object.entries(users));
+          useVoiceStore.getState().setParticipants(authoritative);
+        })
+        .catch((err) => {
+          warnVoiceReconnect(`attemptVoiceReregister post-sync failed reason=${reason}`, err);
+        });
+    } else {
+      logVoiceReconnect(`attemptVoiceReregister post-sync skipped reason=${reason} skip=tab-hidden`);
+    }
+    return true;
+  } catch (err) {
+    console.warn(`Voice re-registration failed (${reason}) at stage=${stage}:`, err);
+    warnVoiceReconnect(`attemptVoiceReregister failed reason=${reason} stage=${stage}`, err);
+    return false;
   }
 }
 
@@ -3237,19 +3339,31 @@ function setupSignalRListeners() {
 
     completeInitialParticipantWait(conn);
 
-    // If this signal arrived during a reconnect (grace period had expired on server,
-    // soft rejoin happened), close ALL stale peers and reset P2P failure state.
-    // The other side already destroyed their peers (they got UserLeftVoice from the
-    // grace period), so our peers are zombies. Start fresh.
+    // If this signal arrived during a reconnect, perform selective cleanup:
+    // keep healthy peers that still match authoritative participants, and only
+    // close peers that are stale/unhealthy. This avoids tearing down active
+    // calls when SignalR briefly reconnects.
     const isReconnectJoin = reconnectingVoice;
     if (isReconnectJoin) {
       reconnectingVoice = false;
-      console.log(`VoiceChannelUsers received (reconnect): ${authoritative.size} participants — closing stale peers`);
       p2pFailedPeers.clear();
       useVoiceStore.getState().resetP2PFailures();
-      for (const peerId of peers.keys()) {
-        closePeer(peerId, { skipFailureCount: true });
+      let closedCount = 0;
+      let preservedCount = 0;
+      for (const [peerId, pc] of peers.entries()) {
+        const missingFromAuthoritative = !authoritative.has(peerId);
+        const unhealthy =
+          pc.connectionState === "failed" ||
+          pc.connectionState === "closed" ||
+          pc.iceConnectionState === "failed";
+        if (missingFromAuthoritative || unhealthy) {
+          closePeer(peerId, { skipFailureCount: true });
+          closedCount += 1;
+        } else {
+          preservedCount += 1;
+        }
       }
+      console.log(`VoiceChannelUsers received (reconnect): ${authoritative.size} participants — preserved ${preservedCount} peers, closed ${closedCount} stale/unhealthy peers`);
     } else {
       console.log(`VoiceChannelUsers received: ${authoritative.size} participants`);
     }
@@ -3887,7 +4001,7 @@ export function useWebRTC() {
           const conn = getConnection();
           const voiceState = useVoiceStore.getState();
           await Promise.race([
-            conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened),
+            conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened, false),
             new Promise((_, reject) => setTimeout(() => reject(new Error("JoinVoiceChannel timeout")), 10000)),
           ]);
 
@@ -4145,16 +4259,25 @@ export function useWebRTC() {
   //   cleanup via reconnectingVoice flag) but skips ChannelRelayActive/WatchPartyActive
   useEffect(() => {
     return onReconnected(async () => {
-      if (intentionalLeave) return;
+      logVoiceReconnect("onReconnected callback fired");
+      if (intentionalLeave) {
+        logVoiceReconnect("onReconnected skipped (intentional leave)");
+        return;
+      }
       const channelId = useVoiceStore.getState().currentChannelId;
-      if (!channelId) return;
+      if (!channelId) {
+        logVoiceReconnect("onReconnected skipped (no active voice channel)");
+        return;
+      }
 
       const conn = getConnection();
       const vs = useVoiceStore.getState();
+      let reconnectStage = "JoinVoiceChannel(re-register)";
 
       // Set flag BEFORE invoke so VoiceChannelUsers handler (fired during invoke
       // if grace period expired) knows to close stale peers and reset P2P state.
       reconnectingVoice = true;
+      logVoiceReconnect(`onReconnected starting voice re-register channel=${channelId}`);
 
       try {
         await Promise.race([
@@ -4166,10 +4289,11 @@ export function useWebRTC() {
           // reconnectingVoice still true = silent reconnect (no VoiceChannelUsers
           // signal received, grace period hadn't expired). No stale peers to clean.
           reconnectingVoice = false;
-          console.log("SignalR reconnected — silent re-registration (no disruption)");
+          logVoiceReconnect("SignalR reconnected — silent re-registration (no disruption)");
 
           // If tab is visible, do lightweight peer reconciliation
           if (!document.hidden) {
+            reconnectStage = "GetVoiceChannelUsers(silent-reregister)";
             conn.invoke("GetVoiceChannelUsers", channelId)
               .then((users: Record<string, string>) => {
                 const authoritative = new Map(Object.entries(users));
@@ -4194,19 +4318,30 @@ export function useWebRTC() {
                   }
                 }
               })
-              .catch(() => {});
+              .catch((err) => {
+                warnVoiceReconnect("onReconnected silent re-registration participant sync failed", err);
+              });
+          } else {
+            logVoiceReconnect("onReconnected skipped participant sync (tab hidden)");
           }
         } else {
           // reconnectingVoice was cleared by VoiceChannelUsers handler = soft rejoin
-          // (grace period had expired, server sent full participant list, handler
-          // already closed stale peers and started creating new ones).
-          console.log("SignalR reconnected — soft rejoin (grace period had expired, peers recreated)");
+          // (server sent authoritative participant list; handler reconciled peers).
+          logVoiceReconnect("SignalR reconnected — soft rejoin (authoritative participant sync)");
         }
       } catch (err) {
         reconnectingVoice = false;
         console.warn("Failed to re-register voice after reconnect:", err);
+        warnVoiceReconnect(`onReconnected voice re-register failed stage=${reconnectStage}`, err);
         if (document.hidden) {
           pendingVisibilityRejoin = true;
+          logVoiceReconnect("pendingVisibilityRejoin=true reason=onReconnected-failure-hidden");
+        } else if (isSfuVoiceSessionActive()) {
+          const recovered = await attemptVoiceReregister("reconnect-reregister-failed-sfu");
+          if (!recovered) {
+            pendingVisibilityRejoin = true;
+            logVoiceReconnect("pendingVisibilityRejoin=true reason=sfu-reregister-retry-failed");
+          }
         } else {
           await attemptVoiceRejoin("reconnect-reregister-failed");
         }
@@ -4220,21 +4355,36 @@ export function useWebRTC() {
       if (document.hidden) return;
       if (intentionalLeave) {
         pendingVisibilityRejoin = false;
+        logVoiceReconnect("visibilitychange visible -> cleared pendingVisibilityRejoin (intentional leave)");
         return;
       }
 
       const channelId = useVoiceStore.getState().currentChannelId;
       if (!channelId) {
         pendingVisibilityRejoin = false;
+        logVoiceReconnect("visibilitychange visible -> cleared pendingVisibilityRejoin (no active channel)");
         return;
       }
 
       if (pendingVisibilityRejoin) {
         // SignalR reconnected while hidden but background re-registration failed.
-        // Need a full rejoin (teardown + getUserMedia + rejoin).
+        // In SFU mode, retry lightweight re-registration only.
+        // In P2P mode, do a full rejoin (teardown + getUserMedia + rejoin).
         const conn = getConnection();
         if (conn.state === "Connected") {
-          await attemptVoiceRejoin("visibility-pending");
+          if (isSfuVoiceSessionActive()) {
+            logVoiceReconnect("visibilitychange pending recovery path=SFU-reregister");
+            const recovered = await attemptVoiceReregister("visibility-pending-sfu");
+            if (!recovered) {
+              pendingVisibilityRejoin = true;
+              logVoiceReconnect("pendingVisibilityRejoin=true reason=visibility-pending-sfu-retry-failed");
+            }
+          } else {
+            logVoiceReconnect("visibilitychange pending recovery path=P2P-full-rejoin");
+            await attemptVoiceRejoin("visibility-pending");
+          }
+        } else {
+          warnVoiceReconnect(`visibilitychange pending recovery skipped (SignalR state=${conn.state})`);
         }
       } else {
         // Background re-registration succeeded (or no reconnect happened).
@@ -4243,6 +4393,7 @@ export function useWebRTC() {
         // This is instant — no teardown, no getUserMedia, no audible disruption.
         const conn = getConnection();
         if (conn.state === "Connected") {
+          logVoiceReconnect("visibilitychange reconciliation start");
           conn.invoke("GetVoiceChannelUsers", channelId)
             .then((users: Record<string, string>) => {
               const authoritative = new Map(Object.entries(users));
@@ -4270,7 +4421,11 @@ export function useWebRTC() {
                 }
               }
             })
-            .catch(() => {});
+            .catch((err) => {
+              warnVoiceReconnect("visibilitychange reconciliation GetVoiceChannelUsers failed", err);
+            });
+        } else {
+          warnVoiceReconnect(`visibilitychange reconciliation skipped (SignalR state=${conn.state})`);
         }
       }
     };

@@ -632,7 +632,7 @@ export function useSignalRListeners() {
     if (typeof document === 'undefined') return;
     let lastRefresh = 0;
 
-    const handleFocus = async () => {
+    const handleFocus = async (source: 'window-focus' | 'visibility-visible') => {
       if (Date.now() - lastRefresh < 5000) return;
       lastRefresh = Date.now();
 
@@ -643,21 +643,26 @@ export function useSignalRListeners() {
       // Single ping check — if it fails, restart immediately (no 2-failure wait).
       // Only refresh presence/unreads via SignalR if the connection is alive,
       // otherwise the invocations would just get canceled and spam errors.
-      const alive = await focusReconnect();
+      const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+      console.log(`[SignalR] focus refresh source=${source} inVoiceCall=${inActiveVoiceCall}`);
+      const alive = await focusReconnect({ restartOnFailure: !inActiveVoiceCall });
       if (alive) {
         const conn = getConnection();
         const server = useServerStore.getState().activeServer;
         if (server) fetchServerState(conn, server.id);
         refreshSignalRState(conn);
+      } else {
+        console.warn(`[SignalR] focus refresh source=${source} skipped SignalR state refresh (connection not alive)`);
       }
     };
 
-    const onVisChange = () => { if (!document.hidden) handleFocus(); };
+    const onVisChange = () => { if (!document.hidden) void handleFocus('visibility-visible'); };
+    const onWindowFocus = () => { void handleFocus('window-focus'); };
     document.addEventListener('visibilitychange', onVisChange);
-    window.addEventListener('focus', handleFocus);
+    window.addEventListener('focus', onWindowFocus);
     return () => {
       document.removeEventListener('visibilitychange', onVisChange);
-      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('focus', onWindowFocus);
     };
   }, []);
 

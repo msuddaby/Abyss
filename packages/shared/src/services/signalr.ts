@@ -1,6 +1,7 @@
 import * as signalR from "@microsoft/signalr";
 import { getApiBase, ensureFreshToken } from "./api.js";
 import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
+import { useVoiceStore } from "../stores/voiceStore.js";
 
 const HEALTH_INTERVAL_MS = 30000;
 const PING_TIMEOUT_MS = 4000;
@@ -22,6 +23,64 @@ let suspended = false;
 let intentionalStop = false;
 let lastActivity = 0;
 let networkDebounce: ReturnType<typeof setTimeout> | null = null;
+let reconnectDebugSeq = 0;
+
+export interface SignalRReconnectDebugInfo {
+  seq: number;
+  trigger: string;
+  detail: string;
+  state: string;
+  hidden: boolean;
+  inVoiceCall: boolean;
+  atIso: string;
+  error: string | null;
+}
+
+let lastReconnectDebugInfo: SignalRReconnectDebugInfo | null = null;
+
+function toErrorMessage(err: unknown): string {
+  if (!err) return "(no error)";
+  if (err instanceof Error) return err.stack ? `${err.name}: ${err.message}` : err.message;
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function recordReconnectDebug(
+  trigger: string,
+  detail: string,
+  options?: {
+    err?: unknown;
+    level?: "log" | "warn" | "debug";
+    conn?: signalR.HubConnection | null;
+  },
+): SignalRReconnectDebugInfo {
+  const conn = options?.conn ?? connection;
+  const info: SignalRReconnectDebugInfo = {
+    seq: ++reconnectDebugSeq,
+    trigger,
+    detail,
+    state: conn ? String(conn.state) : "NotCreated",
+    hidden: typeof document !== "undefined" ? document.hidden : false,
+    inVoiceCall: !!useVoiceStore.getState().currentChannelId,
+    atIso: new Date().toISOString(),
+    error: options?.err ? toErrorMessage(options.err) : null,
+  };
+  lastReconnectDebugInfo = info;
+  const line = `[SignalR][diag#${info.seq}] trigger=${info.trigger} detail=${info.detail} state=${info.state} hidden=${info.hidden} inVoiceCall=${info.inVoiceCall}${info.error ? ` error=${info.error}` : ""}`;
+  const level = options?.level ?? "log";
+  if (level === "warn") console.warn(line);
+  else if (level === "debug") console.debug(line);
+  else console.log(line);
+  return info;
+}
+
+export function getLastReconnectDebugInfo(): SignalRReconnectDebugInfo | null {
+  return lastReconnectDebugInfo ? { ...lastReconnectDebugInfo } : null;
+}
 
 export function onReconnected(cb: () => void): () => void {
   reconnectCallbacks.push(cb);
@@ -57,12 +116,18 @@ export function getConnection(): signalR.HubConnection {
 
   connection.onreconnecting((err) => {
     console.warn('[SignalR] onreconnecting', err?.message ?? '(no error)');
+    recordReconnectDebug("signalr.onreconnecting", "automatic reconnect started", {
+      err,
+      level: "warn",
+      conn: connection,
+    });
     reconnectingSince = Date.now();
     setStatus("reconnecting");
   });
 
   connection.onreconnected(() => {
-    console.log('[SignalR] onreconnected');
+    const diag = getLastReconnectDebugInfo();
+    console.log(`[SignalR] onreconnected${diag ? ` after diag#${diag.seq} (${diag.trigger}: ${diag.detail})` : ''}`);
     reconnectingSince = null;
     reconnectAttempts = 0;
     consecutivePingFailures = 0;
@@ -76,8 +141,18 @@ export function getConnection(): signalR.HubConnection {
     reconnectingSince = null;
     if (intentionalStop) {
       // restartConnection is handling the stop+start cycle — don't interfere
+      recordReconnectDebug("signalr.onclose", "intentional close during restart", {
+        err,
+        level: "debug",
+        conn: connection,
+      });
       return;
     }
+    recordReconnectDebug("signalr.onclose", `unexpected close (suspended=${suspended})`, {
+      err,
+      level: "warn",
+      conn: connection,
+    });
     setStatus("disconnected");
     if (!suspended) {
       scheduleReconnect("closed");
@@ -154,8 +229,13 @@ export async function ensureConnected(): Promise<signalR.HubConnection> {
       ]);
       lastActivity = Date.now();
       return conn;
-    } catch {
+    } catch (err) {
       console.warn('[SignalR] ensureConnected: stale connection detected, restarting');
+      recordReconnectDebug("ensureConnected", "stale ping failed -> restartConnection(stale-zombie)", {
+        err,
+        level: "warn",
+        conn,
+      });
       await restartConnection("stale-zombie");
       return getConnection();
     }
@@ -200,6 +280,10 @@ export function resetConnection(): void {
 async function restartConnection(reason: string): Promise<void> {
   const conn = getConnection();
   console.log(`[SignalR] restartConnection reason=${reason} state=${conn.state}`);
+  recordReconnectDebug("restartConnection", `begin reason=${reason}`, {
+    level: "warn",
+    conn,
+  });
   // Don't skip when state is "Connected" — the connection may be a zombie
   // (SignalR thinks it's connected but the underlying transport is dead).
   // The health check only triggers a restart after confirmed ping failures,
@@ -209,20 +293,36 @@ async function restartConnection(reason: string): Promise<void> {
   intentionalStop = true;
   try {
     await conn.stop();
-  } catch {
+  } catch (err) {
+    recordReconnectDebug("restartConnection", `conn.stop failed reason=${reason}`, {
+      err,
+      level: "warn",
+      conn,
+    });
     // Ignore stop errors; we'll attempt a clean start anyway.
   } finally {
     intentionalStop = false;
   }
   // Ensure the access token is still valid before reconnecting — only refreshes
   // if near expiry, avoiding unnecessary API calls that could fail during restarts.
-  await ensureFreshToken().catch(() => {});
+  await ensureFreshToken().catch((err) => {
+    recordReconnectDebug("restartConnection", `ensureFreshToken failed reason=${reason}`, {
+      err,
+      level: "warn",
+      conn,
+    });
+  });
   try {
     await startConnection();
-    console.log('[SignalR] restartConnection succeeded');
+    console.log(`[SignalR] restartConnection succeeded reason=${reason}`);
     fireReconnectCallbacks();
   } catch (err) {
-    console.warn('[SignalR] restartConnection failed', (err as Error)?.message);
+    recordReconnectDebug("restartConnection", `failed reason=${reason}`, {
+      err,
+      level: "warn",
+      conn,
+    });
+    console.warn('[SignalR] restartConnection failed', toErrorMessage(err));
     scheduleReconnect(`restart-failed:${reason}`);
     throw err;
   }
@@ -265,14 +365,29 @@ function clearReconnectTimer() {
 }
 
 function scheduleReconnect(reason: string) {
-  if (reconnectTimer) return;
-  console.warn(`[SignalR] scheduleReconnect reason=${reason} attempt=${reconnectAttempts}`);
-  setStatus("reconnecting", reason);
   const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+  if (reconnectTimer) {
+    recordReconnectDebug("scheduleReconnect", `ignored reason=${reason} (timer already scheduled)`, {
+      level: "debug",
+      conn: connection,
+    });
+    return;
+  }
+  console.warn(`[SignalR] scheduleReconnect reason=${reason} attempt=${reconnectAttempts} delayMs=${delay}`);
+  recordReconnectDebug("scheduleReconnect", `reason=${reason} attempt=${reconnectAttempts} delayMs=${delay}`, {
+    level: "warn",
+    conn: connection,
+  });
+  setStatus("reconnecting", reason);
   reconnectAttempts += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    void restartConnection(reason).catch(() => {
+    void restartConnection(reason).catch((err) => {
+      recordReconnectDebug("scheduleReconnect", `restart failed in timer reason=${reason} -> schedule retry`, {
+        err,
+        level: "warn",
+        conn: connection,
+      });
       scheduleReconnect("retry");
     });
   }, delay);
@@ -335,12 +450,21 @@ export async function healthCheck() {
 
 /**
  * Quick connection check for window focus events.
- * Single ping with short timeout — if it fails, restart immediately.
- * Returns true if the connection is alive, false if a restart was triggered.
+ * Single ping with short timeout — optionally restarts on failure.
+ * Returns true if the connection is alive, false if the ping failed.
  */
-export async function focusReconnect(): Promise<boolean> {
+interface FocusReconnectOptions {
+  restartOnFailure?: boolean;
+}
+
+export async function focusReconnect(options: FocusReconnectOptions = {}): Promise<boolean> {
+  const { restartOnFailure = true } = options;
   const conn = getConnection();
   if (conn.state !== signalR.HubConnectionState.Connected) {
+    recordReconnectDebug("focusReconnect", `connection not connected (state=${conn.state})`, {
+      level: "warn",
+      conn,
+    });
     if (conn.state === signalR.HubConnectionState.Disconnected) {
       scheduleReconnect("focus-disconnected");
     }
@@ -357,13 +481,32 @@ export async function focusReconnect(): Promise<boolean> {
     consecutivePingFailures = 0;
     lastActivity = Date.now();
     return true;
-  } catch {
-    console.warn('[SignalR] focus ping failed — restarting');
+  } catch (err) {
     consecutivePingFailures = 0;
-    // Restart immediately, no delay
-    void restartConnection("focus-ping-failed").catch(() => {
-      scheduleReconnect("focus-restart-failed");
-    });
+    if (restartOnFailure) {
+      console.warn('[SignalR] focus ping failed — restarting');
+      recordReconnectDebug("focusReconnect", "ping failed -> forced restart", {
+        err,
+        level: "warn",
+        conn,
+      });
+      // Restart immediately, no delay
+      void restartConnection("focus-ping-failed").catch((restartErr) => {
+        recordReconnectDebug("focusReconnect", "forced restart failed -> schedule reconnect", {
+          err: restartErr,
+          level: "warn",
+          conn: connection,
+        });
+        scheduleReconnect("focus-restart-failed");
+      });
+    } else {
+      console.warn('[SignalR] focus ping failed — skipping forced restart');
+      recordReconnectDebug("focusReconnect", "ping failed but forced restart disabled", {
+        err,
+        level: "warn",
+        conn,
+      });
+    }
     return false;
   }
 }
@@ -389,27 +532,46 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
     await doInvoke();
   } catch (err) {
     console.warn(`[SignalR] resilientInvoke ${method} failed, retrying`, (err as Error)?.message);
+    recordReconnectDebug("resilientInvoke", `method=${method} invoke failed -> restart`, {
+      err,
+      level: "warn",
+      conn: connection,
+    });
     clearReconnectTimer();
     reconnectAttempts = 0;
     await restartConnection("invoke-failed");
-    await doInvoke();
+    try {
+      await doInvoke();
+    } catch (retryErr) {
+      recordReconnectDebug("resilientInvoke", `method=${method} retry invoke failed`, {
+        err: retryErr,
+        level: "warn",
+        conn: connection,
+      });
+      throw retryErr;
+    }
   }
 }
 
 // --- Network change detection ---
-function onNetworkChange() {
+function onNetworkChange(source: string) {
   if (suspended) return;
   if (networkDebounce) clearTimeout(networkDebounce);
   networkDebounce = setTimeout(() => {
     networkDebounce = null;
-    console.log('[SignalR] network change detected, verifying connection');
-    void focusReconnect();
+    console.log(`[SignalR] network change detected source=${source}, verifying connection`);
+    const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+    recordReconnectDebug("network-change", `source=${source} -> focusReconnect restartOnFailure=${!inActiveVoiceCall}`, {
+      level: "log",
+      conn: connection,
+    });
+    void focusReconnect({ restartOnFailure: !inActiveVoiceCall });
   }, 2000);
 }
 
 if (typeof window !== "undefined") {
-  window.addEventListener("online", onNetworkChange);
+  window.addEventListener("online", () => onNetworkChange("window.online"));
   // navigator.connection is not available in all browsers
   const nav = navigator as { connection?: EventTarget };
-  nav.connection?.addEventListener("change", onNetworkChange);
+  nav.connection?.addEventListener("change", () => onNetworkChange("navigator.connection.change"));
 }
