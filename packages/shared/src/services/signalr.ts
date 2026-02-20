@@ -8,7 +8,7 @@ const PING_TIMEOUT_MS = 4000;
 const RECONNECT_GRACE_MS = 20000;
 const PING_FAIL_THRESHOLD = 2;
 const STALE_THRESHOLD_MS = 45000;
-const INVOKE_TIMEOUT_MS = 5000;
+const INVOKE_TIMEOUT_MS = 15000;
 
 let connection: signalR.HubConnection | null = null;
 let startPromise: Promise<signalR.HubConnection> | null = null;
@@ -570,13 +570,26 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
   try {
     await doInvoke();
   } catch (err) {
-    console.warn(`[SignalR] resilientInvoke ${method} failed, retrying`, (err as Error)?.message);
-    recordReconnectDebug("resilientInvoke", `method=${method} invoke failed -> restart`, {
+    const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+    console.warn(`[SignalR] resilientInvoke ${method} failed (inVoiceCall=${inActiveVoiceCall}), retrying`, (err as Error)?.message);
+    recordReconnectDebug("resilientInvoke", `method=${method} invoke failed${inActiveVoiceCall ? " (voice-safe: no restart)" : " -> restart"}`, {
       err,
       level: "warn",
       conn: connection,
     });
-    if (restartPromise) {
+
+    if (inActiveVoiceCall) {
+      // During an active voice call, never restart the connection — that would
+      // tear down WebRTC and cause join/leave sounds.  Just wait for the
+      // connection to recover naturally (auto-reconnect / health check) and
+      // retry the invoke once.
+      if (restartPromise) {
+        await restartPromise;
+      } else {
+        // Give the connection a moment to recover on its own
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    } else if (restartPromise) {
       recordReconnectDebug("resilientInvoke", `method=${method} waiting for in-flight restart (${restartInFlightReason ?? "unknown"})`, {
         level: "warn",
         conn: connection,
