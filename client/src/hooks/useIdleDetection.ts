@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useAuthStore, api, getApiBase, PresenceStatus, onReconnected, getConnection } from '@abyss/shared';
+import { useAuthStore, api, PresenceStatus, onReconnected, getConnection } from '@abyss/shared';
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
 const IDLE_TIMEOUT_S = IDLE_TIMEOUT_MS / 1000;
@@ -51,7 +51,7 @@ export function useIdleDetection() {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
       if (currentStatus === status) return true;
       try {
-        await api.put(`${getApiBase()}/api/auth/presence`, {
+        await api.put('/auth/presence', {
           presenceStatus: status
         }, {
           headers: {

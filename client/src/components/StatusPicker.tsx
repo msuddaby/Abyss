@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useAuthStore, api, getApiBase, PresenceStatus } from '@abyss/shared';
+import { useAuthStore, api, PresenceStatus } from '@abyss/shared';
 import '../styles/StatusPicker.css';
 
 interface StatusOption {
@@ -39,7 +39,7 @@ export default function StatusPicker() {
 
   const handleStatusChange = async (status: number) => {
     try {
-      await api.put(`${getApiBase()}/api/auth/presence`, {
+      await api.put('/auth/presence', {
         presenceStatus: status
       }, {
         headers: {
