@@ -81,6 +81,14 @@ export async function unregisterPushToken(): Promise<void> {
 export function setupPushNotificationListeners(): void {
   if (!Capacitor.isNativePlatform()) return;
 
+  // Clear badge when app opens / returns to foreground
+  PushNotifications.removeAllDeliveredNotifications().catch(() => {});
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      PushNotifications.removeAllDeliveredNotifications().catch(() => {});
+    }
+  });
+
   // Foreground: log only — SignalR toasts handle in-app display
   FirebaseMessaging.addListener('notificationReceived', (notification) => {
     console.log('[Push] Foreground notification received:', JSON.stringify(notification));
