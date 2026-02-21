@@ -1,6 +1,8 @@
 import { useToastStore } from '../stores/toastStore.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useDmStore } from '../stores/dmStore.js';
+import { useUnreadStore } from '../stores/unreadStore.js';
+import { getConnection } from './signalr.js';
 
 export interface NotificationData {
   channelId?: string;
@@ -13,6 +15,24 @@ export interface NotificationData {
  */
 export function navigateToNotification(data: NotificationData) {
   if (!data.channelId) return;
+
+  // Explicitly mark as read when navigating from a notification click.
+  // We can't rely solely on the channel-change useEffect because that won't
+  // fire when the target channel is already the active one (no state change).
+  try {
+    const conn = getConnection();
+    if (conn.state === 'Connected') {
+      conn.invoke('MarkChannelRead', data.channelId).catch(console.error);
+    }
+  } catch {
+    // Connection not yet initialized (cold start) — the channel-change useEffect
+    // will handle mark-as-read once the connection is established.
+  }
+  if (data.serverId) {
+    useUnreadStore.getState().markChannelRead(data.channelId, data.serverId);
+  } else {
+    useUnreadStore.getState().markDmChannelRead(data.channelId);
+  }
 
   if (data.serverId) {
     // Server channel notification

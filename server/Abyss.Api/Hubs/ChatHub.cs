@@ -698,6 +698,7 @@ public class ChatHub : Hub
                 .ToHashSetAsync();
             var onlineUserIds = new HashSet<string>(connectedIds.Except(awayIds));
             var activeChannelUserIds = GetActiveChannelUserIds(channelGuid);
+            activeChannelUserIds.ExceptWith(awayIds); // Away users should get push notifications even if channel is open on desktop
 
             var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds, activeChannelUserIds);
             var notifiedUserIds = new HashSet<string>(notifications.Select(n => n.UserId));
