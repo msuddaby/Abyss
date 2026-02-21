@@ -73,6 +73,19 @@ setOnUnauthorized(() => useAuthStore.getState().logout());
 if (!Capacitor.isNativePlatform()) {
   setupNotificationClickListener();
 } else {
+  // Native (Capacitor): adjust layout when software keyboard appears/hides.
+  // visualViewport shrinks when the keyboard is visible, so we derive the
+  // keyboard height from the difference and push the layout up via CSS var.
+  if (window.visualViewport) {
+    const vv = window.visualViewport;
+    const update = () => {
+      const kbHeight = Math.max(0, window.innerHeight - vv.height);
+      document.documentElement.style.setProperty('--keyboard-height', `${kbHeight}px`);
+      document.documentElement.classList.toggle('keyboard-open', kbHeight > 0);
+    };
+    vv.addEventListener('resize', update);
+  }
+
   // Native (Capacitor): set up push notification tap listeners
   import('./services/pushNotifications').then(({ setupPushNotificationListeners }) => {
     setupPushNotificationListeners();

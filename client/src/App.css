@@ -10278,6 +10278,17 @@ label.has-error select:focus {
   ::-webkit-scrollbar {
     width: 0;
   }
+
+  /* --- Keyboard open: safe-area-bottom is covered by the keyboard --- */
+  .keyboard-open .message-input-container {
+    padding-bottom: 8px;
+  }
+  .keyboard-open .user-bar {
+    padding-bottom: 8px;
+  }
+  .keyboard-open .voice-controls {
+    padding-bottom: 8px;
+  }
 }
 
 /* Guest upgrade banner */

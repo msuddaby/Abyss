@@ -615,6 +615,10 @@ export function useSignalRListeners() {
       });
 
       refreshSignalRState(conn);
+      // Join the active channel group — the channel may have been restored
+      // from localStorage before SignalR connected, so ChannelSidebar's
+      // joinChannel() call would have failed silently.
+      rejoinActiveChannel(conn);
     }).catch(console.error);
   }, []);
 
