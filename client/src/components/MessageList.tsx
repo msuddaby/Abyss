@@ -45,7 +45,7 @@ export default function MessageList() {
 
   useEffect(() => {
     console.log(`[MessageList] effect MOUNT — registering handlers (channelId=${currentChannelId})`);
-    incomingSoundRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/message-sent.mp3`);
+    incomingSoundRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/new-message.ogg`);
     incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
     const handler = async (message: Message) => {

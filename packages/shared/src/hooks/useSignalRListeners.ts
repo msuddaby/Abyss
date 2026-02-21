@@ -256,7 +256,7 @@ export function useSignalRListeners() {
         // Self: always hear own join sound (just joined this channel)
         // Others: only if in the same voice channel and not deafened
         if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
-          playVoiceSound(joinSoundUrl, '/sounds/voice-join.mp3');
+          playVoiceSound(joinSoundUrl, '/sounds/voice-join.ogg');
         }
       });
 
@@ -266,7 +266,7 @@ export function useSignalRListeners() {
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
         if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
-          playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.mp3');
+          playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.ogg');
         }
       });
 
@@ -469,6 +469,7 @@ export function useSignalRListeners() {
           ? !(await (window as any).electron.isFocused())
           : false;
         if ((!isCurrentChannel || isWindowHidden) && !isDND) {
+          playVoiceSound(null, '/sounds/new-message.ogg');
           const channelName = notification.serverId
             ? useServerStore.getState().channels.find(c => c.id === notification.channelId)?.name || 'a channel'
             : 'a DM';

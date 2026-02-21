@@ -76,15 +76,18 @@ if (!Capacitor.isNativePlatform()) {
   // Native (Capacitor): adjust layout when software keyboard appears/hides.
   // visualViewport shrinks when the keyboard is visible, so we derive the
   // keyboard height from the difference and push the layout up via CSS var.
-  if (window.visualViewport) {
-    const vv = window.visualViewport;
-    const update = () => {
-      const kbHeight = Math.max(0, window.innerHeight - vv.height);
-      document.documentElement.style.setProperty('--keyboard-height', `${kbHeight}px`);
-      document.documentElement.classList.toggle('keyboard-open', kbHeight > 0);
-    };
-    vv.addEventListener('resize', update);
-  }
+  import('@capacitor/keyboard').then(({ Keyboard }) => {
+    Keyboard.addListener('keyboardWillShow', (info) => {
+      console.log('[Keyboard] willShow — height:', info.keyboardHeight);
+      document.documentElement.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
+      document.documentElement.classList.add('keyboard-open');
+    });
+    Keyboard.addListener('keyboardWillHide', () => {
+      console.log('[Keyboard] willHide');
+      document.documentElement.style.setProperty('--keyboard-height', '0px');
+      document.documentElement.classList.remove('keyboard-open');
+    });
+  });
 
   // Native (Capacitor): set up push notification tap listeners
   import('./services/pushNotifications').then(({ setupPushNotificationListeners }) => {

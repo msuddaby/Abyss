@@ -38,6 +38,21 @@ async function createNoiseSuppressor(): Promise<NoiseSuppressorType> {
   return new NoiseSuppressor();
 }
 
+// Simple sound playback helper for UI sounds in voice context
+const soundCache = new Map<string, HTMLAudioElement>();
+function playSound(path: string) {
+  if (typeof Audio === 'undefined') return;
+  let audio = soundCache.get(path);
+  if (!audio) {
+    audio = new Audio(path);
+    audio.preload = 'auto';
+    soundCache.set(path, audio);
+  }
+  audio.currentTime = 0;
+  audio.volume = 0.5;
+  audio.play().catch(() => {});
+}
+
 const STUN_URL =
   import.meta.env.VITE_STUN_URL || "stun:stun.l.google.com:19302";
 let currentIceServers: RTCIceServer[] = [{ urls: STUN_URL }];
@@ -3245,6 +3260,10 @@ function setupSignalRListeners() {
     if (userId === currentUser?.id) {
       useVoiceStore.getState().setScreenSharing(true);
     }
+    // Play screenshare start sound for everyone in the channel
+    if (!useVoiceStore.getState().isDeafened) {
+      playSound('/sounds/screenshare-start.ogg');
+    }
   });
 
   conn.on("ScreenShareStopped", (userId: string) => {
@@ -3260,6 +3279,10 @@ function setupSignalRListeners() {
     const currentUser = useAuthStore.getState().user;
     if (userId === currentUser?.id) {
       store.setScreenSharing(false);
+    }
+    // Play screenshare end sound for everyone in the channel
+    if (!useVoiceStore.getState().isDeafened) {
+      playSound('/sounds/screenshare-end.ogg');
     }
   });
 
