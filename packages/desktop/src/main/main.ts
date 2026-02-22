@@ -307,11 +307,17 @@ function createWindow() {
   if (process.platform === 'linux') {
     probeLinuxIdle().then((found) => {
       useLinuxIdle = found;
+      if (!found) return;
       // Tell the renderer the main process has a working idle source so it
       // skips its own broken-API probe (Wayland returns 0 when active, which
       // the renderer misinterprets as "API always returns 0 = broken").
-      if (found) {
-        mainWindow?.webContents.send('native-idle-source-ready');
+      // The probe may resolve before the renderer has loaded, so defer until
+      // did-finish-load if necessary.
+      const send = () => mainWindow?.webContents.send('native-idle-source-ready');
+      if (mainWindow?.webContents.isLoading()) {
+        mainWindow.webContents.once('did-finish-load', send);
+      } else {
+        send();
       }
     });
   }
