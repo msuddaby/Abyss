@@ -174,6 +174,7 @@ export function useIdleDetection() {
     let probeCount = 0;
     const MAX_PROBES = 4;
     let probeInterval: ReturnType<typeof setInterval> | null = null;
+    let unsubNativeIdle: (() => void) | null = null;
 
     if (typeof window.electron?.getSystemIdleTime === 'function') {
       if (window.electron.platform === 'darwin') {
@@ -184,10 +185,24 @@ export function useIdleDetection() {
         // Enable it initially but rely on runtime validation in markAwayIfEligible.
         systemIdleApiWorks = true;
       } else {
-        // Linux: probe needed because Wayland may always return 0
+        // Linux: the main process may have a native idle source (Wayland helper
+        // or D-Bus) that routes through getSystemIdleTime(). Listen for its
+        // signal instead of probing, since the Wayland helper correctly returns
+        // 0 when the user is active (which probing misinterprets as "broken").
+        if (typeof window.electron?.onNativeIdleSourceReady === 'function') {
+          console.log('[IdleDetection] Linux: waiting for main process native idle source');
+          unsubNativeIdle = window.electron.onNativeIdleSourceReady(() => {
+            if (disposed) return;
+            systemIdleApiWorks = true;
+            console.log('[IdleDetection] Linux: main process has native idle source — system idle API enabled');
+          });
+        }
+
+        // Also probe in case the signal was sent before we subscribed (race),
+        // or in case there's no native source and the IPC still works (X11).
         console.log('[IdleDetection] Linux: starting system idle API probe (4 attempts over 2 min)');
         probeInterval = setInterval(async () => {
-          if (disposed) { clearInterval(probeInterval!); return; }
+          if (disposed || systemIdleApiWorks) { clearInterval(probeInterval!); probeInterval = null; return; }
           probeCount++;
           try {
             const secs = await window.electron!.getSystemIdleTime();
@@ -202,8 +217,7 @@ export function useIdleDetection() {
             console.log(`[IdleDetection] Linux probe #${probeCount} error:`, e);
           }
           if (probeCount >= MAX_PROBES && !systemIdleApiWorks) {
-            // API appears broken — web timer will be the sole idle mechanism
-            console.log('[IdleDetection] Linux: system idle API broken after all probes — using renderer web timer only');
+            console.log('[IdleDetection] Linux: system idle API not confirmed after all probes — using renderer web timer only');
             clearInterval(probeInterval!);
             probeInterval = null;
           }
@@ -297,6 +311,7 @@ export function useIdleDetection() {
         idleTimerRef.current = null;
       }
       if (probeInterval) clearInterval(probeInterval);
+      unsubNativeIdle?.();
       unsubIdle?.();
       unsubReconnect();
     };

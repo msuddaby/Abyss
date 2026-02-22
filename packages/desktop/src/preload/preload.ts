@@ -92,6 +92,15 @@ contextBridge.exposeInMainWorld('electron', {
     };
   },
 
+  onNativeIdleSourceReady: (callback: () => void) => {
+    const subscription = () => callback();
+    ipcRenderer.on('native-idle-source-ready', subscription);
+
+    return () => {
+      ipcRenderer.removeListener('native-idle-source-ready', subscription);
+    };
+  },
+
   showWindow: () => {
     ipcRenderer.send('show-window');
   },

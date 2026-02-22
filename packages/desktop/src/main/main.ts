@@ -305,7 +305,15 @@ function createWindow() {
   // on Wayland. Probe for native idle sources (Wayland ext_idle_notifier_v1,
   // then D-Bus KDE/GNOME) as a fallback.
   if (process.platform === 'linux') {
-    probeLinuxIdle().then((found) => { useLinuxIdle = found; });
+    probeLinuxIdle().then((found) => {
+      useLinuxIdle = found;
+      // Tell the renderer the main process has a working idle source so it
+      // skips its own broken-API probe (Wayland returns 0 when active, which
+      // the renderer misinterprets as "API always returns 0 = broken").
+      if (found) {
+        mainWindow?.webContents.send('native-idle-source-ready');
+      }
+    });
   }
 
   // Windows idle detection validation state

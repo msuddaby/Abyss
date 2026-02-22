@@ -60,6 +60,7 @@ interface Window {
     getSystemIdleTime: () => Promise<number>;
     onWindowFocusChanged: (callback: (focused: boolean) => void) => () => void; // Returns unsubscribe function
     onSystemIdleChanged: (callback: (isIdle: boolean) => void) => () => void; // Returns unsubscribe function
+    onNativeIdleSourceReady: (callback: () => void) => () => void; // Main process found a native idle source
     showWindow: () => void;
     minimizeWindow: () => void;
     toggleMaximize: () => void;
