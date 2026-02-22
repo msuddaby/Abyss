@@ -99,7 +99,11 @@ jobs:
       # Linux build (AppImage requires squashfs-tools)
       - name: Install Linux build dependencies
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+        run: sudo apt-get update && sudo apt-get install -y squashfs-tools libwayland-dev
+
+      - name: Build Wayland idle helper (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: bash packages/desktop/scripts/build-wayland-helper.sh
 
       - name: Build and package (Linux)
         if: matrix.os == 'ubuntu-latest'

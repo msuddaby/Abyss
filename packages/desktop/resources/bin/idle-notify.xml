@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="ext_idle_notify_v1">
+  <interface name="ext_idle_notifier_v1" version="1">
+    <request name="destroy" type="destructor"/>
+    <request name="get_idle_notification">
+      <arg name="id" type="new_id" interface="ext_idle_notification_v1"/>
+      <arg name="timeout" type="uint" summary="minimum idle timeout in ms"/>
+      <arg name="seat" type="object" interface="wl_seat"/>
+    </request>
+  </interface>
+
+  <interface name="ext_idle_notification_v1" version="1">
+    <request name="destroy" type="destructor"/>
+    <event name="idled"/>
+    <event name="resumed"/>
+  </interface>
+</protocol>

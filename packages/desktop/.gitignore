@@ -10,3 +10,7 @@ out
 signing.sh
 
 *.crashreport
+
+# Built from source by scripts/build-wayland-helper.sh
+resources/bin/wayland-idle-helper
+resources/bin/ext-idle-notify-v1-client-protocol.*

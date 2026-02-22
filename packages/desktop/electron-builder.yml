@@ -17,6 +17,11 @@ extraResources:
   - from: "resources/icon.png"
     to: "icon.png"
 
+linux:
+  extraResources:
+    - from: "resources/bin/wayland-idle-helper"
+      to: "bin/wayland-idle-helper"
+
 win:
   target: nsis
   icon: resources/icon.ico

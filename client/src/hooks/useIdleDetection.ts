@@ -70,7 +70,12 @@ export function useIdleDetection() {
 
     const markAwayIfEligible = async () => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
-      if (currentStatus !== PresenceStatus.Online) return;
+      if (currentStatus !== PresenceStatus.Online) {
+        console.log(`[IdleDetection] markAwayIfEligible: skipped (status=${currentStatus}, not Online)`);
+        return;
+      }
+
+      console.log(`[IdleDetection] markAwayIfEligible: triggered (systemIdleApiWorks=${systemIdleApiWorks}, hasElectronApi=${typeof window.electron?.getSystemIdleTime === 'function'})`);
 
       // In Electron, check system-wide idle time before marking away.
       // This prevents false-away when the user is active in another app
@@ -80,6 +85,7 @@ export function useIdleDetection() {
           const now = Date.now();
           const timeSinceLastRead = (now - lastIdleReadTime) / 1000;
           const sysIdleSec = await window.electron.getSystemIdleTime();
+          console.log(`[IdleDetection] System idle check: ${sysIdleSec}s (threshold=${IDLE_TIMEOUT_S}s)`);
           lastIdleReadTime = now;
 
           // Validate the idle reading, especially on Windows where the API can be
@@ -110,16 +116,21 @@ export function useIdleDetection() {
           if (sysIdleSec < IDLE_TIMEOUT_S) {
             // System is active — user is doing something else. Reset timer
             // and send a heartbeat so the server doesn't mark us away either.
+            console.log(`[IdleDetection] System active (${sysIdleSec}s < ${IDLE_TIMEOUT_S}s) — resetting timer, NOT marking away`);
             resetIdleTimer();
             sendActivityHeartbeat();
             return;
           }
-        } catch {
-          // Fall through to mark away
+          console.log(`[IdleDetection] System idle confirmed (${sysIdleSec}s >= ${IDLE_TIMEOUT_S}s) — marking away`);
+        } catch (e) {
+          console.log('[IdleDetection] System idle check failed, falling through to mark away:', e);
         }
+      } else {
+        console.log(`[IdleDetection] No system idle check available — marking away based on renderer timer only`);
       }
 
       autoAwayRef.current = true;
+      console.log('[IdleDetection] Setting status to Away');
       await updatePresence(PresenceStatus.Away);
     };
 
@@ -144,6 +155,7 @@ export function useIdleDetection() {
       const now = Date.now();
       if (now - lastHeartbeatSent < HEARTBEAT_THROTTLE_MS) return;
       lastHeartbeatSent = now;
+      console.log('[IdleDetection] Sending ActivityHeartbeat to server');
       try {
         const conn = getConnection();
         if (conn.state === 'Connected') {
@@ -173,19 +185,25 @@ export function useIdleDetection() {
         systemIdleApiWorks = true;
       } else {
         // Linux: probe needed because Wayland may always return 0
+        console.log('[IdleDetection] Linux: starting system idle API probe (4 attempts over 2 min)');
         probeInterval = setInterval(async () => {
           if (disposed) { clearInterval(probeInterval!); return; }
           probeCount++;
           try {
             const secs = await window.electron!.getSystemIdleTime();
+            console.log(`[IdleDetection] Linux probe #${probeCount}: getSystemIdleTime()=${secs}s`);
             if (secs >= 5) {
               systemIdleApiWorks = true;
+              console.log('[IdleDetection] Linux: system idle API works — will use for away detection');
               clearInterval(probeInterval!);
               probeInterval = null;
             }
-          } catch { /* ignore */ }
+          } catch (e) {
+            console.log(`[IdleDetection] Linux probe #${probeCount} error:`, e);
+          }
           if (probeCount >= MAX_PROBES && !systemIdleApiWorks) {
             // API appears broken — web timer will be the sole idle mechanism
+            console.log('[IdleDetection] Linux: system idle API broken after all probes — using renderer web timer only');
             clearInterval(probeInterval!);
             probeInterval = null;
           }
@@ -199,14 +217,18 @@ export function useIdleDetection() {
 
     let unsubIdle: (() => void) | null = null;
     if (hasMainProcessIdle) {
+      console.log('[IdleDetection] Subscribing to main process idle signal');
       unsubIdle = window.electron!.onSystemIdleChanged((isIdle) => {
         if (disposed) return;
+        console.log(`[IdleDetection] Main process idle signal: isIdle=${isIdle}`);
         if (isIdle) {
           void markAwayIfEligible();
         } else {
           void restoreIfAutoAway();
         }
       });
+    } else {
+      console.log('[IdleDetection] No main process idle signal available — using renderer timer only');
     }
 
     // Reset the idle timer (any activity signal, including weak ones like scroll/focus).
@@ -215,6 +237,7 @@ export function useIdleDetection() {
         clearTimeout(idleTimerRef.current);
       }
       idleTimerRef.current = setTimeout(() => {
+        console.log('[IdleDetection] Web idle timer fired (10 min with no renderer activity)');
         void markAwayIfEligible();
       }, IDLE_TIMEOUT_MS);
     };
@@ -256,6 +279,7 @@ export function useIdleDetection() {
     // resets the timer if the system is still active. On broken platforms
     // (Wayland) or in the browser, this timer is the primary idle mechanism.
     idleTimerRef.current = setTimeout(() => {
+      console.log('[IdleDetection] Web idle timer fired (10 min with no renderer activity)');
       void markAwayIfEligible();
     }, IDLE_TIMEOUT_MS);
 

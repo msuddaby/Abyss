@@ -8,6 +8,7 @@ import { UpdateManager } from './update-manager';
 import { AutoLaunchManager } from './auto-launch';
 import { installDesktopEntry } from './linux-desktop-integration';
 import { probeLinuxIdle, getLinuxIdleSeconds } from './linux-idle';
+import { cleanupWaylandIdle } from './wayland-idle';
 import Store from 'electron-store';
 
 // Legacy Squirrel.Windows handler — only relevant if the app was installed via
@@ -298,12 +299,13 @@ function createWindow() {
   const IDLE_THRESHOLD_S = 10 * 60; // 10 minutes
   const IDLE_POLL_S = 30;
   let wasIdle = false;
-  let useDbusIdle = false;
+  let useLinuxIdle = false;
 
   // On Linux, Electron's powerMonitor.getSystemIdleTime() often returns 0
-  // on Wayland. Probe for D-Bus idle interfaces (KDE/GNOME) as a fallback.
+  // on Wayland. Probe for native idle sources (Wayland ext_idle_notifier_v1,
+  // then D-Bus KDE/GNOME) as a fallback.
   if (process.platform === 'linux') {
-    probeLinuxIdle().then((found) => { useDbusIdle = found; });
+    probeLinuxIdle().then((found) => { useLinuxIdle = found; });
   }
 
   // Windows idle detection validation state
@@ -312,11 +314,19 @@ function createWindow() {
   let suspiciousJumpCount = 0;
   const MAX_SUSPICIOUS_JUMPS = 2;
 
+  let idlePollCount = 0;
   const getIdleSeconds = async (): Promise<number> => {
     const electronIdle = powerMonitor.getSystemIdleTime();
     const now = Date.now();
     const timeSinceLastPoll = (now - lastPollTime) / 1000;
     lastPollTime = now;
+    idlePollCount++;
+
+    // Log every 10th poll (~5 min) or when values are interesting
+    const shouldLog = idlePollCount % 10 === 1 || electronIdle >= IDLE_THRESHOLD_S - 60;
+    if (shouldLog && process.platform === 'linux') {
+      console.log(`[Idle] Poll #${idlePollCount}: electronIdle=${electronIdle}s, useLinuxIdle=${useLinuxIdle}, wasIdle=${wasIdle}`);
+    }
 
     // If Electron returns a meaningful value, validate it (especially on Windows)
     if (electronIdle > 0) {
@@ -353,13 +363,15 @@ function createWindow() {
       return electronIdle;
     }
 
-    // On Linux Wayland, try D-Bus
-    if (useDbusIdle) {
-      const dbusIdle = await getLinuxIdleSeconds();
-      if (dbusIdle !== null) {
-        lastIdleValue = dbusIdle;
-        return dbusIdle;
+    // On Linux Wayland, try native idle source (Wayland helper or D-Bus)
+    if (useLinuxIdle) {
+      const linuxIdle = await getLinuxIdleSeconds();
+      if (linuxIdle !== null) {
+        if (shouldLog) console.log(`[Idle] Linux idle returned ${linuxIdle}s`);
+        lastIdleValue = linuxIdle;
+        return linuxIdle;
       }
+      if (shouldLog) console.log('[Idle] Linux idle returned null');
     }
 
     lastIdleValue = 0;
@@ -370,6 +382,7 @@ function createWindow() {
     const idleSeconds = await getIdleSeconds();
     const isIdle = idleSeconds >= IDLE_THRESHOLD_S;
     if (isIdle !== wasIdle) {
+      console.log(`[Idle] State change: wasIdle=${wasIdle} → isIdle=${isIdle} (idleSeconds=${idleSeconds}s, threshold=${IDLE_THRESHOLD_S}s)`);
       wasIdle = isIdle;
       mainWindow?.webContents.send('system-idle-changed', isIdle);
     }
@@ -395,6 +408,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     clearInterval(idleInterval);
+    cleanupWaylandIdle();
   });
 }
 
