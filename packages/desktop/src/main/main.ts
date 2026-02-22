@@ -330,16 +330,30 @@ function createWindow() {
 
   let idlePollCount = 0;
   const getIdleSeconds = async (): Promise<number> => {
-    const electronIdle = powerMonitor.getSystemIdleTime();
     const now = Date.now();
     const timeSinceLastPoll = (now - lastPollTime) / 1000;
     lastPollTime = now;
     idlePollCount++;
 
-    // Log every 10th poll (~5 min) or when values are interesting
+    // On Linux with a native idle source (Wayland helper or D-Bus), prefer it
+    // over Electron's powerMonitor which uses the X11 screensaver extension and
+    // returns unreliable values on Wayland (non-zero X11 idle that doesn't
+    // reflect actual system-wide activity).
+    if (useLinuxIdle) {
+      const linuxIdle = await getLinuxIdleSeconds();
+      const shouldLog = idlePollCount % 10 === 1 || (linuxIdle !== null && linuxIdle >= IDLE_THRESHOLD_S - 60);
+      if (linuxIdle !== null) {
+        if (shouldLog) console.log(`[Idle] Poll #${idlePollCount}: linuxIdle=${linuxIdle}s, wasIdle=${wasIdle}`);
+        lastIdleValue = linuxIdle;
+        return linuxIdle;
+      }
+      if (shouldLog) console.log(`[Idle] Poll #${idlePollCount}: Linux idle returned null, falling back to Electron`);
+    }
+
+    const electronIdle = powerMonitor.getSystemIdleTime();
     const shouldLog = idlePollCount % 10 === 1 || electronIdle >= IDLE_THRESHOLD_S - 60;
     if (shouldLog && process.platform === 'linux') {
-      console.log(`[Idle] Poll #${idlePollCount}: electronIdle=${electronIdle}s, useLinuxIdle=${useLinuxIdle}, wasIdle=${wasIdle}`);
+      console.log(`[Idle] Poll #${idlePollCount}: electronIdle=${electronIdle}s, wasIdle=${wasIdle}`);
     }
 
     // If Electron returns a meaningful value, validate it (especially on Windows)
@@ -375,17 +389,6 @@ function createWindow() {
 
       lastIdleValue = electronIdle;
       return electronIdle;
-    }
-
-    // On Linux Wayland, try native idle source (Wayland helper or D-Bus)
-    if (useLinuxIdle) {
-      const linuxIdle = await getLinuxIdleSeconds();
-      if (linuxIdle !== null) {
-        if (shouldLog) console.log(`[Idle] Linux idle returned ${linuxIdle}s`);
-        lastIdleValue = linuxIdle;
-        return linuxIdle;
-      }
-      if (shouldLog) console.log('[Idle] Linux idle returned null');
     }
 
     lastIdleValue = 0;

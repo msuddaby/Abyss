@@ -81,11 +81,21 @@ export function setupIpcHandlers(
     return window.isFocused();
   });
 
-  // Get system-wide idle time in seconds (with D-Bus fallback on Linux Wayland)
+  // Get system-wide idle time in seconds (with native Linux idle support)
   ipcMain.handle('get-system-idle-time', async () => {
     const now = Date.now();
     const timeSinceLastCheck = (now - lastIdleCheckTime) / 1000;
     lastIdleCheckTime = now;
+
+    // On Linux, prefer native idle source (Wayland helper or D-Bus) over
+    // Electron's powerMonitor which uses X11 and is unreliable on Wayland.
+    if (process.platform === 'linux') {
+      const linuxIdle = await getLinuxIdleSeconds();
+      if (linuxIdle !== null) {
+        lastReportedIdle = linuxIdle;
+        return linuxIdle;
+      }
+    }
 
     const electronIdle = powerMonitor.getSystemIdleTime();
 
@@ -124,15 +134,6 @@ export function setupIpcHandlers(
 
       lastReportedIdle = electronIdle;
       return electronIdle;
-    }
-
-    // Linux D-Bus fallback
-    if (process.platform === 'linux') {
-      const dbusIdle = await getLinuxIdleSeconds();
-      if (dbusIdle !== null) {
-        lastReportedIdle = dbusIdle;
-        return dbusIdle;
-      }
     }
 
     lastReportedIdle = 0;
