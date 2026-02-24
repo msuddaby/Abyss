@@ -350,8 +350,12 @@ async function focusReconnect(id: number, restartOnFailure: boolean): Promise<vo
     post({ type: 'focus-reconnect-result', id, alive: true });
   } catch (err) {
     log('warn', `[SignalR Worker] focusReconnect ping failed ${Date.now() - pingStart}ms connState=${conn.state} error=${toErrorMessage(err)}`);
-    consecutivePingFailures = 0;
-    if (restartOnFailure) {
+    // Count this failure toward the health check threshold — do NOT reset to 0,
+    // otherwise focus events prevent the health monitor from ever reaching its
+    // failure threshold and triggering a reconnect.
+    consecutivePingFailures += 1;
+    if (restartOnFailure || consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+      consecutivePingFailures = 0;
       void restartConnection('focus-ping-failed').catch(() => {
         scheduleReconnect('focus-restart-failed');
       });

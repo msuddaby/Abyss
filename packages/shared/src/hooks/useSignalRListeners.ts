@@ -30,6 +30,11 @@ const pendingAnalysis = new Map<string, Promise<number>>();
 const TARGET_RMS = 0.02; // target perceived loudness level (~-34 dB) - matched to voice chat levels
 let analysisCtx: any = null;
 
+// Suppress self join/leave sounds briefly after a SignalR reconnect — the voice
+// rejoin is automatic and shouldn't produce audible cues to the local user.
+let lastSignalRReconnectTime = 0;
+const RECONNECT_SOUND_SUPPRESS_MS = 15_000;
+
 function getNormalizedVolume(url: string): Promise<number> {
   const cached = normalizedVolumeCache.get(url);
   if (cached !== undefined) return Promise.resolve(cached);
@@ -253,9 +258,11 @@ export function useSignalRListeners() {
         const currentUser = useAuthStore.getState().user;
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
+        // Suppress self-sounds during a SignalR reconnect — the rejoin is automatic
+        const suppressSound = isSelf && Date.now() - lastSignalRReconnectTime < RECONNECT_SOUND_SUPPRESS_MS;
         // Self: always hear own join sound (just joined this channel)
         // Others: only if in the same voice channel and not deafened
-        if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
+        if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
           playVoiceSound(joinSoundUrl, '/sounds/voice-join.ogg');
         }
       });
@@ -265,7 +272,8 @@ export function useSignalRListeners() {
         const currentUser = useAuthStore.getState().user;
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
-        if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
+        const suppressSound = isSelf && Date.now() - lastSignalRReconnectTime < RECONNECT_SOUND_SUPPRESS_MS;
+        if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
           playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.ogg');
         }
       });
@@ -626,6 +634,7 @@ export function useSignalRListeners() {
   // Re-join channel group after any reconnection (auto-reconnect OR manual fallback)
   useEffect(() => {
     return onReconnected(() => {
+      lastSignalRReconnectTime = Date.now();
       const conn = getConnection();
       rejoinActiveChannel(conn);
       refreshSignalRState(conn);
@@ -653,7 +662,10 @@ export function useSignalRListeners() {
 
         const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
         console.log(`[SignalR] focus refresh source=${source} inVoiceCall=${inActiveVoiceCall}`);
-        const alive = await focusReconnect({ restartOnFailure: !inActiveVoiceCall });
+        // Always allow restart — WebRTC voice is independent of SignalR and
+        // survives reconnection. Blocking restart during voice calls caused
+        // the connection to stay dead indefinitely.
+        const alive = await focusReconnect({ restartOnFailure: true });
         if (alive) {
           const conn = getConnection();
           // Re-join the channel group — group membership can be lost if the
