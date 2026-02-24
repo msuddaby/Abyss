@@ -370,7 +370,7 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
     );
 
     if (inActiveVoiceCall) {
-      // During active voice, don't force restart — wait and retry
+      // During active voice, wait briefly and retry for transient issues
       await new Promise((r) => setTimeout(r, 2000));
     } else if (supportsWorker) {
       // Worker will verify/restart the connection
@@ -381,7 +381,26 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
       }
     }
 
-    await doInvoke();
+    try {
+      await doInvoke();
+    } catch (retryErr) {
+      // Retry also failed — if we're in a voice call, we deferred the restart
+      // on first failure but now the connection is clearly dead. Trigger a
+      // restart; WebRTC voice is independent of SignalR and survives this.
+      if (inActiveVoiceCall && supportsWorker) {
+        recordDebug(
+          "resilientInvoke",
+          `method=${method} retry also failed in voice call — escalating to restart`,
+          { err: retryErr, level: "warn" },
+        );
+        try {
+          await (conn as SignalRProxy).sendEnsureConnected();
+        } catch {
+          // Best-effort — the worker health check will also catch this
+        }
+      }
+      throw retryErr;
+    }
   }
 }
 
@@ -418,11 +437,11 @@ function onNetworkChange(source: string) {
   networkDebounce = setTimeout(() => {
     networkDebounce = null;
     console.log(`[SignalR] network change detected source=${source}, verifying connection`);
-    const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
-    recordDebug("network-change", `source=${source} -> focusReconnect restartOnFailure=${!inActiveVoiceCall}`, {
+    recordDebug("network-change", `source=${source} -> focusReconnect restartOnFailure=true`, {
       level: "log",
     });
-    void focusReconnect({ restartOnFailure: !inActiveVoiceCall });
+    // Always allow restart — WebRTC voice is independent of SignalR
+    void focusReconnect({ restartOnFailure: true });
   }, 2000);
 }
 
