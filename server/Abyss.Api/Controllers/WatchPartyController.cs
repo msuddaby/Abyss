@@ -148,7 +148,7 @@ public class WatchPartyController : ControllerBase
             ItemDurationMs = req.ItemDurationMs,
             IsPlaying = true,
             StartedAt = DateTime.UtcNow,
-            QueueJson = state.Queue.Count > 0 ? JsonSerializer.Serialize(state.Queue) : null
+            QueueJson = JsonSerializer.Serialize(state.Queue)
         };
         _db.WatchParties.Add(dbEntity);
         await _db.SaveChangesAsync();
