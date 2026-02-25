@@ -2877,7 +2877,16 @@ async function attemptVoiceRejoin(reason: string, options?: { silent?: boolean }
       audioConstraints = { ...base, deviceId: { exact: vs.inputDeviceId } };
     }
 
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    } catch (mediaErr) {
+      if (mediaErr instanceof OverconstrainedError && audioConstraints !== base) {
+        console.warn("Device constraint failed, falling back to default mic:", mediaErr);
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: base });
+      } else {
+        throw mediaErr;
+      }
+    }
 
     // Initialize noise suppressor (creates processed peerStream)
     await applySuppressor(localStream);
@@ -4027,20 +4036,37 @@ export function useWebRTC() {
     return () => clearInterval(interval);
   }, [currentChannelId]);
 
-  // Auto-rejoin voice channel after SignalR reconnects (e.g. server restart)
+  // Re-register voice session after SignalR reconnects.
+  // WebRTC peer connections are independent of SignalR and survive reconnection,
+  // so we only need to update the server with our new connectionId — no need to
+  // tear down and rebuild peers, mic, or noise suppressor.
   useEffect(() => {
     return onReconnected(async () => {
-      const channelId = useVoiceStore.getState().currentChannelId;
+      const vs = useVoiceStore.getState();
+      const channelId = vs.currentChannelId;
       if (!channelId) return;
 
-      // If tab is hidden, delay rejoin until tab becomes visible
-      // getUserMedia requires user gesture or visible tab
-      if (document.hidden) {
-        pendingVisibilityRejoin = true;
-        console.log("SignalR reconnected but tab is hidden, will rejoin when visible");
-        return;
+      console.log(`[voice] SignalR reconnected, re-registering voice session for channel ${channelId}`);
+      try {
+        const conn = getConnection();
+        // Re-invoke JoinVoiceChannel so the server updates our voiceConnectionId.
+        // Server Branch B (reconnect-to-same-channel) handles this: it updates the
+        // connectionId, sends us VoiceChannelUsers for state reconciliation, and
+        // broadcasts UserJoinedVoice to peers (who will skip peer creation if the
+        // existing P2P connection is still healthy).
+        beginInitialParticipantWait(conn);
+        await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
+      } catch (err) {
+        cancelInitialParticipantWait();
+        console.error("[voice] Failed to re-register voice after SignalR reconnect:", err);
+        // Only do a full rejoin if re-registration fails (e.g. server restart cleared voice state)
+        if (document.hidden) {
+          pendingVisibilityRejoin = true;
+          console.log("[voice] Tab hidden, will attempt full rejoin when visible");
+        } else {
+          await attemptVoiceRejoin("signalr-reconnect-recovery");
+        }
       }
-      await attemptVoiceRejoin("signalr-reconnect");
     });
   }, []);
 

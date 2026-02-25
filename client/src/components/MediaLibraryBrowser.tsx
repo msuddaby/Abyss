@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useMediaProviderStore, useServerStore, useVoiceStore, useWatchPartyStore } from '@abyss/shared';
+import { useMediaProviderStore, useServerStore, useVoiceStore, useWatchPartyStore, useToastStore } from '@abyss/shared';
 import type { MediaLibrary, MediaItem, MediaProviderConnection, YouTubeResolveResult } from '@abyss/shared';
 
 interface Props {
@@ -159,8 +159,13 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
         thumbnail: item.thumbnailUrl,
         durationMs: item.durationMs,
       });
-    } catch (e) {
-      console.error('Failed to add to queue:', e);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 403) {
+        useToastStore.getState().addToast('You don\'t have permission to add to the queue. Ask a server admin to grant the "Add to Queue" permission.', 'error');
+      } else {
+        useToastStore.getState().addToast('Failed to add to queue', 'error');
+      }
     }
   };
 
@@ -213,8 +218,13 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
       });
       setYtResolved(null);
       setYtUrl('');
-    } catch (e) {
-      console.error('Failed to add to queue:', e);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 403) {
+        useToastStore.getState().addToast('You don\'t have permission to add to the queue. Ask a server admin to grant the "Add to Queue" permission.', 'error');
+      } else {
+        useToastStore.getState().addToast('Failed to add to queue', 'error');
+      }
     }
   };
 

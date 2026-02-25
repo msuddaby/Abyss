@@ -219,7 +219,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     }
 
     const nextItem = party.queue[0];
-    await useWatchPartyStore.getState().removeFromQueue(currentChannelId, 0).catch(console.error);
+    const remainingQueue = party.queue.slice(1);
     await useWatchPartyStore.getState().stopWatchParty(currentChannelId).catch(console.error);
     await useWatchPartyStore.getState().startWatchParty(currentChannelId, {
       mediaProviderConnectionId: party.mediaProviderConnectionId,
@@ -227,6 +227,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
       itemTitle: nextItem.title,
       itemThumbnail: nextItem.thumbnail,
       itemDurationMs: nextItem.durationMs,
+      queue: remainingQueue,
     }).catch(console.error);
   }, [currentChannelId]);
 
@@ -439,6 +440,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
             canControl={canControl}
             channelId={currentChannelId!}
             onClose={() => setShowQueue(false)}
+            onAdd={() => useWatchPartyStore.getState().setIsBrowsingLibrary(true)}
           />
         )}
       </div>

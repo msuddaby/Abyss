@@ -95,7 +95,8 @@ public class WatchPartyController : ControllerBase
             CurrentTimeMs = 0,
             IsPlaying = true,
             StartedAt = DateTime.UtcNow,
-            ProviderType = connection.ProviderType.ToString()
+            ProviderType = connection.ProviderType.ToString(),
+            Queue = req.Queue ?? new()
         };
 
         // Fetch a shared playback URL for non-YouTube providers so all clients
@@ -146,7 +147,8 @@ public class WatchPartyController : ControllerBase
             ItemThumbnail = req.ItemThumbnail,
             ItemDurationMs = req.ItemDurationMs,
             IsPlaying = true,
-            StartedAt = DateTime.UtcNow
+            StartedAt = DateTime.UtcNow,
+            QueueJson = state.Queue.Count > 0 ? JsonSerializer.Serialize(state.Queue) : null
         };
         _db.WatchParties.Add(dbEntity);
         await _db.SaveChangesAsync();
@@ -236,6 +238,29 @@ public class WatchPartyController : ControllerBase
 
         if (index < 0 || index >= state.Queue.Count) return BadRequest("Invalid index");
         state.Queue.RemoveAt(index);
+
+        await PersistQueue(channelId, state.Queue);
+
+        await _hub.Clients.Group($"voice:{channelId}").SendAsync("QueueUpdated", state.Queue);
+        return Ok();
+    }
+
+    [HttpPost("queue/clear")]
+    public async Task<IActionResult> ClearQueue(Guid channelId)
+    {
+        var channel = await _db.Channels.FindAsync(channelId);
+        if (channel == null || !channel.ServerId.HasValue) return NotFound();
+
+        var state = _watchPartyService.GetParty(channelId);
+        if (state == null) return BadRequest("No active watch party");
+
+        // Must be host, have ModerateWatchTogether, or have ManageChannels
+        if (state.HostUserId != UserId
+            && !await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ModerateWatchTogether)
+            && !await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels))
+            return Forbid();
+
+        state.Queue.Clear();
 
         await PersistQueue(channelId, state.Queue);
 

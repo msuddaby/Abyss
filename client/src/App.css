@@ -8568,6 +8568,65 @@ label.has-error select:focus {
   background: var(--bg-modifier-hover);
 }
 
+.wpq-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wpq-clear-btn {
+  background: none;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+
+.wpq-clear-btn:hover {
+  color: var(--danger);
+  background: var(--bg-modifier-hover);
+}
+
+.wpq-item-grip {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.wpq-item:hover .wpq-item-grip {
+  opacity: 0.6;
+}
+
+.wpq-footer {
+  padding: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.wpq-add-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.wpq-add-btn:hover {
+  background: var(--bg-accent);
+  color: #fff;
+}
+
 /* Media Library Browser */
 .mlb-overlay {
   position: fixed;

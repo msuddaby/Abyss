@@ -98,7 +98,7 @@ public record PlaybackInfoDto(string Url, string ContentType, Dictionary<string,
 // Watch party DTOs
 public record WatchPartyDto(Guid Id, Guid ChannelId, Guid MediaProviderConnectionId, string HostUserId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs, double CurrentTimeMs, bool IsPlaying, DateTime LastSyncAt, List<QueueItemDto> Queue, DateTime StartedAt, string? ProviderType = null, string? PlaybackUrl = null);
 public record YouTubeResolveDto(Guid ConnectionId, string VideoId, string Title, string ThumbnailUrl);
-public record StartWatchPartyRequest(Guid MediaProviderConnectionId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs);
+public record StartWatchPartyRequest(Guid MediaProviderConnectionId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs, List<QueueItemDto>? Queue = null);
 public record QueueItemDto(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs, string AddedByUserId);
 public record AddToQueueRequest(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs);
 public record ReorderQueueRequest(List<int> NewOrder);

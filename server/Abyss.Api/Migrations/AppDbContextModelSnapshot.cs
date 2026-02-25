@@ -35,7 +35,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasKey("Key");
 
-                    b.ToTable("AppConfigs");
+                    b.ToTable("AppConfigs", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.AppUser", b =>
@@ -166,7 +166,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("MessageId");
 
-                    b.ToTable("Attachments");
+                    b.ToTable("Attachments", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.AuditLog", b =>
@@ -203,7 +203,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ServerId", "CreatedAt");
 
-                    b.ToTable("AuditLogs");
+                    b.ToTable("AuditLogs", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Channel", b =>
@@ -250,7 +250,7 @@ namespace Abyss.Api.Migrations
                         .IsUnique()
                         .HasFilter("\"DmUser1Id\" IS NOT NULL AND \"DmUser2Id\" IS NOT NULL");
 
-                    b.ToTable("Channels");
+                    b.ToTable("Channels", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ChannelPermissionOverride", b =>
@@ -274,7 +274,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ChannelId", "RoleId")
                         .IsUnique();
 
-                    b.ToTable("ChannelPermissionOverrides");
+                    b.ToTable("ChannelPermissionOverrides", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ChannelRead", b =>
@@ -292,7 +292,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("ChannelReads");
+                    b.ToTable("ChannelReads", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.CosmeticItem", b =>
@@ -332,7 +332,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("Type");
 
-                    b.ToTable("CosmeticItems");
+                    b.ToTable("CosmeticItems", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.CustomEmoji", b =>
@@ -366,7 +366,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ServerId", "Name")
                         .IsUnique();
 
-                    b.ToTable("CustomEmojis");
+                    b.ToTable("CustomEmojis", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.DevicePushToken", b =>
@@ -397,7 +397,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("UserId", "Token")
                         .IsUnique();
 
-                    b.ToTable("DevicePushTokens");
+                    b.ToTable("DevicePushTokens", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Friendship", b =>
@@ -430,7 +430,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("RequesterId", "AddresseeId")
                         .IsUnique();
 
-                    b.ToTable("Friendships");
+                    b.ToTable("Friendships", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Invite", b =>
@@ -476,7 +476,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ServerId");
 
-                    b.ToTable("Invites");
+                    b.ToTable("Invites", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.MediaProviderConnection", b =>
@@ -515,7 +515,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ServerId", "ProviderType");
 
-                    b.ToTable("MediaProviderConnections");
+                    b.ToTable("MediaProviderConnections", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Message", b =>
@@ -558,7 +558,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ChannelId", "CreatedAt");
 
-                    b.ToTable("Messages");
+                    b.ToTable("Messages", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Notification", b =>
@@ -612,7 +612,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId", "ServerId", "IsRead");
 
-                    b.ToTable("Notifications");
+                    b.ToTable("Notifications", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.PinnedMessage", b =>
@@ -638,7 +638,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ChannelId", "PinnedAt");
 
-                    b.ToTable("PinnedMessages");
+                    b.ToTable("PinnedMessages", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Reaction", b =>
@@ -668,7 +668,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("MessageId", "UserId", "Emoji")
                         .IsUnique();
 
-                    b.ToTable("Reactions");
+                    b.ToTable("Reactions", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.RefreshToken", b =>
@@ -705,7 +705,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId", "ExpiresAt");
 
-                    b.ToTable("RefreshTokens");
+                    b.ToTable("RefreshTokens", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Server", b =>
@@ -742,7 +742,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("OwnerId");
 
-                    b.ToTable("Servers");
+                    b.ToTable("Servers", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ServerBan", b =>
@@ -777,7 +777,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ServerId", "UserId")
                         .IsUnique();
 
-                    b.ToTable("ServerBans");
+                    b.ToTable("ServerBans", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ServerMember", b =>
@@ -798,7 +798,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("ServerMembers");
+                    b.ToTable("ServerMembers", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ServerMemberRole", b =>
@@ -816,7 +816,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("RoleId");
 
-                    b.ToTable("ServerMemberRoles");
+                    b.ToTable("ServerMemberRoles", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.ServerRole", b =>
@@ -854,7 +854,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("ServerId");
 
-                    b.ToTable("ServerRoles");
+                    b.ToTable("ServerRoles", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.SoundboardClip", b =>
@@ -894,7 +894,7 @@ namespace Abyss.Api.Migrations
                     b.HasIndex("ServerId", "Name")
                         .IsUnique();
 
-                    b.ToTable("SoundboardClips");
+                    b.ToTable("SoundboardClips", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserChannelNotificationSetting", b =>
@@ -915,7 +915,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("UserChannelNotificationSettings");
+                    b.ToTable("UserChannelNotificationSettings", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserCosmetic", b =>
@@ -938,7 +938,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId", "IsEquipped");
 
-                    b.ToTable("UserCosmetics");
+                    b.ToTable("UserCosmetics", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserPreferences", b =>
@@ -978,7 +978,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasKey("UserId");
 
-                    b.ToTable("UserPreferences");
+                    b.ToTable("UserPreferences", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserServerNotificationSetting", b =>
@@ -1002,7 +1002,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("UserServerNotificationSettings");
+                    b.ToTable("UserServerNotificationSettings", (string)null);
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.WatchParty", b =>
@@ -1060,7 +1060,7 @@ namespace Abyss.Api.Migrations
 
                     b.HasIndex("MediaProviderConnectionId");
 
-                    b.ToTable("WatchParties");
+                    b.ToTable("WatchParties", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

@@ -14,11 +14,12 @@ interface WatchPartyState {
   setQueue: (queue: QueueItem[]) => void;
   updateHost: (hostUserId: string) => void;
 
-  startWatchParty: (channelId: string, data: { mediaProviderConnectionId: string; providerItemId: string; itemTitle: string; itemThumbnail?: string; itemDurationMs?: number }) => Promise<void>;
+  startWatchParty: (channelId: string, data: { mediaProviderConnectionId: string; providerItemId: string; itemTitle: string; itemThumbnail?: string; itemDurationMs?: number; queue?: QueueItem[] }) => Promise<void>;
   stopWatchParty: (channelId: string) => Promise<void>;
   fetchWatchParty: (channelId: string) => Promise<void>;
   addToQueue: (channelId: string, data: { providerItemId: string; title: string; thumbnail?: string; durationMs?: number }) => Promise<void>;
   removeFromQueue: (channelId: string, index: number) => Promise<void>;
+  clearQueue: (channelId: string) => Promise<void>;
   reorderQueue: (channelId: string, newOrder: number[]) => Promise<void>;
   transferHost: (channelId: string, newHostUserId: string) => Promise<void>;
 
@@ -94,6 +95,15 @@ export const useWatchPartyStore = create<WatchPartyState>((set, get) => ({
       await api.post(`/channels/${channelId}/watch-party/queue/remove`, { index });
     } catch (e) {
       console.error('Failed to remove from queue:', e);
+      throw e;
+    }
+  },
+
+  clearQueue: async (channelId) => {
+    try {
+      await api.post(`/channels/${channelId}/watch-party/queue/clear`);
+    } catch (e) {
+      console.error('Failed to clear queue:', e);
       throw e;
     }
   },

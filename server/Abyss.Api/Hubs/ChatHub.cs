@@ -1077,28 +1077,10 @@ public class ChatHub : Hub
 
         if (reconnectingToSameChannel)
         {
-            var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
-            if (wasSharing)
-            {
-                await Clients.Group($"voice:{channelId}").SendAsync("ScreenShareStopped", UserId);
-                var recipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-                foreach (var userId in recipients)
-                {
-                    await Clients.Group($"user:{userId}").SendAsync("ScreenShareStoppedInChannel", channelId, UserId);
-                }
-            }
-
-            var hadCamera = _voiceState.RemoveCameraUser(channelGuid, UserId);
-            if (hadCamera)
-            {
-                await Clients.Group($"voice:{channelId}").SendAsync("CameraStopped", UserId);
-                var camRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-                foreach (var userId in camRecipients)
-                {
-                    await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
-                }
-            }
-
+            // Seamless reconnect: WebRTC peer connections and LiveKit sessions survive
+            // independently of SignalR, so we only need to update the connectionId and
+            // re-add to SignalR groups. Screen share, camera, and all P2P media state
+            // are still valid — don't clear them or broadcast stop signals.
             _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
             if (!canSpeak)
             {
@@ -1109,16 +1091,6 @@ public class ChatHub : Hub
             await Groups.AddToGroupAsync(Context.ConnectionId, $"channel:{channelId}");
 
             await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
-
-            // Trigger fresh WebRTC negotiation for this recovered session without a synthetic leave event.
-            await Clients.OthersInGroup($"voice:{channelId}").SendAsync("UserJoinedVoice", UserId, DisplayName);
-
-            var state = new VoiceUserStateDto(DisplayName, effectiveMuted, isDeafened, !canSpeak, false);
-            var reconnectRecipients = await GetUserIdsWithChannelPermission(channelGuid, Permission.ViewChannel);
-            foreach (var userId in reconnectRecipients)
-            {
-                await Clients.Group($"user:{userId}").SendAsync("VoiceUserStateUpdated", channelId, UserId, state);
-            }
 
             return;
         }
