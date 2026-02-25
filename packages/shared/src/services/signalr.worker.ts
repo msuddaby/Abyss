@@ -193,7 +193,7 @@ async function restartConnection(reason: string): Promise<void> {
 
   restartPromise = (async () => {
     const conn = createConnection();
-    log('warn', `[SignalR Worker] restartConnection begin reason=${reason} state=${conn.state}`);
+    log('warn', `[SignalR Worker] restartConnection begin reason=${reason} state=${conn.state} failures=${consecutivePingFailures} hidden=${documentHidden} lastActivity=${Date.now() - lastActivity}ms ago`);
     post({ type: 'state-change', state: 'Reconnecting' });
     stopHealthMonitor();
     intentionalStop = true;
@@ -284,7 +284,7 @@ async function healthCheck(): Promise<void> {
 
   pingInFlight = true;
   const pingStart = Date.now();
-  log('debug', `[SignalR Worker] ping start hidden=${isHidden} connState=${conn.state}`);
+  log('debug', `[SignalR Worker] ping start hidden=${isHidden} connState=${conn.state} failures=${consecutivePingFailures} lastActivity=${Date.now() - lastActivity}ms ago`);
 
   // Run the invoke and timeout as separate promises so we can tell which one won
   let pingResult: 'ok' | 'invoke-error' | 'timeout' = 'timeout';
@@ -315,8 +315,9 @@ async function healthCheck(): Promise<void> {
       log('warn', `[SignalR Worker] BACKGROUND ping failed ${detail} (diagnostic only, not counting)`);
     } else {
       consecutivePingFailures += 1;
-      log('warn', `[SignalR Worker] ping failed ${detail} failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD}`);
+      log('warn', `[SignalR Worker] ping failed ${detail} failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} source=healthCheck`);
       if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+        log('warn', `[SignalR Worker] healthCheck: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), scheduling reconnect`);
         consecutivePingFailures = 0;
         scheduleReconnect('ping-failed');
       }
@@ -326,9 +327,9 @@ async function healthCheck(): Promise<void> {
   }
 }
 
-async function focusReconnect(id: number, restartOnFailure: boolean): Promise<void> {
+async function focusReconnect(id: number, _restartOnFailure: boolean): Promise<void> {
   const conn = connection;
-  log('warn', `[SignalR Worker] focusReconnect start connState=${conn?.state ?? 'null'} pingInFlight=${pingInFlight}`);
+  log('warn', `[SignalR Worker] focusReconnect start connState=${conn?.state ?? 'null'} pingInFlight=${pingInFlight} failures=${consecutivePingFailures} lastActivity=${Date.now() - lastActivity}ms ago`);
   if (!conn || conn.state !== signalR.HubConnectionState.Connected) {
     if (conn?.state === signalR.HubConnectionState.Disconnected) {
       scheduleReconnect('focus-disconnected');
@@ -336,6 +337,17 @@ async function focusReconnect(id: number, restartOnFailure: boolean): Promise<vo
     post({ type: 'focus-reconnect-result', id, alive: false });
     return;
   }
+
+  // If a health-check ping is already in flight, don't send a duplicate —
+  // concurrent invocations are serialized on the hub and the second ping
+  // has to wait for the first, causing both to exceed the timeout window.
+  // The connection is Connected and actively being checked, so treat it as alive.
+  if (pingInFlight) {
+    log('warn', '[SignalR Worker] focusReconnect: ping already in flight, skipping duplicate');
+    post({ type: 'focus-reconnect-result', id, alive: true });
+    return;
+  }
+
   const pingStart = Date.now();
   try {
     await Promise.race([
@@ -349,12 +361,13 @@ async function focusReconnect(id: number, restartOnFailure: boolean): Promise<vo
     lastActivity = Date.now();
     post({ type: 'focus-reconnect-result', id, alive: true });
   } catch (err) {
-    log('warn', `[SignalR Worker] focusReconnect ping failed ${Date.now() - pingStart}ms connState=${conn.state} error=${toErrorMessage(err)}`);
+    log('warn', `[SignalR Worker] focusReconnect ping failed ${Date.now() - pingStart}ms connState=${conn.state} error=${toErrorMessage(err)} failures=${consecutivePingFailures}->${consecutivePingFailures + 1}/${PING_FAIL_THRESHOLD}`);
     // Count this failure toward the health check threshold — do NOT reset to 0,
     // otherwise focus events prevent the health monitor from ever reaching its
     // failure threshold and triggering a reconnect.
     consecutivePingFailures += 1;
-    if (restartOnFailure || consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+    if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+      log('warn', `[SignalR Worker] focusReconnect: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), triggering restart`);
       consecutivePingFailures = 0;
       void restartConnection('focus-ping-failed').catch(() => {
         scheduleReconnect('focus-restart-failed');

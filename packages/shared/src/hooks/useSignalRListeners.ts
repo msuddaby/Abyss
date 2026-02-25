@@ -259,7 +259,9 @@ export function useSignalRListeners() {
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
         // Suppress self-sounds during a SignalR reconnect — the rejoin is automatic
-        const suppressSound = isSelf && Date.now() - lastSignalRReconnectTime < RECONNECT_SOUND_SUPPRESS_MS;
+        const timeSinceReconnect = Date.now() - lastSignalRReconnectTime;
+        const suppressSound = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
+        console.log(`[voice-sound] VoiceUserJoinedChannel user=${state.displayName} isSelf=${isSelf} suppress=${suppressSound} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
         // Self: always hear own join sound (just joined this channel)
         // Others: only if in the same voice channel and not deafened
         if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
@@ -272,7 +274,9 @@ export function useSignalRListeners() {
         const currentUser = useAuthStore.getState().user;
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
-        const suppressSound = isSelf && Date.now() - lastSignalRReconnectTime < RECONNECT_SOUND_SUPPRESS_MS;
+        const timeSinceReconnect = Date.now() - lastSignalRReconnectTime;
+        const suppressSound = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
+        console.log(`[voice-sound] VoiceUserLeftChannel user=${userId} isSelf=${isSelf} suppress=${suppressSound} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
         if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
           playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.ogg');
         }
@@ -635,6 +639,7 @@ export function useSignalRListeners() {
   useEffect(() => {
     return onReconnected(() => {
       lastSignalRReconnectTime = Date.now();
+      console.log(`[voice-sound] SignalR reconnected — sound suppression active for ${RECONNECT_SOUND_SUPPRESS_MS}ms`);
       const conn = getConnection();
       rejoinActiveChannel(conn);
       refreshSignalRState(conn);
@@ -652,7 +657,10 @@ export function useSignalRListeners() {
       // events can fire seconds apart when the user tabs in then clicks on the
       // window. A second round of focusReconnect + state refresh invocations
       // floods the serialized hub pipeline and causes ping timeouts.
-      if (refreshInFlight) return;
+      if (refreshInFlight) {
+        console.log(`[SignalR] focus refresh source=${source} skipped (refreshInFlight guard)`);
+        return;
+      }
       refreshInFlight = true;
 
       try {
