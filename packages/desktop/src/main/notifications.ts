@@ -1,5 +1,9 @@
 import { BrowserWindow, Notification } from 'electron';
 
+// Keep a reference to the active notification so it doesn't get garbage
+// collected before the user clicks it (macOS drops the click handler otherwise).
+let activeNotification: Notification | null = null;
+
 export function showNotification(
   window: BrowserWindow,
   title: string,
@@ -11,13 +15,25 @@ export function showNotification(
     return;
   }
 
+  // Replace any previous notification reference
+  activeNotification = null;
+
   const notification = new Notification({
     title,
     body,
     silent: false,
   });
 
-  // When notification is clicked, show window
+  // Hold a strong reference until the notification is dismissed or clicked
+  activeNotification = notification;
+
+  const cleanup = () => {
+    if (activeNotification === notification) {
+      activeNotification = null;
+    }
+  };
+
+  // When notification is clicked, show window and navigate
   notification.on('click', () => {
     if (window.isMinimized()) {
       window.restore();
@@ -25,12 +41,13 @@ export function showNotification(
     window.show();
     window.focus();
 
-    // If data contains message/channel info, we could send it to renderer
-    // to navigate to the relevant conversation
     if (data) {
       window.webContents.send('notification-clicked', data);
     }
+    cleanup();
   });
+
+  notification.on('close', cleanup);
 
   notification.show();
 }

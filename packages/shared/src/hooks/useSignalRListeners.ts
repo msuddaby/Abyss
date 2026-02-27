@@ -246,11 +246,8 @@ export function useSignalRListeners() {
         }
       });
 
-      conn.on('UserIsTyping', (userId: string, displayName: string) => {
-        const channelId = usePresenceStore.getState().typingChannelId;
-        if (channelId) {
-          usePresenceStore.getState().addTypingUser(channelId, userId, displayName);
-        }
+      conn.on('UserIsTyping', (channelId: string, userId: string, displayName: string) => {
+        usePresenceStore.getState().addTypingUser(channelId, userId, displayName);
       });
 
       conn.on('VoiceUserJoinedChannel', (channelId: string, userId: string, state: { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }, joinSoundUrl?: string) => {
@@ -484,14 +481,20 @@ export function useSignalRListeners() {
           playVoiceSound(null, '/sounds/new-message.ogg');
           const channelName = notification.serverId
             ? useServerStore.getState().channels.find(c => c.id === notification.channelId)?.name || 'a channel'
-            : 'a DM';
+            : null;
           const serverName = notification.serverId
             ? useServerStore.getState().servers.find(s => s.id === notification.serverId)?.name
             : null;
+          const dmChannel = !notification.serverId
+            ? useDmStore.getState().dmChannels.find(d => d.id === notification.channelId)
+            : null;
+          const dmSenderName = dmChannel?.otherUser?.displayName || dmChannel?.otherUser?.username || 'Someone';
 
-          const title = isMention
-            ? (serverName ? `You were mentioned in #${channelName} (${serverName})` : `You were mentioned in ${channelName}`)
-            : (serverName ? `New message in #${channelName} (${serverName})` : `New message in ${channelName}`);
+          const title = notification.serverId
+            ? (isMention
+              ? `You were mentioned in #${channelName} (${serverName})`
+              : `New message in #${channelName} (${serverName})`)
+            : `${dmSenderName} sent you a message`;
 
           await showDesktopNotification(
             title,

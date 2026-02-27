@@ -991,7 +991,7 @@ public class ChatHub : Hub
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
 
-        await Clients.OthersInGroup($"channel:{channelId}").SendAsync("UserIsTyping", UserId, DisplayName);
+        await Clients.OthersInGroup($"channel:{channelId}").SendAsync("UserIsTyping", channelId, UserId, DisplayName);
     }
 
     // Get online users for a server

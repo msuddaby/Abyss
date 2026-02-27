@@ -2,6 +2,7 @@ import { useToastStore } from '../stores/toastStore.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useDmStore } from '../stores/dmStore.js';
 import { useUnreadStore } from '../stores/unreadStore.js';
+import { useMessageStore } from '../stores/messageStore.js';
 import { getConnection } from './signalr.js';
 
 export interface NotificationData {
@@ -54,12 +55,19 @@ export function navigateToNotification(data: NotificationData) {
     }
     useDmStore.getState().exitDmMode();
   } else {
-    // DM notification
+    // DM notification — mirror the same steps as ChannelSidebar's handleDmClick:
+    // leave current channel, enter DM mode, join + fetch the DM channel.
     const { dmChannels, setActiveDmChannel, enterDmMode } = useDmStore.getState();
     const dm = dmChannels.find((d) => d.id === data.channelId);
     if (dm) {
+      const { currentChannelId, leaveChannel, joinChannel, fetchMessages } = useMessageStore.getState();
+      if (currentChannelId) {
+        leaveChannel(currentChannelId).catch(console.error);
+      }
       enterDmMode();
       setActiveDmChannel(dm);
+      joinChannel(dm.id).catch(console.error);
+      fetchMessages(dm.id);
     }
   }
 }

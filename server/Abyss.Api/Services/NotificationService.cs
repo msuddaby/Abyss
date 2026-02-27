@@ -403,8 +403,10 @@ public class NotificationService
             .Where(cr => cr.UserId == userId && channelIds.Contains(cr.ChannelId))
             .ToDictionaryAsync(cr => cr.ChannelId, cr => cr.LastReadAt);
 
+        // Only consider messages from OTHER users — the user's own messages should
+        // never cause the DM to appear as unread for themselves.
         var latestMessages = await _db.Messages
-            .Where(m => channelIds.Contains(m.ChannelId) && !m.IsDeleted)
+            .Where(m => channelIds.Contains(m.ChannelId) && !m.IsDeleted && m.AuthorId != userId)
             .GroupBy(m => m.ChannelId)
             .Select(g => new { ChannelId = g.Key, LatestAt = g.Max(m => m.CreatedAt) })
             .ToDictionaryAsync(x => x.ChannelId, x => x.LatestAt);
