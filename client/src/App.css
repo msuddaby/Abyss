@@ -1663,17 +1663,13 @@ label.has-error select:focus {
 /* Messages */
 .message-list {
   flex: 1;
-  overflow-y: auto;
-  position: relative;
-}
-
-.message-list-inner {
-  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .scroll-to-bottom-banner {
-  position: sticky;
-  top: 0;
+  flex-shrink: 0;
   z-index: 2;
   display: flex;
   justify-content: center;
@@ -1865,7 +1861,7 @@ label.has-error select:focus {
   }
 }
 
-.message-highlight > .message-item {
+.message-highlight .message-item {
   animation: message-highlight-flash 1.5s ease-out;
 }
 

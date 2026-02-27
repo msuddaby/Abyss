@@ -21,6 +21,7 @@ interface MessageState {
   currentChannelId: string | null;
   replyingTo: Message | null;
   highlightedMessageId: string | null;
+  lastPrependCount: number;
   setReplyingTo: (message: Message | null) => void;
   setHighlightedMessageId: (messageId: string | null) => void;
   fetchMessages: (channelId: string) => Promise<void>;
@@ -58,6 +59,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   currentChannelId: null,
   replyingTo: null,
   highlightedMessageId: null,
+  lastPrependCount: 0,
   setReplyingTo: (message) => set({ replyingTo: message }),
   setHighlightedMessageId: (messageId) => set({ highlightedMessageId: messageId }),
 
@@ -165,6 +167,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       messages: [...res.data, ...s.messages],
       loading: false,
       hasMore: res.data.length >= 100,
+      lastPrependCount: res.data.length,
     }));
   },
 
@@ -362,5 +365,6 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     currentChannelId: null,
     replyingTo: null,
     highlightedMessageId: null,
+    lastPrependCount: 0,
   }),
 }));

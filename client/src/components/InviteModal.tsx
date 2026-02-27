@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '@abyss/shared';
+import { api, getApiBase } from '@abyss/shared';
 
 export default function InviteModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [code, setCode] = useState('');
@@ -26,7 +26,7 @@ export default function InviteModal({ serverId, onClose }: { serverId: string; o
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const guestUrl = `${window.location.origin}/join/${code}`;
+  const guestUrl = `${getApiBase() || window.location.origin}/join/${code}`;
 
   const copyGuestUrl = () => {
     navigator.clipboard.writeText(guestUrl);
