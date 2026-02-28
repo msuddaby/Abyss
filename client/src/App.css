@@ -1993,6 +1993,9 @@ label.has-error select:focus {
   font-size: 15px;
   font-family: inherit;
   outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.375;
 }
 
 .message-edit-input:focus {

@@ -46,6 +46,36 @@ export function useIdleDetection() {
     let lastIdleReadTime = Date.now();
     let lastIdleValue = 0;
 
+    // Native idle heartbeat: when system-level idle detection works, send
+    // periodic heartbeats based on actual system activity (not renderer events).
+    // This prevents the server's PresenceMonitorService from marking us Away
+    // when the user is active in another app but not interacting with Abyss.
+    let nativeHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+    const startNativeHeartbeat = () => {
+      if (nativeHeartbeatInterval) return;
+      console.log('[IdleDetection] Starting system-activity-based heartbeat');
+      nativeHeartbeatInterval = setInterval(async () => {
+        if (disposed) {
+          clearInterval(nativeHeartbeatInterval!);
+          nativeHeartbeatInterval = null;
+          return;
+        }
+        try {
+          const sysIdleSec = await window.electron!.getSystemIdleTime();
+          if (sysIdleSec < IDLE_TIMEOUT_S) {
+            try {
+              const conn = getConnection();
+              if (conn.state === 'Connected') {
+                console.log(`[IdleDetection] System active (${sysIdleSec}s idle) — sending native heartbeat`);
+                conn.invoke('ActivityHeartbeat').catch(() => {});
+              }
+            } catch { /* connection not ready */ }
+          }
+        } catch { /* IPC failed */ }
+      }, HEARTBEAT_THROTTLE_MS);
+    };
+
     // Returns true if the API call succeeded (or was a no-op).
     const updatePresence = async (status: number): Promise<boolean> => {
       const currentStatus = useAuthStore.getState().user?.presenceStatus;
@@ -184,7 +214,15 @@ export function useIdleDetection() {
         // Windows: API usually works, but can be unreliable with games.
         // Enable it initially but rely on runtime validation in markAwayIfEligible.
         systemIdleApiWorks = true;
-      } else {
+      }
+
+      // When native idle detection is confirmed working (macOS/Windows),
+      // start sending heartbeats based on system activity immediately.
+      if (systemIdleApiWorks) {
+        startNativeHeartbeat();
+      }
+
+      if (window.electron.platform !== 'darwin' && window.electron.platform !== 'win32') {
         // Linux: the main process may have a native idle source (Wayland helper
         // or D-Bus) that routes through getSystemIdleTime(). Listen for its
         // signal instead of probing, since the Wayland helper correctly returns
@@ -194,6 +232,7 @@ export function useIdleDetection() {
           unsubNativeIdle = window.electron.onNativeIdleSourceReady(() => {
             if (disposed) return;
             systemIdleApiWorks = true;
+            startNativeHeartbeat();
             console.log('[IdleDetection] Linux: main process has native idle source — system idle API enabled');
           });
         }
@@ -209,6 +248,7 @@ export function useIdleDetection() {
             console.log(`[IdleDetection] Linux probe #${probeCount}: getSystemIdleTime()=${secs}s`);
             if (secs >= 5) {
               systemIdleApiWorks = true;
+              startNativeHeartbeat();
               console.log('[IdleDetection] Linux: system idle API works — will use for away detection');
               clearInterval(probeInterval!);
               probeInterval = null;
@@ -311,6 +351,7 @@ export function useIdleDetection() {
         idleTimerRef.current = null;
       }
       if (probeInterval) clearInterval(probeInterval);
+      if (nativeHeartbeatInterval) clearInterval(nativeHeartbeatInterval);
       unsubNativeIdle?.();
       unsubIdle?.();
       unsubReconnect();

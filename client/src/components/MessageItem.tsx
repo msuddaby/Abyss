@@ -47,7 +47,7 @@ export default function MessageItem({
     | null
   >(null);
   const [isHovered, setIsHovered] = useState(false);
-  const editInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLTextAreaElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const reactionsRef = useRef<MessageReactionsHandle>(null);
   const currentUser = useAuthStore((s) => s.user);
@@ -155,8 +155,12 @@ export default function MessageItem({
     authorMember?.user.avatarUrl ?? message.author.avatarUrl;
 
   useEffect(() => {
-    if (editing) {
-      editInputRef.current?.focus();
+    if (editing && editInputRef.current) {
+      const el = editInputRef.current;
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+      el.setSelectionRange(el.value.length, el.value.length);
     }
   }, [editing]);
 
@@ -209,7 +213,7 @@ export default function MessageItem({
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleEditSave();
     } else if (e.key === "Escape") {
@@ -354,12 +358,15 @@ export default function MessageItem({
         )}
         {editing ? (
           <div className="message-edit-wrapper">
-            <input
+            <textarea
               ref={editInputRef}
               className="message-edit-input"
               value={editContent}
+              rows={1}
               onChange={(e) => {
                 setEditContent(e.target.value);
+                e.target.style.height = "auto";
+                e.target.style.height = e.target.scrollHeight + "px";
                 if (
                   editError &&
                   e.target.value.trim().length <= maxMessageLength

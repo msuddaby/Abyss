@@ -218,13 +218,13 @@ export default function MessageList() {
       isAtBottomRef.current = true;
       isLoadingRef.current = false;
       isLoadingNewerRef.current = false;
-      // Scroll to bottom after data settles
-      requestAnimationFrame(() => {
+      // After Virtuoso remounts (via key prop), nudge scroll to sync internal isAtBottom state
+      setTimeout(() => {
         virtuosoRef.current?.scrollToIndex({
           index: "LAST",
           behavior: "auto",
         });
-      });
+      }, 50);
     }
   }, [currentChannelId]);
 
@@ -402,6 +402,7 @@ export default function MessageList() {
         </div>
       )}
       <Virtuoso
+        key={currentChannelId}
         ref={virtuosoRef}
         style={{ height: "100%", width: "100%" }}
         data={groups}
