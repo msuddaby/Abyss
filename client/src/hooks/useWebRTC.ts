@@ -29,6 +29,7 @@ import {
   sfuUpdateScreenShareQuality,
   sfuUpdateCameraQuality,
   isInSfuMode,
+  getLiveKitRoom,
 } from "@abyss/shared";
 import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
@@ -2971,6 +2972,15 @@ function setupSignalRListeners() {
   conn.on("UserLeftVoice", (userId: string) => {
     console.log(`UserLeftVoice: ${userId}`);
     bufferedUserJoinedVoiceEvents.delete(userId);
+
+    // In SFU mode, check if LiveKit still has this participant connected.
+    // If so, skip UI removal — let LiveKit's ParticipantDisconnected be authoritative.
+    const room = getLiveKitRoom();
+    if (room && room.remoteParticipants.has(userId)) {
+      console.log(`[sfu] Skipping removeParticipant for ${userId} — still in LiveKit room`);
+      return;
+    }
+
     useVoiceStore.getState().removeParticipant(userId);
     closePeer(userId);
   });

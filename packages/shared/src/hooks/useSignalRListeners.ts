@@ -20,6 +20,7 @@ import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { useRateLimitStore } from '../stores/rateLimitStore.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
+import { getLiveKitRoom } from '../services/livekitService.js';
 import type { SignalRConnection } from '../services/signalr.protocol.js';
 import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics } from '../types/index.js';
 
@@ -258,6 +259,17 @@ export function useSignalRListeners() {
         // Suppress self-sounds during a SignalR reconnect — the rejoin is automatic
         const timeSinceReconnect = Date.now() - lastSignalRReconnectTime;
         const suppressSound = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
+
+        // Suppress join sound for others if they're already in our LiveKit room —
+        // this means their SignalR reconnected but they never actually left voice.
+        if (!isSelf && !suppressSound) {
+          const room = getLiveKitRoom();
+          if (room && room.remoteParticipants.has(userId)) {
+            console.log(`[voice-sound] Suppressing VoiceUserJoinedChannel sound for ${state.displayName} — already in LiveKit room`);
+            return;
+          }
+        }
+
         console.log(`[voice-sound] VoiceUserJoinedChannel user=${state.displayName} isSelf=${isSelf} suppress=${suppressSound} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
         // Self: always hear own join sound (just joined this channel)
         // Others: only if in the same voice channel and not deafened
@@ -267,13 +279,25 @@ export function useSignalRListeners() {
       });
 
       conn.on('VoiceUserLeftChannel', (channelId: string, userId: string, leaveSoundUrl?: string) => {
-        useServerStore.getState().voiceUserLeft(channelId, userId);
         const currentUser = useAuthStore.getState().user;
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
         const timeSinceReconnect = Date.now() - lastSignalRReconnectTime;
         const suppressSound = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
         console.log(`[voice-sound] VoiceUserLeftChannel user=${userId} isSelf=${isSelf} suppress=${suppressSound} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
+
+        // In SFU mode, if LiveKit still has this remote participant, suppress the
+        // sidebar removal and leave sound — their media connection is still alive.
+        // LiveKit ParticipantDisconnected will handle cleanup if they truly leave.
+        if (!isSelf) {
+          const room = getLiveKitRoom();
+          if (room && room.remoteParticipants.has(userId)) {
+            console.log(`[voice-sound] Suppressing VoiceUserLeftChannel for ${userId} — still in LiveKit room`);
+            return;
+          }
+        }
+
+        useServerStore.getState().voiceUserLeft(channelId, userId);
         if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
           playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.ogg');
         }

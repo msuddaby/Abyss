@@ -10,6 +10,7 @@ import {
   type RemoteTrackPublication,
 } from 'livekit-client';
 import { useVoiceStore } from '../stores/voiceStore.js';
+import { useServerStore } from '../stores/serverStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { clearChannelKey } from './e2eeKeyManager.js';
 import api from './api.js';
@@ -138,6 +139,12 @@ function setupRoomListeners(room: Room): void {
     console.log('[livekit] Participant left:', participant.identity);
     useVoiceStore.getState().removeParticipant(participant.identity);
     cleanupParticipantAudio(participant.identity);
+    // Also clean sidebar state — VoiceUserLeftChannel may have been suppressed
+    // if SignalR disconnected before LiveKit did.
+    const channelId = useVoiceStore.getState().currentChannelId;
+    if (channelId) {
+      useServerStore.getState().voiceUserLeft(channelId, participant.identity);
+    }
   });
 
   room.on(RoomEvent.TrackSubscribed, (
@@ -320,20 +327,15 @@ export function sfuSetDeafened(deafened: boolean): void {
     }
   } else {
     const { userVolumes } = useVoiceStore.getState();
-    for (const [userId, audio] of sfuAudioElements) {
+    for (const [userId] of sfuAudioElements) {
       const vol = userVolumes.get(userId) ?? 100;
-      const entry = sfuGainNodes.get(userId);
-      if (entry) {
-        audio.volume = 0;
-        entry.gain.gain.setValueAtTime(vol / 100, entry.audioCtx.currentTime);
-      } else {
-        audio.volume = vol / 100;
-      }
+      sfuSetUserVolume(userId, vol);
     }
     const savedVol = parseFloat(localStorage.getItem('ss-volume') ?? '1');
+    const clampedVol = Math.min(1, Math.max(0, savedVol));
     for (const audio of sfuScreenAudioElements.values()) {
-      audio.volume = savedVol;
-      audio.muted = savedVol === 0;
+      audio.volume = clampedVol;
+      audio.muted = clampedVol === 0;
     }
   }
 }
@@ -378,7 +380,7 @@ export function sfuSetUserVolume(userId: string, volume: number): void {
       entry.audioCtx.close();
       sfuGainNodes.delete(userId);
     }
-    audio.volume = volume / 100;
+    audio.volume = Math.min(1, volume / 100);
   }
 }
 
