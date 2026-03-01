@@ -10,9 +10,18 @@ import {
 import { showDesktopNotification, isElectron } from "@abyss/shared/services/electronNotifications";
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
-import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle, type ItemProps } from "react-virtuoso";
 
 const START_INDEX = 1_000_000;
+
+// Flex container prevents child margins from collapsing out of the wrapper,
+// which ensures Virtuoso's offsetHeight measurements include the full visual
+// space (e.g. .message-cosmetic-group's margin: 4px 8px).
+const VirtuosoItem = ({ children, ...props }: ItemProps<MessageGroup>) => (
+  <div {...props} style={{ display: "flex", flexDirection: "column" }}>
+    {children}
+  </div>
+);
 
 interface MessageGroup {
   key: string;
@@ -49,6 +58,7 @@ export default function MessageList() {
   const isLoadingRef = useRef(false);
   const isLoadingNewerRef = useRef(false);
   const prevLastMsgIdRef = useRef<string | null>(null);
+
 
   // ── Compute groups (same logic as old IIFE) ───────────────────────────
   const groups = useMemo<MessageGroup[]>(() => {
@@ -253,7 +263,7 @@ export default function MessageList() {
       isAtBottomRef.current = true;
       isLoadingRef.current = false;
       isLoadingNewerRef.current = false;
-      prevLastMsgIdRef.current = null;
+      prevLastMsgIdRef.current = messages[messages.length - 1]?.id ?? null;
       // After Virtuoso remounts (via key prop), nudge scroll to sync internal isAtBottom state
       setTimeout(() => {
         virtuosoRef.current?.scrollToIndex({
@@ -437,6 +447,7 @@ export default function MessageList() {
         ref={virtuosoRef}
         scrollerRef={(el) => { scrollerRef.current = el as HTMLElement | null; }}
         style={{ height: "100%", width: "100%" }}
+        components={{ Item: VirtuosoItem }}
         data={groups}
         firstItemIndex={firstItemIndex}
         initialTopMostItemIndex={groups.length - 1}
