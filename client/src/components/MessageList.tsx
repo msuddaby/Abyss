@@ -40,6 +40,7 @@ export default function MessageList() {
   const currentUserId = useAuthStore((s) => s.user?.id);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const scrollerRef = useRef<HTMLElement | null>(null);
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -210,10 +211,11 @@ export default function MessageList() {
     }
   }, [lastPrependCount, messages, groups]);
 
-  // ── Manual scroll for grouped messages ────────────────────────────────
-  // followOutput only fires when groups.length grows. When a new message
-  // merges into the last group, Virtuoso doesn't detect new output, so we
-  // need to scroll manually.
+  // ── Auto-scroll on new messages ──────────────────────────────────────
+  // Scrolls to the bottom when a new message arrives and the user is
+  // already near the bottom, or when the user sends their own message.
+  // Uses the raw DOM scroller instead of Virtuoso's scrollToIndex because
+  // the latter can undershoot when items haven't been measured yet.
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     const lastMsgId = lastMsg?.id ?? null;
@@ -227,13 +229,18 @@ export default function MessageList() {
     if (highlightedMessageId) return;
 
     if (isAtBottomRef.current || lastMsg.authorId === currentUserId) {
-      requestAnimationFrame(() => {
-        virtuosoRef.current?.scrollToIndex({
-          index: "LAST",
-          align: "end",
-          behavior: "smooth",
-        });
-      });
+      // Scroll the raw DOM element to the bottom after Virtuoso renders the new content.
+      // We use the DOM element directly because Virtuoso's scrollToIndex can undershoot
+      // when it hasn't measured new/resized items yet. Two passes ensure we catch both
+      // new groups (rendered quickly) and merged groups (re-measured after layout).
+      const scrollToEnd = () => {
+        const el = scrollerRef.current;
+        if (el) {
+          el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+        }
+      };
+      setTimeout(scrollToEnd, 50);
+      setTimeout(scrollToEnd, 150);
     }
   }, [messages, currentUserId, highlightedMessageId]);
 
@@ -315,17 +322,12 @@ export default function MessageList() {
     setShowScrollToBottom(!atBottom);
   }, []);
 
+  // Disabled — we handle all auto-scrolling via the manual useEffect above
+  // using the raw DOM scroller, which is more reliable than Virtuoso's
+  // followOutput (which can undershoot on unmeasured items).
   const followOutput = useCallback(
-    (isAtBottom: boolean): false | "smooth" | "auto" => {
-      if (highlightedMessageId) return false;
-      if (isAtBottom) return "smooth";
-      // Auto-scroll for own messages even when not at bottom
-      const msgs = useMessageStore.getState().messages;
-      const lastMsg = msgs[msgs.length - 1];
-      if (lastMsg && lastMsg.authorId === currentUserId) return "smooth";
-      return false;
-    },
-    [highlightedMessageId, currentUserId],
+    (): false | "smooth" | "auto" => false,
+    [],
   );
 
   const handleStartReached = useCallback(() => {
@@ -345,10 +347,10 @@ export default function MessageList() {
   }, [hasNewer, loadNewer]);
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({
-      index: "LAST",
-      behavior: "smooth",
-    });
+    const el = scrollerRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
     setShowScrollToBottom(false);
   }, []);
 
@@ -433,6 +435,7 @@ export default function MessageList() {
       <Virtuoso
         key={currentChannelId}
         ref={virtuosoRef}
+        scrollerRef={(el) => { scrollerRef.current = el as HTMLElement | null; }}
         style={{ height: "100%", width: "100%" }}
         data={groups}
         firstItemIndex={firstItemIndex}
