@@ -645,7 +645,11 @@ public class ChatHub : Hub
 
         var messageDto = new MessageDto(message.Id, message.Content, message.AuthorId, authorDto, message.ChannelId, message.CreatedAt, attachments, null, false, false, new List<ReactionDto>(), replyToGuid, replyDto);
 
-        await Clients.Group($"channel:{channelId}").SendAsync("ReceiveMessage", messageDto);
+        // Send to caller directly (guarantees sender sees their own message even
+        // if their connection hasn't rejoined the channel group yet after a focus
+        // reconnect) and to other group members separately to avoid duplicates.
+        await Clients.OthersInGroup($"channel:{channelId}").SendAsync("ReceiveMessage", messageDto);
+        await Clients.Caller.SendAsync("ReceiveMessage", messageDto);
 
         if (channel.Type == ChannelType.DM)
         {

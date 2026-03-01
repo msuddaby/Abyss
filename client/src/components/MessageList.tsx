@@ -47,6 +47,7 @@ export default function MessageList() {
   const prevChannelRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const isLoadingNewerRef = useRef(false);
+  const prevLastMsgIdRef = useRef<string | null>(null);
 
   // ── Compute groups (same logic as old IIFE) ───────────────────────────
   const groups = useMemo<MessageGroup[]>(() => {
@@ -209,6 +210,33 @@ export default function MessageList() {
     }
   }, [lastPrependCount, messages, groups]);
 
+  // ── Manual scroll for grouped messages ────────────────────────────────
+  // followOutput only fires when groups.length grows. When a new message
+  // merges into the last group, Virtuoso doesn't detect new output, so we
+  // need to scroll manually.
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    const lastMsgId = lastMsg?.id ?? null;
+    const prevId = prevLastMsgIdRef.current;
+    prevLastMsgIdRef.current = lastMsgId;
+
+    // Only react to new messages appended at the end
+    if (!lastMsgId || lastMsgId === prevId) return;
+    // Skip on first mount / channel switch (prevId is null)
+    if (!prevId) return;
+    if (highlightedMessageId) return;
+
+    if (isAtBottomRef.current || lastMsg.authorId === currentUserId) {
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: "LAST",
+          align: "end",
+          behavior: "smooth",
+        });
+      });
+    }
+  }, [messages, currentUserId, highlightedMessageId]);
+
   // ── Reset on channel switch ───────────────────────────────────────────
   useEffect(() => {
     if (currentChannelId !== prevChannelRef.current) {
@@ -218,6 +246,7 @@ export default function MessageList() {
       isAtBottomRef.current = true;
       isLoadingRef.current = false;
       isLoadingNewerRef.current = false;
+      prevLastMsgIdRef.current = null;
       // After Virtuoso remounts (via key prop), nudge scroll to sync internal isAtBottom state
       setTimeout(() => {
         virtuosoRef.current?.scrollToIndex({
@@ -415,7 +444,7 @@ export default function MessageList() {
         endReached={handleEndReached}
         atBottomStateChange={handleAtBottomChange}
         itemContent={renderGroup}
-        atBottomThreshold={150}
+        atBottomThreshold={400}
       />
     </div>
   );
