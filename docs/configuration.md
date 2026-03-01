@@ -126,6 +126,28 @@ The file is mounted into the Docker container via `docker-compose.yml`. If the f
 
 ---
 
+## Sentry (Error Tracking)
+
+The frontend uses `@sentry/react` to capture errors, performance traces, and session replays. Sentry is disabled when `VITE_SENTRY_DSN` is empty.
+
+### Runtime (Frontend)
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `VITE_SENTRY_DSN` | Yes | Sentry DSN from your project settings | `https://abc@o123.ingest.sentry.io/456` |
+
+### Build-time (Source Maps)
+
+These are read by the `@sentry/vite-plugin` during `npm run build` to upload source maps. They are **not** embedded in the client bundle. Without them, builds still succeed but Sentry stack traces will point to minified code.
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `SENTRY_ORG` | Yes | Sentry organization slug | `my-org` |
+| `SENTRY_PROJECT` | Yes | Sentry project slug | `abyss-client` |
+| `SENTRY_AUTH_TOKEN` | Yes | Auth token with `project:releases` and `org:ci` scopes | Generate at sentry.io/settings/auth-tokens |
+
+---
+
 ## Security Notes
 
 - **Rotate all secrets** before deploying to production: `JWT_KEY`, `TURN_AUTH_SECRET`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
