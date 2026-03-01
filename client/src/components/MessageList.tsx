@@ -1,4 +1,11 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from "react";
+import {
+  useEffect,
+  useRef,
+  useCallback,
+  useState,
+  useMemo,
+  useLayoutEffect,
+} from "react";
 import {
   useAuthStore,
   useMessageStore,
@@ -97,6 +104,33 @@ export default function MessageList() {
     });
     return map;
   }, [groups]);
+
+  // Apply prepend math in the same render that receives the older page.
+  // Virtuoso uses firstItemIndex to preserve the viewport anchor, so
+  // delaying the correction until after paint causes visible jumps.
+  const prependGroupCount = useMemo(() => {
+    if (lastPrependCount <= 0) return 0;
+
+    const oldFirstMsgId = messages[lastPrependCount]?.id;
+    if (!oldFirstMsgId) return 0;
+
+    const oldFirstGroupIdx = groups.findIndex((g) =>
+      g.msgs.some((m) => m.msg.id === oldFirstMsgId),
+    );
+
+    return oldFirstGroupIdx > 0 ? oldFirstGroupIdx : 0;
+  }, [groups, lastPrependCount, messages]);
+
+  const effectiveFirstItemIndex = firstItemIndex - prependGroupCount;
+
+  // ── Commit prepend bookkeeping before paint ────────────────────────────
+  useLayoutEffect(() => {
+    if (lastPrependCount <= 0) return;
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFirstItemIndex(effectiveFirstItemIndex);
+    useMessageStore.setState({ lastPrependCount: 0 });
+  }, [effectiveFirstItemIndex, lastPrependCount]);
 
   // ── SignalR handlers (unchanged) ──────────────────────────────────────
   useEffect(() => {
@@ -200,26 +234,6 @@ export default function MessageList() {
     currentUserId,
     currentChannelId,
   ]);
-
-  // ── firstItemIndex adjustment when older messages are prepended ────────
-  useEffect(() => {
-    if (lastPrependCount > 0) {
-      // Messages were prepended — find how many new groups were created.
-      // The first "old" message is now at index lastPrependCount in the
-      // messages array. Find which group it belongs to; all groups before
-      // that are new.
-      const oldFirstMsgId = messages[lastPrependCount]?.id;
-      if (oldFirstMsgId) {
-        const oldFirstGroupIdx = groups.findIndex((g) =>
-          g.msgs.some((m) => m.msg.id === oldFirstMsgId),
-        );
-        if (oldFirstGroupIdx > 0) {
-          setFirstItemIndex((prev) => prev - oldFirstGroupIdx);
-        }
-      }
-      useMessageStore.setState({ lastPrependCount: 0 });
-    }
-  }, [lastPrependCount, messages, groups]);
 
   // ── Auto-scroll on new messages ──────────────────────────────────────
   // Scrolls to the bottom when a new message arrives and the user is
@@ -449,7 +463,7 @@ export default function MessageList() {
         style={{ height: "100%", width: "100%" }}
         components={{ Item: VirtuosoItem }}
         data={groups}
-        firstItemIndex={firstItemIndex}
+        firstItemIndex={effectiveFirstItemIndex}
         initialTopMostItemIndex={groups.length - 1}
         computeItemKey={(_index, group) => group.key}
         increaseViewportBy={{ top: 400, bottom: 400 }}
