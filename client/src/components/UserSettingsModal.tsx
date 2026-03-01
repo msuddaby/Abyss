@@ -1404,6 +1404,14 @@ export default function UserSettingsModal({
                 <button className="btn-danger" type="button" onClick={logout}>
                   Log Out
                 </button>
+
+                {/* TODO: Remove — temporary Sentry test */}
+                <div style={{ marginTop: 24, padding: 12, border: '1px dashed var(--text-muted)', borderRadius: 8, opacity: 0.6 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Sentry Test</div>
+                  <button className="btn-danger" type="button" onClick={() => { throw new Error('Sentry Test Error'); }}>
+                    Throw Test Error
+                  </button>
+                </div>
               </div>
             )}
     </SettingsModal>

@@ -346,6 +346,37 @@ app.MapControllers().RequireRateLimiting("api");
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapGet("/health", () => Results.Ok());
 
+// Sentry tunnel — forwards client envelopes to Sentry's ingest so requests
+// come from the same origin, avoiding ad-blocker / tracking-protection blocks.
+app.MapPost("/api/sentry-tunnel", async (HttpContext context) =>
+{
+    using var ms = new MemoryStream();
+    await context.Request.Body.CopyToAsync(ms);
+    var bodyBytes = ms.ToArray();
+    var body = System.Text.Encoding.UTF8.GetString(bodyBytes);
+
+    // First line of the envelope is a JSON header containing the DSN
+    var newlineIdx = body.IndexOf('\n');
+    if (newlineIdx < 0) return Results.BadRequest();
+
+    var firstLine = body[..newlineIdx];
+    using var header = System.Text.Json.JsonDocument.Parse(firstLine);
+    if (!header.RootElement.TryGetProperty("dsn", out var dsnProp))
+        return Results.BadRequest();
+
+    var dsnString = dsnProp.GetString()!;
+    var dsn = new Uri(dsnString);
+    var projectId = dsn.AbsolutePath.Trim('/');
+    // Host for ingest is the region-specific host from the DSN
+    var url = $"https://{dsn.Host}/api/{projectId}/envelope/";
+
+    using var client = new HttpClient();
+    using var content = new ByteArrayContent(bodyBytes);
+    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-sentry-envelope");
+    var response = await client.PostAsync(url, content);
+    return Results.StatusCode((int)response.StatusCode);
+}).RequireRateLimiting("api");
+
 app.Map("/error", (HttpContext context) =>
 {
     var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();

@@ -26,8 +26,12 @@ export default defineConfig({
   base: isNative ? './' : '/',
   server: {
     allowedHosts: true,
-    ...(isCapacitor && {
-      proxy: {
+    proxy: {
+      '/api/sentry-tunnel': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      ...(isCapacitor && {
         '/api': {
           target: 'http://localhost:5000',
           changeOrigin: true,
@@ -37,7 +41,7 @@ export default defineConfig({
           changeOrigin: true,
           ws: true,
         },
-      },
-    }),
+      }),
+    },
   },
 })
