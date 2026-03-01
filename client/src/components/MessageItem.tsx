@@ -25,14 +25,36 @@ import ImagePreviewModal from "./message/ImagePreviewModal";
 import { useContextMenuStore } from "../stores/contextMenuStore";
 import { useLongPress } from "../hooks/useLongPress";
 
+const MESSAGE_ATTACHMENT_MAX_WIDTH = 400;
+const MESSAGE_ATTACHMENT_MAX_HEIGHT = 300;
+
+function getImageBounds(att: Attachment) {
+  if (!att.width || !att.height || att.width <= 0 || att.height <= 0) {
+    return null;
+  }
+
+  const scale = Math.min(
+    1,
+    MESSAGE_ATTACHMENT_MAX_WIDTH / att.width,
+    MESSAGE_ATTACHMENT_MAX_HEIGHT / att.height,
+  );
+
+  return {
+    width: Math.max(1, Math.round(att.width * scale)),
+    height: Math.max(1, Math.round(att.height * scale)),
+  };
+}
+
 export default function MessageItem({
   message,
   grouped,
   onScrollToMessage,
+  forceHovered,
 }: {
   message: Message;
   grouped?: boolean;
   onScrollToMessage?: (id: string) => void;
+  forceHovered?: boolean;
 }) {
   const [profileCard, setProfileCard] = useState<{
     x: number;
@@ -73,10 +95,11 @@ export default function MessageItem({
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
+  const isEffectivelyHovered = isHovered || !!forceHovered;
   // Always add animationPlayState control if there's any nameplateStyle (not just when animation property exists)
   const authorStyle: React.CSSProperties | undefined = nameplateStyle ? {
     ...nameplateStyle,
-    animationPlayState: isHovered ? 'running' : 'paused',
+    animationPlayState: isEffectivelyHovered ? 'running' : 'paused',
     ...(nameplateStyle?.animation ? {
       willChange: 'background-position',
       transform: 'translateZ(0)',
@@ -130,8 +153,7 @@ export default function MessageItem({
     // Strip custom emojis (<:name:id> format) and count them
     let t = message.content.trim();
     const customEmojiRe = /<:[a-zA-Z0-9_]{2,32}:[a-fA-F0-9-]{36}>/g;
-    let count = 0;
-    for (const _ of t.matchAll(customEmojiRe)) count++;
+    let count = Array.from(t.matchAll(customEmojiRe)).length;
     t = t.replace(customEmojiRe, "");
     // Strip :name: shortcodes that match server emojis
     const shortcodeRe = /:([a-zA-Z0-9_]{2,32}):/g;
@@ -411,12 +433,34 @@ export default function MessageItem({
               <div key={att.id} className="attachment">
                 {att.contentType.startsWith("image/") &&
                 !att.contentType.includes("svg") ? (
-                  <img
-                    src={`${getApiBase()}${att.filePath}`}
-                    alt={att.fileName}
-                    className="attachment-image"
-                    onClick={() => setPreviewSource({ kind: "attachment", attachment: att })}
-                  />
+                  (() => {
+                    const bounds = getImageBounds(att);
+
+                    return (
+                      <div
+                        className={`attachment-image-shell${bounds ? " has-dimensions" : ""}`}
+                        style={
+                          bounds
+                            ? {
+                                maxWidth: `${bounds.width}px`,
+                                aspectRatio: `${bounds.width} / ${bounds.height}`,
+                              }
+                            : undefined
+                        }
+                      >
+                        <img
+                          src={`${getApiBase()}${att.filePath}`}
+                          alt={att.fileName}
+                          className="attachment-image"
+                          loading="lazy"
+                          decoding="async"
+                          width={att.width ?? undefined}
+                          height={att.height ?? undefined}
+                          onClick={() => setPreviewSource({ kind: "attachment", attachment: att })}
+                        />
+                      </div>
+                    );
+                  })()
                 ) : (
                   <AttachmentMedia att={att} />
                 )}

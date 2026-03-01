@@ -10,4 +10,6 @@ public class Attachment
     public string? PosterPath { get; set; }
     public string ContentType { get; set; } = string.Empty;
     public long Size { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
 }

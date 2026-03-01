@@ -82,6 +82,8 @@ public class UploadController : ControllerBase
             PosterPath = upload.Result.PosterPath,
             ContentType = upload.Result.ContentType,
             Size = upload.Result.Size,
+            Width = upload.Result.Width,
+            Height = upload.Result.Height,
         };
         _db.Attachments.Add(attachment);
         await _db.SaveChangesAsync();
@@ -93,7 +95,9 @@ public class UploadController : ControllerBase
             posterPath = attachment.PosterPath,
             fileName = attachment.FileName,
             contentType = attachment.ContentType,
-            size = attachment.Size
+            size = attachment.Size,
+            width = attachment.Width,
+            height = attachment.Height,
         });
     }
 
@@ -103,7 +107,7 @@ public class UploadController : ControllerBase
     {
         var attachment = await _db.Attachments
             .Include(a => a.Message)
-            .ThenInclude(m => m.Channel)
+            .ThenInclude(m => m!.Channel)
             .FirstOrDefaultAsync(a => a.Id == id);
         if (attachment is null) return NotFound();
 

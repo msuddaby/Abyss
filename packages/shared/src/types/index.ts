@@ -251,6 +251,8 @@ export interface Attachment {
   posterPath?: string | null;
   contentType: string;
   size: number;
+  width?: number | null;
+  height?: number | null;
 }
 
 export interface Invite {

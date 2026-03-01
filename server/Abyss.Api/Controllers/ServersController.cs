@@ -658,13 +658,17 @@ public class ServersController : ControllerBase
                     m.Id, m.Content, m.AuthorId,
                     new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                     m.ChannelId, m.CreatedAt,
-                    m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
+                    m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size, a.Width, a.Height)).ToList(),
                     m.EditedAt, m.IsDeleted, m.IsSystem,
                     new List<ReactionDto>(), null, null),
                 m.Channel.Name ?? ""))
             .ToListAsync();
 
-        return Ok(new SearchResponseDto(messages, totalCount));
+        var enrichedMessages = messages
+            .Select(result => result with { Message = _imageService.EnrichAttachmentDimensions(result.Message) })
+            .ToList();
+
+        return Ok(new SearchResponseDto(enrichedMessages, totalCount));
     }
 
     [HttpGet("{serverId}/audit-logs")]

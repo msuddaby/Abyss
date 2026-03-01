@@ -17,12 +17,14 @@ public class ChannelsController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly CosmeticService _cosmetics;
+    private readonly ImageService _imageService;
 
-    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics)
+    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics, ImageService imageService)
     {
         _db = db;
         _perms = perms;
         _cosmetics = cosmetics;
+        _imageService = imageService;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -67,7 +69,7 @@ public class ChannelsController : ControllerBase
                     new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                     m.ChannelId,
                     m.CreatedAt,
-                    m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
+                    m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size, a.Width, a.Height)).ToList(),
                     m.EditedAt,
                     m.IsDeleted,
                     m.IsSystem,
@@ -83,7 +85,7 @@ public class ChannelsController : ControllerBase
                 ))
                 .ToListAsync();
 
-            return Ok(await _cosmetics.AttachCosmeticsAsync(newerMessages));
+            return Ok(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(newerMessages)));
         }
 
         if (before.HasValue)
@@ -104,7 +106,7 @@ public class ChannelsController : ControllerBase
                 new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                 m.ChannelId,
                 m.CreatedAt,
-                m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
+                m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size, a.Width, a.Height)).ToList(),
                 m.EditedAt,
                 m.IsDeleted,
                 m.IsSystem,
@@ -120,7 +122,7 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(await _cosmetics.AttachCosmeticsAsync(messages));
+        return Ok(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(messages)));
     }
 
     [HttpGet("{channelId}/messages/around/{messageId}")]
@@ -172,7 +174,7 @@ public class ChannelsController : ControllerBase
                 new UserDto(m.Author.Id, m.Author.UserName!, m.Author.DisplayName, m.Author.AvatarUrl, m.Author.Status, m.Author.Bio, m.Author.PresenceStatus),
                 m.ChannelId,
                 m.CreatedAt,
-                m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
+                m.IsDeleted ? new List<AttachmentDto>() : m.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size, a.Width, a.Height)).ToList(),
                 m.EditedAt,
                 m.IsDeleted,
                 m.IsSystem,
@@ -224,7 +226,7 @@ public class ChannelsController : ControllerBase
                     new UserDto(pm.Message.Author.Id, pm.Message.Author.UserName!, pm.Message.Author.DisplayName, pm.Message.Author.AvatarUrl, pm.Message.Author.Status, pm.Message.Author.Bio, pm.Message.Author.PresenceStatus),
                     pm.Message.ChannelId,
                     pm.Message.CreatedAt,
-                    pm.Message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size)).ToList(),
+                    pm.Message.Attachments.Select(a => new AttachmentDto(a.Id, a.MessageId!.Value, a.FileName, a.FilePath, a.PosterPath, a.ContentType, a.Size, a.Width, a.Height)).ToList(),
                     pm.Message.EditedAt,
                     pm.Message.IsDeleted,
                     pm.Message.IsSystem,
@@ -243,6 +245,6 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(pins);
+        return Ok(_imageService.EnrichAttachmentDimensions(pins));
     }
 }

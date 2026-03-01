@@ -17,23 +17,152 @@ import {
 import { showDesktopNotification, isElectron } from "@abyss/shared/services/electronNotifications";
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
-import { Virtuoso, type VirtuosoHandle, type ItemProps } from "react-virtuoso";
+import {
+  Virtuoso,
+  type VirtuosoHandle,
+  type ItemProps,
+  type ListRange,
+} from "react-virtuoso";
 
 const START_INDEX = 1_000_000;
+const TOP_PRELOAD_ITEM_THRESHOLD = 24;
 
 // Flex container prevents child margins from collapsing out of the wrapper,
 // which ensures Virtuoso's offsetHeight measurements include the full visual
-// space (e.g. .message-cosmetic-group's margin: 4px 8px).
-const VirtuosoItem = ({ children, ...props }: ItemProps<MessageGroup>) => (
+// space for per-message cosmetic shells.
+const VirtuosoItem = ({ children, ...props }: ItemProps<MessageRow>) => (
   <div {...props} style={{ display: "flex", flexDirection: "column" }}>
     {children}
   </div>
 );
 
-interface MessageGroup {
+type MessageSegmentPosition = "single" | "start" | "middle" | "end";
+const DEFAULT_COSMETIC_BORDER_RADIUS = "4px";
+
+interface MessageRow {
   key: string;
-  msgs: { msg: Message; grouped: boolean }[];
+  msg: Message;
+  grouped: boolean;
   cosmeticStyle?: React.CSSProperties;
+  segmentPosition: MessageSegmentPosition;
+  hoverGroupKey: string;
+}
+
+function shouldGroupWithPrevious(prev: Message | undefined, msg: Message): boolean {
+  return (
+    !!prev &&
+    !msg.isSystem &&
+    !prev.isSystem &&
+    !prev.isDeleted &&
+    !msg.replyTo &&
+    prev.authorId === msg.authorId &&
+    new Date(msg.createdAt).getTime() - new Date(prev.createdAt).getTime() <
+      5 * 60 * 1000
+  );
+}
+
+function getSegmentPosition(isStart: boolean, isEnd: boolean): MessageSegmentPosition {
+  if (isStart && isEnd) return "single";
+  if (isStart) return "start";
+  if (isEnd) return "end";
+  return "middle";
+}
+
+function splitBorderRadius(borderRadius: string, position: MessageSegmentPosition): string {
+  const normalized = borderRadius.trim().split(/\s+/);
+  const [tl, tr = tl, br = tl, bl = tr] =
+    normalized.length === 1
+      ? [normalized[0], normalized[0], normalized[0], normalized[0]]
+      : normalized.length === 2
+        ? [normalized[0], normalized[1], normalized[0], normalized[1]]
+        : normalized.length === 3
+          ? [normalized[0], normalized[1], normalized[2], normalized[1]]
+          : [normalized[0], normalized[1], normalized[2], normalized[3]];
+
+  switch (position) {
+    case "single":
+      return `${tl} ${tr} ${br} ${bl}`;
+    case "start":
+      return `${tl} ${tr} 0 0`;
+    case "middle":
+      return "0";
+    case "end":
+      return `0 0 ${br} ${bl}`;
+  }
+}
+
+function normalizeBorderRadius(
+  borderRadius: React.CSSProperties["borderRadius"],
+): string {
+  if (typeof borderRadius === "number") return `${borderRadius}px`;
+  if (typeof borderRadius === "string" && borderRadius.trim().length > 0) {
+    return borderRadius;
+  }
+  return DEFAULT_COSMETIC_BORDER_RADIUS;
+}
+
+function getCosmeticShellStyle(
+  style: React.CSSProperties | undefined,
+  position: MessageSegmentPosition,
+): React.CSSProperties | undefined {
+  if (!style) return undefined;
+
+  const shellStyle: React.CSSProperties = {
+    ...style,
+    animationPlayState: "paused",
+  };
+
+  if (style.border) {
+    const borderValue = style.border;
+    delete shellStyle.border;
+    shellStyle.borderLeft = style.borderLeft ?? borderValue;
+    shellStyle.borderRight = style.borderRight ?? borderValue;
+    shellStyle.borderTop =
+      position === "single" || position === "start"
+        ? (style.borderTop ?? borderValue)
+        : "0";
+    shellStyle.borderBottom =
+      position === "single" || position === "end"
+        ? (style.borderBottom ?? borderValue)
+        : "0";
+  } else if (position !== "single") {
+    shellStyle.borderTop = position === "start" ? shellStyle.borderTop : "0";
+    shellStyle.borderBottom = position === "end" ? shellStyle.borderBottom : "0";
+  }
+
+  if (position !== "single") {
+    delete shellStyle.animation;
+    delete shellStyle.boxShadow;
+    delete shellStyle.outline;
+    delete shellStyle.outlineOffset;
+  }
+
+  shellStyle.borderRadius = splitBorderRadius(
+    normalizeBorderRadius(style.borderRadius),
+    position,
+  );
+
+  return shellStyle;
+}
+
+function getCosmeticGroupOverlayStyle(
+  style: React.CSSProperties | undefined,
+  height: number,
+): React.CSSProperties | undefined {
+  if (!style || !style.animation || height <= 0) return undefined;
+
+  return {
+    ...style,
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height,
+    pointerEvents: "none",
+    zIndex: 0,
+    animationPlayState: "running",
+    borderRadius: normalizeBorderRadius(style.borderRadius),
+  };
 }
 
 export default function MessageList() {
@@ -60,6 +189,10 @@ export default function MessageList() {
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
   const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [hoveredGroup, setHoveredGroup] = useState<{
+    key: string;
+    height: number;
+  } | null>(null);
   const isAtBottomRef = useRef(true);
   const prevChannelRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
@@ -67,70 +200,55 @@ export default function MessageList() {
   const prevLastMsgIdRef = useRef<string | null>(null);
 
 
-  // ── Compute groups (same logic as old IIFE) ───────────────────────────
-  const groups = useMemo<MessageGroup[]>(() => {
-    const result: MessageGroup[] = [];
+  // ── Compute rows ───────────────────────────────────────────────────────
+  const rows = useMemo<MessageRow[]>(() => {
+    const result: MessageRow[] = [];
+    let currentHoverGroupKey = "";
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
       const prev = messages[i - 1];
-      const grouped =
-        !!prev &&
-        !msg.isSystem &&
-        !prev.isSystem &&
-        !prev.isDeleted &&
-        !msg.replyTo &&
-        prev.authorId === msg.authorId &&
-        new Date(msg.createdAt).getTime() -
-          new Date(prev.createdAt).getTime() <
-          5 * 60 * 1000;
-      if (grouped && result.length > 0) {
-        result[result.length - 1].msgs.push({ msg, grouped: true });
-      } else {
-        result.push({
-          key: msg.id,
-          msgs: [{ msg, grouped: false }],
-          cosmeticStyle: getMessageStyle(msg.author),
-        });
+      const next = messages[i + 1];
+      const grouped = shouldGroupWithPrevious(prev, msg);
+      const nextGrouped = next ? shouldGroupWithPrevious(msg, next) : false;
+      const isStart = !grouped;
+      const isEnd = !nextGrouped;
+
+      if (isStart) {
+        currentHoverGroupKey = msg.id;
       }
+
+      result.push({
+        key: msg.id,
+        msg,
+        grouped,
+        cosmeticStyle: getMessageStyle(msg.author),
+        segmentPosition: getSegmentPosition(isStart, isEnd),
+        hoverGroupKey: currentHoverGroupKey,
+      });
     }
     return result;
   }, [messages]);
 
-  // ── Map message ID → group index (for scrollToIndex) ──────────────────
-  const msgIdToGroupIndex = useMemo(() => {
+  // ── Map message ID → row index (for scrollToIndex) ────────────────────
+  const msgIdToRowIndex = useMemo(() => {
     const map = new Map<string, number>();
-    groups.forEach((g, i) => {
-      g.msgs.forEach(({ msg }) => map.set(msg.id, i));
-    });
+    rows.forEach((row, i) => map.set(row.msg.id, i));
     return map;
-  }, [groups]);
+  }, [rows]);
 
   // Apply prepend math in the same render that receives the older page.
   // Virtuoso uses firstItemIndex to preserve the viewport anchor, so
   // delaying the correction until after paint causes visible jumps.
-  const prependGroupCount = useMemo(() => {
-    if (lastPrependCount <= 0) return 0;
-
-    const oldFirstMsgId = messages[lastPrependCount]?.id;
-    if (!oldFirstMsgId) return 0;
-
-    const oldFirstGroupIdx = groups.findIndex((g) =>
-      g.msgs.some((m) => m.msg.id === oldFirstMsgId),
-    );
-
-    return oldFirstGroupIdx > 0 ? oldFirstGroupIdx : 0;
-  }, [groups, lastPrependCount, messages]);
-
-  const effectiveFirstItemIndex = firstItemIndex - prependGroupCount;
+  const effectiveFirstItemIndex = firstItemIndex - lastPrependCount;
 
   // ── Commit prepend bookkeeping before paint ────────────────────────────
   useLayoutEffect(() => {
     if (lastPrependCount <= 0) return;
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFirstItemIndex(effectiveFirstItemIndex);
     useMessageStore.setState({ lastPrependCount: 0 });
-  }, [effectiveFirstItemIndex, lastPrependCount]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFirstItemIndex((current) => current - lastPrependCount);
+  }, [lastPrependCount]);
 
   // ── SignalR handlers (unchanged) ──────────────────────────────────────
   useEffect(() => {
@@ -306,14 +424,14 @@ export default function MessageList() {
     if (!highlightedMessageId) return;
 
     const tryScroll = (attempts = 0) => {
-      const groupIdx = msgIdToGroupIndex.get(highlightedMessageId);
-      if (groupIdx === undefined) {
+      const rowIdx = msgIdToRowIndex.get(highlightedMessageId);
+      if (rowIdx === undefined) {
         if (attempts < 20) setTimeout(() => tryScroll(attempts + 1), 100);
         return;
       }
 
       virtuosoRef.current?.scrollToIndex({
-        index: groupIdx,
+        index: rowIdx,
         align: "center",
         behavior: "smooth",
       });
@@ -338,13 +456,29 @@ export default function MessageList() {
     };
 
     requestAnimationFrame(() => tryScroll());
-  }, [highlightedMessageId, setHighlightedMessageId, msgIdToGroupIndex]);
+  }, [highlightedMessageId, setHighlightedMessageId, msgIdToRowIndex]);
 
   // ── Virtuoso callbacks ────────────────────────────────────────────────
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
     isAtBottomRef.current = atBottom;
     setShowScrollToBottom(!atBottom);
   }, []);
+
+  const handleRangeChanged = useCallback((range: ListRange) => {
+    const distanceFromTop = range.startIndex - effectiveFirstItemIndex;
+    if (
+      distanceFromTop > TOP_PRELOAD_ITEM_THRESHOLD ||
+      isLoadingRef.current ||
+      !hasMore
+    ) {
+      return;
+    }
+
+    isLoadingRef.current = true;
+    loadMore().finally(() => {
+      isLoadingRef.current = false;
+    });
+  }, [effectiveFirstItemIndex, hasMore, loadMore]);
 
   // Disabled — we handle all auto-scrolling via the manual useEffect above
   // using the raw DOM scroller, which is more reliable than Virtuoso's
@@ -353,14 +487,6 @@ export default function MessageList() {
     (): false | "smooth" | "auto" => false,
     [],
   );
-
-  const handleStartReached = useCallback(() => {
-    if (isLoadingRef.current || !hasMore) return;
-    isLoadingRef.current = true;
-    loadMore().finally(() => {
-      isLoadingRef.current = false;
-    });
-  }, [hasMore, loadMore]);
 
   const handleEndReached = useCallback(() => {
     if (isLoadingNewerRef.current || !hasNewer) return;
@@ -380,10 +506,10 @@ export default function MessageList() {
 
   const scrollToMessage = useCallback(
     (id: string) => {
-      const groupIdx = msgIdToGroupIndex.get(id);
-      if (groupIdx === undefined) return;
+      const rowIdx = msgIdToRowIndex.get(id);
+      if (rowIdx === undefined) return;
       virtuosoRef.current?.scrollToIndex({
-        index: groupIdx,
+        index: rowIdx,
         align: "center",
         behavior: "smooth",
       });
@@ -395,37 +521,93 @@ export default function MessageList() {
         }
       }, 300);
     },
-    [msgIdToGroupIndex],
+    [msgIdToRowIndex],
   );
 
-  // ── Group renderer (matches old rendering exactly) ────────────────────
-  const renderGroup = useCallback(
-    (_index: number, group: MessageGroup) => {
-      const groupStyle = group.cosmeticStyle
-        ? {
-            ...group.cosmeticStyle,
-            animationPlayState: "paused" as const,
-          }
-        : undefined;
+  const handleRowMouseEnter = useCallback((
+    event: React.MouseEvent<HTMLDivElement>,
+    groupKey: string,
+  ) => {
+    const scroller = scrollerRef.current;
+    const hoveredRow = event.currentTarget;
+    const groupRows = scroller?.querySelectorAll<HTMLElement>(
+      `[data-hover-group-key="${groupKey}"]`,
+    );
+    const measuredHeight = groupRows
+      ? Array.from(groupRows).reduce((total, row) => total + row.offsetHeight, 0)
+      : hoveredRow.offsetHeight;
+
+    setHoveredGroup((current) => {
+      if (current?.key === groupKey && current.height === measuredHeight) {
+        return current;
+      }
+
+      return {
+        key: groupKey,
+        height: measuredHeight,
+      };
+    });
+  }, []);
+
+  const handleRowMouseLeave = useCallback((
+    event: React.MouseEvent<HTMLDivElement>,
+    groupKey: string,
+  ) => {
+    const nextTarget = event.relatedTarget as HTMLElement | null;
+    if (nextTarget?.closest(`[data-hover-group-key="${groupKey}"]`)) {
+      return;
+    }
+
+    setHoveredGroup((current) => (
+      current?.key === groupKey ? null : current
+    ));
+  }, []);
+
+  // ── Row renderer ───────────────────────────────────────────────────────
+  const renderRow = useCallback(
+    (_index: number, row: MessageRow) => {
+      const isGroupHovered = hoveredGroup?.key === row.hoverGroupKey;
+      const shellStyle = getCosmeticShellStyle(
+        row.cosmeticStyle,
+        row.segmentPosition,
+      );
+      const groupOverlayStyle =
+        isGroupHovered && row.segmentPosition === "start"
+          ? getCosmeticGroupOverlayStyle(
+              row.cosmeticStyle,
+              hoveredGroup?.height ?? 0,
+            )
+          : undefined;
 
       return (
         <div
-          className={`message-group${group.cosmeticStyle ? " message-cosmetic-group" : ""}`}
-          style={groupStyle}
+          className={`message-row message-row-${row.segmentPosition}${row.cosmeticStyle ? " message-cosmetic-group message-cosmetic-row" : ""}${isGroupHovered ? " message-group-hovered" : ""}`}
+          data-hover-group-key={row.hoverGroupKey}
+          data-segment-position={row.segmentPosition}
+          style={shellStyle}
+          onMouseEnter={(event) => handleRowMouseEnter(event, row.hoverGroupKey)}
+          onMouseLeave={(event) => handleRowMouseLeave(event, row.hoverGroupKey)}
         >
-          {group.msgs.map(({ msg, grouped }) => (
-            <div key={msg.id} data-message-id={msg.id}>
-              <MessageItem
-                message={msg}
-                grouped={grouped}
-                onScrollToMessage={scrollToMessage}
-              />
-            </div>
-          ))}
+          {groupOverlayStyle && (
+            <div className="message-cosmetic-group-overlay" style={groupOverlayStyle} />
+          )}
+          <div className="message-row-content" data-message-id={row.msg.id}>
+            <MessageItem
+              message={row.msg}
+              grouped={row.grouped}
+              onScrollToMessage={scrollToMessage}
+              forceHovered={isGroupHovered}
+            />
+          </div>
         </div>
       );
     },
-    [scrollToMessage],
+    [
+      handleRowMouseEnter,
+      handleRowMouseLeave,
+      hoveredGroup,
+      scrollToMessage,
+    ],
   );
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -462,16 +644,16 @@ export default function MessageList() {
         scrollerRef={(el) => { scrollerRef.current = el as HTMLElement | null; }}
         style={{ height: "100%", width: "100%" }}
         components={{ Item: VirtuosoItem }}
-        data={groups}
+        data={rows}
         firstItemIndex={effectiveFirstItemIndex}
-        initialTopMostItemIndex={groups.length - 1}
-        computeItemKey={(_index, group) => group.key}
+        initialTopMostItemIndex={rows.length - 1}
+        computeItemKey={(_index, row) => row.key}
         increaseViewportBy={{ top: 400, bottom: 400 }}
         followOutput={followOutput}
-        startReached={handleStartReached}
         endReached={handleEndReached}
         atBottomStateChange={handleAtBottomChange}
-        itemContent={renderGroup}
+        rangeChanged={handleRangeChanged}
+        itemContent={renderRow}
         atBottomThreshold={400}
       />
     </div>

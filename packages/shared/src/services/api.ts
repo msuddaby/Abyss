@@ -208,7 +208,15 @@ export async function uploadFile(
   file: File,
   options?: { serverId?: string; channelId?: string },
   onProgress?: (percent: number) => void,
-): Promise<{ id: string; url: string; fileName: string; contentType: string; size: number }> {
+): Promise<{
+  id: string;
+  url: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  width?: number | null;
+  height?: number | null;
+}> {
   const formData = new FormData();
   formData.append('file', file);
   if (options?.serverId) formData.append('serverId', options.serverId);

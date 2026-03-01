@@ -21,7 +21,9 @@ public class MediaUploadService
         string ContentType,
         string? DetectedMimeType,
         bool IsImage,
-        string? PosterPath
+        string? PosterPath,
+        int? Width,
+        int? Height
     );
 
     public async Task<(bool IsValid, string? ErrorMessage, MediaUploadResult? Result)> StoreAttachmentAsync(
@@ -44,10 +46,12 @@ public class MediaUploadService
         long size;
         string contentType;
         string? posterPath = null;
+        int? width = null;
+        int? height = null;
 
         if (isImage)
         {
-            (url, size) = await _imageService.ProcessImageAsync(file, subdir);
+            (url, size, width, height) = await _imageService.ProcessImageAsync(file, subdir);
             contentType = "image/webp";
         }
         else
@@ -76,7 +80,7 @@ public class MediaUploadService
             }
         }
 
-        var result = new MediaUploadResult(url, size, contentType, validation.DetectedMimeType, isImage, posterPath);
+        var result = new MediaUploadResult(url, size, contentType, validation.DetectedMimeType, isImage, posterPath, width, height);
         return (true, null, result);
     }
 

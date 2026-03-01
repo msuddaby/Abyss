@@ -53,6 +53,13 @@ body.window-hidden *::after {
   animation-play-state: running !important;
 }
 
+.message-cosmetic-group.message-group-hovered,
+.message-cosmetic-group.message-group-hovered *,
+.message-cosmetic-group.message-group-hovered::before,
+.message-cosmetic-group.message-group-hovered::after {
+  animation-play-state: running !important;
+}
+
 /* Auth Pages */
 .auth-page {
   display: flex;
@@ -1718,9 +1725,54 @@ label.has-error select:focus {
   padding-bottom: 8px;
 }
 
+.message-row {
+  position: relative;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.message-row-content {
+  position: relative;
+  z-index: 1;
+}
+
+.message-cosmetic-group-overlay {
+  position: absolute;
+  z-index: 0;
+}
+
+.message-row-single {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.message-row-start {
+  padding-top: 8px;
+}
+
+.message-row-end {
+  padding-bottom: 8px;
+}
+
 .message-cosmetic-group {
   border-radius: 4px;
   margin: 4px 8px;
+}
+
+.message-cosmetic-row {
+  margin: 0 8px;
+}
+
+.message-cosmetic-row.message-row-single {
+  margin: 4px 8px;
+}
+
+.message-cosmetic-row.message-row-start {
+  margin: 4px 8px 0;
+}
+
+.message-cosmetic-row.message-row-end {
+  margin: 0 8px 4px;
 }
 
 .message-item {
@@ -2158,10 +2210,25 @@ label.has-error select:focus {
   margin-top: 6px;
 }
 
-.attachment-image {
+.attachment-image-shell {
+  width: 100%;
   max-width: min(400px, 100%);
-  max-height: 300px;
   border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.attachment-image-shell.has-dimensions {
+  height: auto;
+}
+
+.attachment-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: inherit;
   cursor: pointer;
 }
 
