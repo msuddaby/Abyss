@@ -131,7 +131,7 @@ function getCosmeticShellStyle(
   }
 
   if (position !== "single") {
-    delete shellStyle.animation;
+    // boxShadow/outline span the full group via the overlay
     delete shellStyle.boxShadow;
     delete shellStyle.outline;
     delete shellStyle.outlineOffset;
@@ -151,8 +151,15 @@ function getCosmeticGroupOverlayStyle(
 ): React.CSSProperties | undefined {
   if (!style || !style.animation || height <= 0) return undefined;
 
+  // Overlay only handles full-group effects (boxShadow, outline) — borders are per-row
+  const {
+    border: _b, borderLeft: _bl, borderRight: _br, borderTop: _bt,
+    borderBottom: _bb, borderImage: _bi,
+    ...rest
+  } = style;
+
   return {
-    ...style,
+    ...rest,
     position: "absolute",
     top: 0,
     left: 0,
