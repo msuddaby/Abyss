@@ -423,6 +423,13 @@ function createWindow() {
     lastIdleValue = 0;
   });
 
+  // Sleep/wake recovery — signal the renderer to reconnect SignalR immediately
+  // rather than waiting for the next health check or focus event.
+  powerMonitor.on('resume', () => {
+    console.log('[Main] System resumed from sleep — notifying renderer');
+    mainWindow?.webContents.send('system-resume');
+  });
+
   mainWindow.on('closed', () => {
     clearInterval(idleInterval);
     cleanupWaylandIdle();

@@ -130,9 +130,13 @@ export class SignalRProxy implements SignalRConnection {
   sendFocusReconnect(restartOnFailure: boolean): Promise<boolean> {
     const id = nextId++;
     return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve(false);
+      }, 10_000);
       this.pending.set(id, {
-        resolve: (alive: boolean) => resolve(alive),
-        reject: () => resolve(false),
+        resolve: (alive: boolean) => { clearTimeout(timer); resolve(alive); },
+        reject: () => { clearTimeout(timer); resolve(false); },
       });
       this.post({ type: 'focus-reconnect', id, restartOnFailure });
     });
@@ -141,7 +145,14 @@ export class SignalRProxy implements SignalRConnection {
   sendEnsureConnected(): Promise<void> {
     const id = nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve: () => resolve(), reject: (e) => reject(e) });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error('ensureConnected timed out after 10s'));
+      }, 10_000);
+      this.pending.set(id, {
+        resolve: () => { clearTimeout(timer); resolve(); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
       this.post({ type: 'ensure-connected', id });
     });
   }

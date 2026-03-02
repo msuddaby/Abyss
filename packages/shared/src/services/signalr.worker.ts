@@ -28,6 +28,7 @@ let intentionalStop = false;
 let lastActivity = 0;
 let restartPromise: Promise<void> | null = null;
 let documentHidden = false;
+let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Token handshake: worker asks main thread for a token, main thread replies
 let pendingTokenResolve: ((token: string) => void) | null = null;
@@ -37,6 +38,16 @@ let tokenRequestId = 0;
 let hubUrl = '';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 function post(msg: WorkerToMainMessage): void {
   self.postMessage(msg);
@@ -198,14 +209,17 @@ async function restartConnection(reason: string): Promise<void> {
     stopHealthMonitor();
     intentionalStop = true;
     try {
-      await conn.stop();
+      await withTimeout(conn.stop(), 5000, 'conn.stop()');
     } catch (err) {
-      log('warn', `[SignalR Worker] restartConnection stop failed: ${toErrorMessage(err)}`);
+      log('warn', `[SignalR Worker] restartConnection stop failed/timed out: ${toErrorMessage(err)}`);
+      // Stop timed out — the old connection is stuck. Null it out so
+      // createConnection() builds a fresh instance instead of reusing it.
+      connection = null;
     } finally {
       intentionalStop = false;
     }
     // Refresh token before reconnecting
-    await accessTokenFactory().catch((err: unknown) => {
+    await withTimeout(accessTokenFactory(), 5000, 'accessTokenFactory()').catch((err: unknown) => {
       log('warn', `[SignalR Worker] token refresh failed during restart: ${toErrorMessage(err)}`);
     });
     try {
@@ -216,12 +230,27 @@ async function restartConnection(reason: string): Promise<void> {
       post({ type: 'reconnected' });
     } catch (err) {
       log('warn', `[SignalR Worker] restartConnection failed reason=${reason}: ${toErrorMessage(err)}`);
-      scheduleReconnect(`restart-failed:${reason}`);
+      // Callers (scheduleReconnect, focusReconnect) handle retry on catch
       throw err;
     }
   })().finally(() => {
     restartPromise = null;
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      watchdogTimer = null;
+    }
   });
+
+  // Watchdog: if restartPromise is still pending after 30s, force-clear and retry
+  watchdogTimer = setTimeout(() => {
+    if (!restartPromise) return;
+    log('warn', '[SignalR Worker] watchdog: restart stuck for 30s, force-clearing');
+    restartPromise = null;
+    connection = null;
+    intentionalStop = false;
+    watchdogTimer = null;
+    scheduleReconnect('watchdog-timeout');
+  }, 30_000);
 
   return restartPromise;
 }
@@ -272,11 +301,11 @@ async function healthCheck(): Promise<void> {
   const isHidden = documentHidden;
 
   if (conn.state === signalR.HubConnectionState.Disconnected) {
-    if (!isHidden) scheduleReconnect('disconnected');
+    scheduleReconnect('disconnected');
     return;
   }
   if (conn.state === signalR.HubConnectionState.Reconnecting && reconnectingSince) {
-    if (!isHidden && Date.now() - reconnectingSince > RECONNECT_GRACE_MS) {
+    if (Date.now() - reconnectingSince > RECONNECT_GRACE_MS) {
       scheduleReconnect('reconnecting-timeout');
     }
     return;

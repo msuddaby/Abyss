@@ -728,6 +728,25 @@ export function useSignalRListeners() {
     };
   }, []);
 
+  // Electron sleep/wake recovery — trigger immediate reconnect check on system resume
+  useEffect(() => {
+    const electron = (window as any).electron;
+    if (!electron?.onSystemResume) return;
+
+    return electron.onSystemResume(() => {
+      console.log('[SignalR] System resumed from sleep — triggering reconnect check');
+      focusReconnect({ restartOnFailure: true }).then((alive) => {
+        if (alive) {
+          const conn = getConnection();
+          rejoinActiveChannel(conn);
+          refreshSignalRState(conn);
+          const server = useServerStore.getState().activeServer;
+          if (server) fetchServerState(conn, server.id);
+        }
+      }).catch(console.error);
+    });
+  }, []);
+
   // Fetch voice channel users when switching servers + periodic reconciliation
   useEffect(() => {
     if (!activeServer) return;
