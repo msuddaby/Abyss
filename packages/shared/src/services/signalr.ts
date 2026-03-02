@@ -8,6 +8,7 @@ import { useSignalRStore, type SignalRStatus } from "../stores/signalrStore.js";
 import { useVoiceStore } from "../stores/voiceStore.js";
 import { SignalRProxy } from "./signalr.proxy.js";
 import type { SignalRConnection } from "./signalr.protocol.js";
+import { reportDiagnostic } from "./diagnostics.js";
 
 const INVOKE_TIMEOUT_MS = 15000;
 
@@ -63,6 +64,15 @@ function recordDebug(
   if (level === "warn") console.warn(line);
   else if (level === "debug") console.debug(line);
   else console.log(line);
+
+  reportDiagnostic({
+    category: 'signalr',
+    message: `${info.trigger}: ${info.detail}`,
+    level: level === 'warn' ? 'breadcrumb' : 'breadcrumb',
+    data: { ...info },
+    error: options?.err instanceof Error ? options.err : null,
+  });
+
   return info;
 }
 
@@ -110,11 +120,20 @@ function getOrCreateProxy(): SignalRProxy {
       .catch(() => proxy!.sendTokenResponse(id, ""));
   };
 
-  // Forward worker logs to console
+  // Forward worker logs to console + diagnostics
   proxy.onLog = (level, message) => {
     if (level === "warn") console.warn(message);
     else if (level === "debug") console.debug(message);
     else console.log(message);
+
+    // Forward worker-level logs as breadcrumbs so they appear in Sentry context
+    if (level !== "debug") {
+      reportDiagnostic({
+        category: 'signalr',
+        message,
+        level: 'breadcrumb',
+      });
+    }
   };
 
   // Wire up lifecycle callbacks to status store
@@ -134,6 +153,15 @@ function getOrCreateProxy(): SignalRProxy {
       err,
       level: "warn",
     });
+    if (err) {
+      reportDiagnostic({
+        category: 'signalr',
+        message: `Connection closed unexpectedly: ${err}`,
+        level: 'warning',
+        data: { suspended, trigger: 'worker.onclose' },
+        error: typeof err === 'string' ? new Error(err) : null,
+      });
+    }
     setStatus("disconnected");
   });
 
@@ -172,6 +200,15 @@ async function createDirectConnection(): Promise<import("@microsoft/signalr").Hu
 
   directConnection.onclose((err) => {
     recordDebug("direct.onclose", "connection closed", { err, level: "warn" });
+    if (err) {
+      reportDiagnostic({
+        category: 'signalr',
+        message: `Direct connection closed unexpectedly: ${err.message}`,
+        level: 'warning',
+        data: { trigger: 'direct.onclose' },
+        error: err,
+      });
+    }
     setStatus("disconnected");
   });
 
@@ -209,6 +246,13 @@ export function startConnection(): Promise<SignalRConnection> {
         .catch((err) => {
           startPromise = null;
           setStatus("disconnected", err instanceof Error ? err.message : null);
+          reportDiagnostic({
+            category: 'signalr',
+            message: `Connection start failed: ${err instanceof Error ? err.message : String(err)}`,
+            level: 'error',
+            data: { mode: 'worker' },
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
           throw err;
         });
     }
@@ -399,6 +443,17 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
           // Best-effort — the worker health check will also catch this
         }
       }
+      reportDiagnostic({
+        category: 'signalr',
+        message: `Invoke failed after retry: ${method}`,
+        level: 'error',
+        data: {
+          method,
+          inActiveVoiceCall,
+          error: retryErr instanceof Error ? retryErr.message : String(retryErr),
+        },
+        error: retryErr instanceof Error ? retryErr : new Error(String(retryErr)),
+      });
       throw retryErr;
     }
   }

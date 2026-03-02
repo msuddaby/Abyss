@@ -1,4 +1,5 @@
 import './instrument';
+import './sentry-diagnostics';
 import './init';
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'

@@ -13,6 +13,8 @@ export type { SignalRConnection } from './services/signalr.protocol.js';
 export { getTurnCredentials, refreshTurnCredentials, subscribeTurnCredentials, clearTurnCredentials } from './services/turn.js';
 export { connectToLiveKit, disconnectFromLiveKit, sfuToggleMute, sfuSetDeafened, sfuSetUserVolume, sfuSetScreenAudioVolume, sfuSetInputDevice, sfuReplaceAudioTrack, sfuPublishScreenShare, sfuUnpublishScreenShare, sfuPublishCamera, sfuUnpublishCamera, getSfuScreenStream, getSfuCameraStream, getSfuLocalCameraStream, getSfuLocalScreenStream, sfuUpdateScreenShareQuality, sfuUpdateCameraQuality, getLiveKitRoom, isInSfuMode } from './services/livekitService.js';
 export { deriveChannelKey, exportKeyBytes, clearChannelKey, clearAllKeys } from './services/e2eeKeyManager.js';
+export { setDiagnosticReporter, reportDiagnostic } from './services/diagnostics.js';
+export type { DiagnosticEvent, DiagnosticLevel } from './services/diagnostics.js';
 export type { TurnCredentials } from './services/turn.js';
 export { showDesktopNotification, isElectron, navigateToNotification, setupNotificationClickListener } from './services/electronNotifications.js';
 

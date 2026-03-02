@@ -210,6 +210,8 @@ async function restartConnection(reason: string): Promise<void> {
     });
     try {
       await startConnection();
+      reconnectAttempts = 0;
+      consecutivePingFailures = 0;
       log('log', `[SignalR Worker] restartConnection succeeded reason=${reason}`);
       post({ type: 'reconnected' });
     } catch (err) {
@@ -250,7 +252,7 @@ function clearReconnectTimer(): void {
 
 function scheduleReconnect(reason: string): void {
   if (restartPromise) return;
-  const delay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+  const delay = Math.min(10000, 1000 * Math.pow(2, reconnectAttempts));
   if (reconnectTimer) return;
   log('warn', `[SignalR Worker] scheduleReconnect reason=${reason} attempt=${reconnectAttempts} delayMs=${delay}`);
   post({ type: 'state-change', state: 'Reconnecting' });

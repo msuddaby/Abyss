@@ -13,6 +13,7 @@ import { useVoiceStore } from '../stores/voiceStore.js';
 import { useServerStore } from '../stores/serverStore.js';
 import { useToastStore } from '../stores/toastStore.js';
 import { clearChannelKey } from './e2eeKeyManager.js';
+import { reportDiagnostic } from './diagnostics.js';
 import api from './api.js';
 
 interface LiveKitTokenResponse {
@@ -112,6 +113,13 @@ export async function connectToLiveKit(channelId: string): Promise<void> {
     voiceState.setConnectionMode('sfu');
     voiceState.setConnectionState('connected');
 
+    reportDiagnostic({
+      category: 'livekit',
+      message: `Connected to SFU room: ${room.name} (E2EE: ${room.isE2EEEnabled})`,
+      level: 'breadcrumb',
+      data: { channelId, e2ee: room.isE2EEEnabled, participants: room.remoteParticipants.size },
+    });
+
     // Add existing participants
     for (const participant of room.remoteParticipants.values()) {
       voiceState.addParticipant(participant.identity, participant.name || participant.identity);
@@ -125,6 +133,13 @@ export async function connectToLiveKit(channelId: string): Promise<void> {
     voiceState.setConnectionMode('p2p');
     voiceState.setConnectionState('disconnected');
     useToastStore.getState().addToast('Failed to connect to voice relay server', 'error');
+    reportDiagnostic({
+      category: 'livekit',
+      message: `SFU connection failed for channel ${channelId}`,
+      level: 'error',
+      data: { channelId },
+      error: err instanceof Error ? err : new Error(String(err)),
+    });
     throw err;
   }
 }
@@ -239,13 +254,31 @@ function setupRoomListeners(room: Room): void {
       voiceState.setConnectionState('connected');
     } else if (state === ConnectionState.Reconnecting) {
       voiceState.setConnectionState('reconnecting');
+      reportDiagnostic({
+        category: 'livekit',
+        message: 'SFU connection reconnecting',
+        level: 'breadcrumb',
+        data: { previousState: voiceState.connectionState },
+      });
     } else if (state === ConnectionState.Disconnected) {
       voiceState.setConnectionState('disconnected');
+      reportDiagnostic({
+        category: 'livekit',
+        message: 'SFU connection lost',
+        level: 'warning',
+        data: { channelId: voiceState.currentChannelId },
+      });
     }
   });
 
   room.on(RoomEvent.Disconnected, () => {
     console.log('[livekit] Disconnected from room');
+    reportDiagnostic({
+      category: 'livekit',
+      message: 'Disconnected from SFU room',
+      level: 'warning',
+      data: { channelId: useVoiceStore.getState().currentChannelId },
+    });
     cleanup();
   });
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect } from "react";
+import * as Sentry from "@sentry/react";
 import type { SignalRConnection } from "@abyss/shared";
 import {
   ensureConnected,
@@ -192,6 +193,20 @@ async function fallbackToSFU(reason: string): Promise<void> {
   if (!channelId) return;
 
   console.warn(`[fallback] Switching to SFU mode: ${reason}`);
+  Sentry.addBreadcrumb({ category: 'webrtc', message: `SFU fallback triggered: ${reason}`, level: 'warning' });
+  Sentry.captureMessage(`P2P → SFU fallback: ${reason}`, {
+    level: 'warning',
+    tags: { 'diagnostic.category': 'webrtc' },
+    contexts: {
+      voice: {
+        channelId,
+        participants: voiceState.participants.size,
+        p2pFailureCount: voiceState.p2pFailureCount,
+        failedPeers: Array.from(p2pFailedPeers),
+        connectionMode: voiceState.connectionMode,
+      },
+    },
+  });
   voiceState.setFallbackReason(reason);
   voiceState.setConnectionMode('attempting-sfu');
 
@@ -215,6 +230,11 @@ async function fallbackToSFU(reason: string): Promise<void> {
     voiceState.resetP2PFailures();
   } catch (err) {
     console.error('[fallback] SFU connection failed:', err);
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      level: 'error',
+      tags: { 'diagnostic.category': 'webrtc' },
+      contexts: { voice: { channelId, reason, p2pFailureCount: voiceState.p2pFailureCount } },
+    });
     voiceState.setConnectionState('disconnected');
     voiceState.setConnectionMode('p2p');
     useToastStore.getState().addToast('Connection failed. Please try again.', 'error');
@@ -635,6 +655,12 @@ function startStatsCollection() {
               zombieStaleCount.delete(peerId);
             } else {
               console.warn(`[zombie] Audio track for ${peerId} has not received data for ${count * 3}s after ICE connected, recreating peer | bytesReceived=${peerBytesReceived} bytesSent=${peerBytesSent} connectionType=${peerConnectionType} local=${localCandidateType} remote=${remoteCandidateType} proto=${transportProtocol}`);
+              Sentry.addBreadcrumb({
+                category: 'webrtc',
+                message: `Zombie track detected, recreating peer`,
+                level: 'warning',
+                data: { peerId, staleSeconds: count * 3, bytesReceived: peerBytesReceived, connectionType: peerConnectionType },
+              });
               zombieStaleCount.delete(peerId);
               prevBytesReceived.delete(peerId);
               lastZombieRecreate.set(peerId, Date.now());
@@ -1902,10 +1928,22 @@ function createPeerConnection(
     console.warn(
       `[ice] Candidate error for ${peerId}: code=${event.errorCode ?? "unknown"} text=${event.errorText ?? "unknown"} url=${event.url ?? "unknown"}`,
     );
+    Sentry.addBreadcrumb({
+      category: 'webrtc',
+      message: `ICE candidate error: code=${event.errorCode} ${event.errorText ?? ''}`,
+      level: 'warning',
+      data: { peerId, url: event.url },
+    });
   };
 
   pc.oniceconnectionstatechange = () => {
     console.log(`ICE state for ${peerId}: ${pc.iceConnectionState} (hidden=${document.hidden})`);
+    Sentry.addBreadcrumb({
+      category: 'webrtc',
+      message: `ICE: ${pc.iceConnectionState}`,
+      level: pc.iceConnectionState === 'failed' ? 'error' : pc.iceConnectionState === 'disconnected' ? 'warning' : 'info',
+      data: { peerId, hidden: document.hidden },
+    });
     const voiceState = useVoiceStore.getState();
 
     // Clear "new state" timer once ICE progresses past "new"
@@ -1931,6 +1969,12 @@ function createPeerConnection(
           iceReconnectTimers.delete(peerId);
           if (pc.iceConnectionState === "checking") {
             console.warn(`ICE stuck at checking for ${peerId}`);
+            Sentry.addBreadcrumb({
+              category: 'webrtc',
+              message: `ICE stuck at checking for 10s`,
+              level: 'warning',
+              data: { peerId, p2pFailureCount: voiceState.p2pFailureCount + 1 },
+            });
             p2pFailedPeers.add(peerId);
             voiceState.incrementP2PFailures();
             if (shouldFallbackToSFU()) {
@@ -1957,6 +2001,20 @@ function createPeerConnection(
       iceReconnectTimers.set(peerId, timer);
     } else if (pc.iceConnectionState === "failed") {
       console.warn(`ICE failed for ${peerId}`);
+      Sentry.captureMessage(`ICE connection failed for peer`, {
+        level: 'warning',
+        tags: { 'diagnostic.category': 'webrtc' },
+        contexts: {
+          ice: {
+            peerId,
+            failedPeers: Array.from(p2pFailedPeers),
+            p2pFailureCount: voiceState.p2pFailureCount + 1,
+            connectionMode: voiceState.connectionMode,
+            participants: voiceState.participants.size,
+            candidates: gatheredCandidates.get(peerId),
+          },
+        },
+      });
       p2pFailedPeers.add(peerId);
       voiceState.incrementP2PFailures();
       if (shouldFallbackToSFU()) {
@@ -4057,7 +4115,12 @@ export function useWebRTC() {
       if (!channelId) return;
 
       console.log(`[voice] SignalR reconnected, re-registering voice session for channel ${channelId}`);
-      try {
+
+      // Brief delay to let the new connection stabilize — invoking immediately
+      // after reconnect can fail if the WebSocket is still settling.
+      await new Promise(r => setTimeout(r, 500));
+
+      const reregister = async () => {
         const conn = getConnection();
         // Re-invoke JoinVoiceChannel so the server updates our voiceConnectionId.
         // Server Branch B (reconnect-to-same-channel) handles this: it updates the
@@ -4066,15 +4129,27 @@ export function useWebRTC() {
         // existing P2P connection is still healthy).
         beginInitialParticipantWait(conn);
         await conn.invoke("JoinVoiceChannel", channelId, vs.isMuted, vs.isDeafened);
-      } catch (err) {
+      };
+
+      try {
+        await reregister();
+      } catch (firstErr) {
         cancelInitialParticipantWait();
-        console.error("[voice] Failed to re-register voice after SignalR reconnect:", err);
-        // Only do a full rejoin if re-registration fails (e.g. server restart cleared voice state)
-        if (document.hidden) {
-          pendingVisibilityRejoin = true;
-          console.log("[voice] Tab hidden, will attempt full rejoin when visible");
-        } else {
-          await attemptVoiceRejoin("signalr-reconnect-recovery");
+        console.warn("[voice] First re-register attempt failed, retrying in 2s:", (firstErr as Error)?.message);
+        // Retry once — connection may still be settling after restart
+        await new Promise(r => setTimeout(r, 2000));
+        try {
+          await reregister();
+        } catch (err) {
+          cancelInitialParticipantWait();
+          console.error("[voice] Failed to re-register voice after SignalR reconnect:", err);
+          // Only do a full rejoin if re-registration fails (e.g. server restart cleared voice state)
+          if (document.hidden) {
+            pendingVisibilityRejoin = true;
+            console.log("[voice] Tab hidden, will attempt full rejoin when visible");
+          } else {
+            await attemptVoiceRejoin("signalr-reconnect-recovery");
+          }
         }
       }
     });
