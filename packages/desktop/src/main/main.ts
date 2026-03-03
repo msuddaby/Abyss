@@ -146,15 +146,28 @@ function createWindow() {
     }
   );
 
-  // Set Content Security Policy (only for our own pages, not third-party iframes)
+  // Set Content Security Policy + ensure CORS for cross-origin API responses.
+  // The app:// origin requires explicit CORS headers from the server, but reverse
+  // proxies (nginx/caddy) serving /uploads/ directly may bypass ASP.NET's CORS
+  // middleware. Inject the header at the Electron layer as a safety net.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+
     const isOwnPage =
       details.url.startsWith('app://') ||
       details.url.startsWith('file://') ||
       details.url.startsWith('http://localhost');
 
+    // For cross-origin responses missing CORS headers, add Access-Control-Allow-Origin
+    // so fetch() / Audio from app://abyss can access API server resources (uploads, etc.)
     if (!isOwnPage) {
-      callback({ responseHeaders: details.responseHeaders });
+      const hasCorHeader =
+        headers['access-control-allow-origin'] ||
+        headers['Access-Control-Allow-Origin'];
+      if (!hasCorHeader) {
+        headers['Access-Control-Allow-Origin'] = ['app://abyss'];
+      }
+      callback({ responseHeaders: headers });
       return;
     }
 
@@ -174,7 +187,7 @@ function createWindow() {
 
     callback({
       responseHeaders: {
-        ...details.responseHeaders,
+        ...headers,
         'Content-Security-Policy': [csp],
       },
     });

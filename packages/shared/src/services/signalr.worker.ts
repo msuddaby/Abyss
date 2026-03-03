@@ -56,7 +56,8 @@ function post(msg: WorkerToMainMessage): void {
 function log(level: 'log' | 'warn' | 'debug', message: string): void {
   // Skip debug logs while hidden to reduce postMessage traffic
   if (documentHidden && level === 'debug') return;
-  post({ type: 'log', level, message });
+  const ts = new Date().toISOString().slice(11, 23); // HH:mm:ss.mmm
+  post({ type: 'log', level, message: `[${ts}] ${message}` });
 }
 
 function postState(): void {
@@ -392,13 +393,14 @@ async function focusReconnect(id: number, _restartOnFailure: boolean): Promise<v
     lastActivity = Date.now();
     post({ type: 'focus-reconnect-result', id, alive: true });
   } catch (err) {
-    log('warn', `[SignalR Worker] focusReconnect ping failed ${Date.now() - pingStart}ms connState=${conn.state} error=${toErrorMessage(err)} failures=${consecutivePingFailures}->${consecutivePingFailures + 1}/${PING_FAIL_THRESHOLD}`);
-    // Count this failure toward the health check threshold — do NOT reset to 0,
-    // otherwise focus events prevent the health monitor from ever reaching its
-    // failure threshold and triggering a reconnect.
     consecutivePingFailures += 1;
-    if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
-      log('warn', `[SignalR Worker] focusReconnect: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), triggering restart`);
+    log('warn', `[SignalR Worker] focusReconnect ping failed ${Date.now() - pingStart}ms connState=${conn.state} error=${toErrorMessage(err)} failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} restartOnFailure=${_restartOnFailure}`);
+
+    // When restartOnFailure is set (user actively focused the window), restart
+    // immediately — don't wait for the health check threshold. The user is
+    // trying to use the app now; waiting 30s+ for a second failure is too slow.
+    if (_restartOnFailure || consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+      log('warn', `[SignalR Worker] focusReconnect: triggering restart (restartOnFailure=${_restartOnFailure}, failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD})`);
       consecutivePingFailures = 0;
       void restartConnection('focus-ping-failed').catch(() => {
         scheduleReconnect('focus-restart-failed');
