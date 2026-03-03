@@ -342,16 +342,16 @@ async function healthCheck(): Promise<void> {
     }
     const elapsed = Date.now() - pingStart;
     const detail = `${elapsed}ms result=${pingResult} connState=${conn.state} error=${toErrorMessage(pingError ?? err)}`;
-    if (isHidden) {
-      log('warn', `[SignalR Worker] BACKGROUND ping failed ${detail} (diagnostic only, not counting)`);
-    } else {
-      consecutivePingFailures += 1;
-      log('warn', `[SignalR Worker] ping failed ${detail} failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} source=healthCheck`);
-      if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
-        log('warn', `[SignalR Worker] healthCheck: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), scheduling reconnect`);
-        consecutivePingFailures = 0;
-        scheduleReconnect('ping-failed');
-      }
+    // Count failures regardless of visibility — the worker thread isn't throttled
+    // by Chrome's background tab policy, so timeouts are genuine failures.
+    // Previously background failures were ignored ("diagnostic only"), which let
+    // the connection stay dead for minutes while the app was minimized.
+    consecutivePingFailures += 1;
+    log('warn', `[SignalR Worker] ping failed ${detail} failures=${consecutivePingFailures}/${PING_FAIL_THRESHOLD} source=healthCheck hidden=${isHidden}`);
+    if (consecutivePingFailures >= PING_FAIL_THRESHOLD) {
+      log('warn', `[SignalR Worker] healthCheck: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), scheduling reconnect`);
+      consecutivePingFailures = 0;
+      scheduleReconnect(isHidden ? 'background-ping-failed' : 'ping-failed');
     }
   } finally {
     pingInFlight = false;
@@ -504,8 +504,13 @@ self.onmessage = (e: MessageEvent<MainToWorkerMessage>) => {
       documentHidden = msg.hidden;
       log('warn', `[SignalR Worker] visibility-change: hidden=${msg.hidden} (was=${wasHidden})`);
       if (wasHidden && !documentHidden && connection) {
-        log('warn', `[SignalR Worker] tab became visible — connState=${connection.state} lastActivity=${Date.now() - lastActivity}ms ago pingInFlight=${pingInFlight}`);
-        consecutivePingFailures = 0;
+        log('warn', `[SignalR Worker] tab became visible — connState=${connection.state} lastActivity=${Date.now() - lastActivity}ms ago pingInFlight=${pingInFlight} failures=${consecutivePingFailures}`);
+        // Don't reset consecutivePingFailures — background failures are real.
+        // Instead trigger an immediate health check so a stale connection
+        // is detected right away rather than waiting for the next interval.
+        if (!pingInFlight && connection.state === signalR.HubConnectionState.Connected) {
+          void healthCheck();
+        }
       }
       break;
     }
