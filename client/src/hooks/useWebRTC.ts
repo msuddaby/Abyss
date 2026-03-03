@@ -4008,36 +4008,45 @@ export function useWebRTC() {
   );
 
   const leaveVoice = useCallback(async () => {
+    const channelId = currentChannelId;
+    if (!channelId) return; // Already disconnected
+
+    // === IMMEDIATE UI UPDATE ===
+    // Clear channel + UI state FIRST so the disconnect button responds instantly,
+    // regardless of SignalR or LiveKit connection state.
+    pendingVisibilityRejoin = false;
+    rejoinInProgress = false;
+    setCurrentChannel(null);
+    setParticipants(new Map());
+    useVoiceStore.getState().setScreenSharing(false);
+    useVoiceStore.getState().setActiveSharers(new Map());
+    useVoiceStore.getState().setWatching(null);
+    useVoiceStore.getState().setCameraOn(false);
+    useVoiceStore.getState().setActiveCameras(new Map());
+    useVoiceStore.getState().setFocusedUserId(null);
+    useVoiceStore.getState().setVoiceChatOpen(false);
+    useVoiceStore.getState().setConnectionMode('p2p');
+    useVoiceStore.getState().setFallbackReason(null);
+    useVoiceStore.getState().resetP2PFailures();
+    useVoiceChatStore.getState().clear();
+    useWatchPartyStore.getState().setActiveParty(null);
+
+    // === CLEANUP ===
+    // Disconnect LiveKit (handles E2EE key cleanup internally)
+    if (isInSfuMode()) {
+      try { await disconnectFromLiveKit(); } catch (e) {
+        console.warn("Failed to disconnect from LiveKit:", e);
+      }
+    }
+    cleanupAll();
+    p2pFailedPeers.clear();
+
+    // === SERVER NOTIFICATION (best-effort) ===
     try {
-      // Disconnect from LiveKit if in SFU mode
-      if (isInSfuMode()) {
-        await disconnectFromLiveKit();
-      }
-      if (currentChannelId) {
-        const conn = getConnection();
-        await conn.invoke("LeaveVoiceChannel", currentChannelId);
-      }
+      const conn = getConnection();
+      await conn.invoke("LeaveVoiceChannel", channelId);
     } catch (error) {
       console.warn("Failed to notify server when leaving voice channel:", error);
-    } finally {
-      pendingVisibilityRejoin = false;
-      rejoinInProgress = false;
-      cleanupAll();
-      p2pFailedPeers.clear();
-      setCurrentChannel(null);
-      setParticipants(new Map());
-      useVoiceStore.getState().setScreenSharing(false);
-      useVoiceStore.getState().setActiveSharers(new Map());
-      useVoiceStore.getState().setWatching(null);
-      useVoiceStore.getState().setCameraOn(false);
-      useVoiceStore.getState().setActiveCameras(new Map());
-      useVoiceStore.getState().setFocusedUserId(null);
-      useVoiceStore.getState().setVoiceChatOpen(false);
-      useVoiceStore.getState().setConnectionMode('p2p');
-      useVoiceStore.getState().setFallbackReason(null);
-      useVoiceStore.getState().resetP2PFailures();
-      useVoiceChatStore.getState().clear();
-      useWatchPartyStore.getState().setActiveParty(null);
     }
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
