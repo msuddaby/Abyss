@@ -76,9 +76,10 @@ export function setupIpcHandlers(
     }
   });
 
-  // Check if window is focused
+  // Check if window is focused (and actually visible — not minimized/hidden).
+  // On KDE/Wayland, isFocused() can return true even when minimized.
   ipcMain.handle('is-focused', () => {
-    return window.isFocused();
+    return window.isFocused() && !window.isMinimized() && window.isVisible();
   });
 
   // Get system-wide idle time in seconds (with native Linux idle support)
