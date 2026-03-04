@@ -8,7 +8,7 @@ import type { MainToWorkerMessage, WorkerToMainMessage } from './signalr.protoco
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const HEALTH_INTERVAL_MS = 30_000;
+const HEALTH_INTERVAL_MS = 15_000;
 const PING_TIMEOUT_MS = 4_000;
 const RECONNECT_GRACE_MS = 20_000;
 const PING_FAIL_THRESHOLD = 2;
@@ -353,6 +353,11 @@ async function healthCheck(): Promise<void> {
       log('warn', `[SignalR Worker] healthCheck: threshold reached (${consecutivePingFailures}/${PING_FAIL_THRESHOLD}), scheduling reconnect`);
       consecutivePingFailures = 0;
       scheduleReconnect(isHidden ? 'background-ping-failed' : 'ping-failed');
+    } else {
+      // Don't wait 15s for the next scheduled check — retry immediately
+      // so we hit the threshold in ~6s instead of ~34s
+      log('warn', `[SignalR Worker] ping failed, scheduling immediate retry in 2s`);
+      setTimeout(() => void healthCheck(), 2_000);
     }
   } finally {
     pingInFlight = false;

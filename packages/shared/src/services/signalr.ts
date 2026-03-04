@@ -383,6 +383,36 @@ export async function healthCheck(): Promise<void> {
 
 // ── Resilient invoke (voice-safe retry logic stays on main thread) ───────────
 
+// Wait for the connection to be restored (reconnected event) with a timeout.
+// Returns true if reconnected, false if timed out.
+function waitForReconnection(timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    // Already connected — no need to wait
+    const state = supportsWorker ? proxy?.state : directConnection?.state;
+    if (state === 'Connected') {
+      resolve(true);
+      return;
+    }
+
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      resolved = true;
+      unsub();
+      resolve(false);
+    }, timeoutMs);
+
+    const unsub = onReconnected(() => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      unsub();
+      // Brief pause to let the connection stabilize
+      setTimeout(() => resolve(true), 200);
+    });
+  });
+}
+
 export async function resilientInvoke(method: string, ...args: unknown[]): Promise<void> {
   const conn = supportsWorker ? getOrCreateProxy() : directConnection;
   if (!conn) throw new Error("Not connected");
@@ -402,54 +432,53 @@ export async function resilientInvoke(method: string, ...args: unknown[]): Promi
   try {
     await doInvoke();
   } catch (err) {
-    const inActiveVoiceCall = !!useVoiceStore.getState().currentChannelId;
+    // First attempt failed — trigger reconnection and wait for it to complete
+    // instead of a fixed delay. WebRTC voice is independent of SignalR so
+    // restarting the SignalR connection won't disrupt active voice calls.
     console.warn(
-      `[SignalR] resilientInvoke ${method} failed (inVoiceCall=${inActiveVoiceCall}), retrying`,
+      `[SignalR] resilientInvoke ${method} failed, waiting for reconnection`,
       (err as Error)?.message,
     );
     recordDebug(
       "resilientInvoke",
-      `method=${method} invoke failed${inActiveVoiceCall ? " (voice-safe: no restart)" : " -> restart"}`,
+      `method=${method} invoke failed — waiting for reconnection`,
       { err, level: "warn" },
     );
 
-    if (inActiveVoiceCall) {
-      // During active voice, wait briefly and retry for transient issues
-      await new Promise((r) => setTimeout(r, 2000));
-    } else if (supportsWorker) {
-      // Worker will verify/restart the connection
+    // Kick off reconnection in the worker
+    if (supportsWorker) {
       try {
         await (conn as SignalRProxy).sendEnsureConnected();
       } catch {
-        // Connection couldn't be restored; still try the retry
+        // Worker health checks will also detect and reconnect
       }
+    }
+
+    // Wait for the connection to actually be restored (up to 10s)
+    const reconnected = await waitForReconnection(10_000);
+    if (!reconnected) {
+      reportDiagnostic({
+        category: 'signalr',
+        message: `Invoke failed, reconnection timed out: ${method}`,
+        level: 'error',
+        data: {
+          method,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+      throw err;
     }
 
     try {
       await doInvoke();
     } catch (retryErr) {
-      // Retry also failed — if we're in a voice call, we deferred the restart
-      // on first failure but now the connection is clearly dead. Trigger a
-      // restart; WebRTC voice is independent of SignalR and survives this.
-      if (inActiveVoiceCall && supportsWorker) {
-        recordDebug(
-          "resilientInvoke",
-          `method=${method} retry also failed in voice call — escalating to restart`,
-          { err: retryErr, level: "warn" },
-        );
-        try {
-          await (conn as SignalRProxy).sendEnsureConnected();
-        } catch {
-          // Best-effort — the worker health check will also catch this
-        }
-      }
       reportDiagnostic({
         category: 'signalr',
-        message: `Invoke failed after retry: ${method}`,
+        message: `Invoke failed after reconnection retry: ${method}`,
         level: 'error',
         data: {
           method,
-          inActiveVoiceCall,
           error: retryErr instanceof Error ? retryErr.message : String(retryErr),
         },
         error: retryErr instanceof Error ? retryErr : new Error(String(retryErr)),
@@ -484,6 +513,17 @@ if (typeof document !== "undefined") {
       proxy.sendVisibilityChange(document.hidden);
     }
   });
+
+  // On Electron + Wayland, document.hidden never changes when the window is
+  // minimized or hidden to tray — the Page Visibility API doesn't fire.
+  // Use Electron's window focus events as an additional visibility signal.
+  if (typeof window !== "undefined" && window.electron?.onWindowFocusChanged) {
+    window.electron.onWindowFocusChanged((focused: boolean) => {
+      if (supportsWorker && proxy) {
+        proxy.sendVisibilityChange(!focused);
+      }
+    });
+  }
 }
 
 function onNetworkChange(source: string) {

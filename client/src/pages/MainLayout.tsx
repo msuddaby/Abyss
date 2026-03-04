@@ -17,7 +17,7 @@ import ModerationConfirmModal from '../components/ModerationConfirmModal';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import GuestUpgradeModal from '../components/GuestUpgradeModal';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore, useAuthStore } from '@abyss/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useSwipeGesture } from '../hooks/useSwipeGesture';
 
@@ -83,7 +83,20 @@ export default function MainLayout() {
     resetLeftDrawerDrag();
   }, [activeChannel?.id, activeDmChannel?.id, isDmMode, endLeftDrawerDrag, resetLeftDrawerDrag]);
 
-  const showSignalRBanner = signalRStatus !== 'connected';
+  // Grace period: don't flash the banner for brief drops that recover quickly.
+  // Only show after 4s of non-connected state so seamless reconnections are invisible.
+  const [showSignalRBanner, setShowSignalRBanner] = useState(false);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    if (signalRStatus === 'connected') {
+      clearTimeout(bannerTimerRef.current);
+      setShowSignalRBanner(false);
+    } else {
+      bannerTimerRef.current = setTimeout(() => setShowSignalRBanner(true), 4000);
+    }
+    return () => clearTimeout(bannerTimerRef.current);
+  }, [signalRStatus]);
+
   const signalRMessage = signalRStatus === 'connecting'
     ? 'Connecting to live updates...'
     : signalRStatus === 'reconnecting'
