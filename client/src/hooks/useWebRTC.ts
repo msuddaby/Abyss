@@ -17,6 +17,7 @@ import {
   disconnectFromLiveKit,
   sfuToggleMute,
   sfuSetDeafened,
+  sfuSetUserVolume,
   sfuSetScreenAudioVolume,
   sfuSetInputDevice,
   sfuPublishScreenShare,
@@ -3480,9 +3481,16 @@ export function useWebRTC() {
     const unsub = useVoiceStore.subscribe((state) => {
       if (state.userVolumes !== prevVolumes) {
         prevVolumes = state.userVolumes;
-        for (const [peerId] of audioElements) {
-          const vol = state.userVolumes.get(peerId) ?? 100;
-          applyUserVolume(peerId, vol);
+        if (isInSfuMode()) {
+          for (const [peerId] of state.participants) {
+            const vol = state.userVolumes.get(peerId) ?? 100;
+            sfuSetUserVolume(peerId, vol);
+          }
+        } else {
+          for (const [peerId] of audioElements) {
+            const vol = state.userVolumes.get(peerId) ?? 100;
+            applyUserVolume(peerId, vol);
+          }
         }
       }
     });
