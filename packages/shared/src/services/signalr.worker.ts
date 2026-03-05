@@ -103,6 +103,9 @@ function createConnection(): signalR.HubConnection {
       if (name === 'ReceiveMessage' || name === 'ReactionAdded' || name === 'ReactionRemoved') {
         log('log', `[SignalR Worker] FORWARDING ${name} hidden=${documentHidden}`);
       }
+      // Any received event proves the connection is alive — update lastActivity
+      // so ensureConnected() and stale detection don't trigger unnecessary pings.
+      lastActivity = Date.now();
       post({ type: 'event', name, args });
     });
   }
@@ -513,11 +516,15 @@ self.onmessage = (e: MessageEvent<MainToWorkerMessage>) => {
       if (wasHidden && !documentHidden && connection) {
         log('warn', `[SignalR Worker] tab became visible — connState=${connection.state} lastActivity=${Date.now() - lastActivity}ms ago pingInFlight=${pingInFlight} failures=${consecutivePingFailures}`);
         // Don't reset consecutivePingFailures — background failures are real.
-        // Instead trigger an immediate health check so a stale connection
-        // is detected right away rather than waiting for the next interval.
+        // Trigger an immediate health check plus burst pings at 5s and 10s.
+        // This catches connections that die right after the initial focus check
+        // instead of waiting up to 15s for the next scheduled ping.
         if (!pingInFlight && connection.state === signalR.HubConnectionState.Connected) {
           void healthCheck();
         }
+        // Burst pings — healthCheck() is safe to call concurrently (returns if pingInFlight)
+        setTimeout(() => { if (!documentHidden) void healthCheck(); }, 5_000);
+        setTimeout(() => { if (!documentHidden) void healthCheck(); }, 10_000);
       }
       break;
     }

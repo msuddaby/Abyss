@@ -343,7 +343,15 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 app.MapControllers().RequireRateLimiting("api");
-app.MapHub<ChatHub>("/hubs/chat");
+app.MapHub<ChatHub>("/hubs/chat", options =>
+{
+    // Increase transport buffer to handle bursts of concurrent hub responses
+    // (tab-focus refresh fires ~10 invocations simultaneously). The default
+    // 32KB can overflow when GetOnlineUsers/GetDmChannels return large payloads,
+    // causing ASP.NET to close the WebSocket under backpressure.
+    options.TransportMaxBufferSize = 256 * 1024;   // 256KB (default 32KB)
+    options.ApplicationMaxBufferSize = 256 * 1024;  // 256KB (default 64KB)
+});
 app.MapGet("/health", () => Results.Ok());
 
 // Sentry tunnel — forwards client envelopes to Sentry's ingest so requests

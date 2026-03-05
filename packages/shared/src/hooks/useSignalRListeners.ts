@@ -706,8 +706,9 @@ export function useSignalRListeners() {
           // Re-join the channel group — group membership can be lost if the
           // underlying connection was silently replaced or timed out server-side.
           rejoinActiveChannel(conn);
-          const server = useServerStore.getState().activeServer;
-          if (server) fetchServerState(conn, server.id);
+          // refreshSignalRState already calls fetchServerState internally —
+          // calling it separately here doubled the invocations (16 → 10),
+          // overwhelming the hub's MaximumParallelInvocationsPerClient=5 queue.
           refreshSignalRState(conn);
         } else {
           console.warn(`[SignalR] focus refresh source=${source} skipped SignalR state refresh (connection not alive)`);
@@ -740,8 +741,6 @@ export function useSignalRListeners() {
           const conn = getConnection();
           rejoinActiveChannel(conn);
           refreshSignalRState(conn);
-          const server = useServerStore.getState().activeServer;
-          if (server) fetchServerState(conn, server.id);
         }
       }).catch(console.error);
     });

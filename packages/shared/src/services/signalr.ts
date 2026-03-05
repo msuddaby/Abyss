@@ -10,7 +10,7 @@ import { SignalRProxy } from "./signalr.proxy.js";
 import type { SignalRConnection } from "./signalr.protocol.js";
 import { reportDiagnostic } from "./diagnostics.js";
 
-const INVOKE_TIMEOUT_MS = 15000;
+const INVOKE_TIMEOUT_MS = 5000;
 
 // ── Proxy singleton ──────────────────────────────────────────────────────────
 
