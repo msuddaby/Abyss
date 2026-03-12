@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import { resilientInvoke } from '../services/signalr.js';
+import { resilientInvoke, onReconnected } from '../services/signalr.js';
 import type { Message, Reaction, PinnedMessage, EquippedCosmetics } from '../types/index.js';
 
 interface CachedChannel {
@@ -10,10 +10,24 @@ interface CachedChannel {
 
 const MAX_CACHED_CHANNELS = 25;
 
+export type PendingMessageStatus = 'sending' | 'failed';
+
+export interface PendingMessage {
+  /** Temporary client-side ID (crypto.randomUUID) */
+  clientId: string;
+  channelId: string;
+  content: string;
+  attachmentIds: string[];
+  replyToMessageId: string | null;
+  status: PendingMessageStatus;
+  createdAt: number;
+}
+
 interface MessageState {
   messages: Message[];
   pinnedByChannel: Record<string, PinnedMessage[]>;
   channelCache: Record<string, CachedChannel>;
+  pendingMessages: PendingMessage[];
   loading: boolean;
   pinnedLoading: boolean;
   hasMore: boolean;
@@ -42,6 +56,8 @@ interface MessageState {
   pinMessage: (messageId: string) => Promise<void>;
   unpinMessage: (messageId: string) => Promise<void>;
   sendMessage: (channelId: string, content: string, attachmentIds?: string[], replyToMessageId?: string) => Promise<void>;
+  retryPendingMessage: (clientId: string) => Promise<void>;
+  discardPendingMessage: (clientId: string) => void;
   joinChannel: (channelId: string) => Promise<void>;
   leaveChannel: (channelId: string) => Promise<void>;
   updateAuthorCosmetics: (userId: string, cosmetics: EquippedCosmetics | null) => void;
@@ -52,6 +68,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   messages: [],
   pinnedByChannel: {},
   channelCache: {},
+  pendingMessages: [],
   loading: false,
   pinnedLoading: false,
   hasMore: true,
@@ -329,7 +346,57 @@ export const useMessageStore = create<MessageState>((set, get) => ({
   },
 
   sendMessage: async (channelId, content, attachmentIds, replyToMessageId) => {
-    await resilientInvoke('SendMessage', channelId, content, attachmentIds || [], replyToMessageId || null);
+    const clientId = crypto.randomUUID();
+    const pending: PendingMessage = {
+      clientId,
+      channelId,
+      content,
+      attachmentIds: attachmentIds || [],
+      replyToMessageId: replyToMessageId || null,
+      status: 'sending',
+      createdAt: Date.now(),
+    };
+    set((s) => ({ pendingMessages: [...s.pendingMessages, pending] }));
+
+    try {
+      await resilientInvoke('SendMessage', channelId, content, attachmentIds || [], replyToMessageId || null);
+      // Success — remove from pending (the real message arrives via ReceiveMessage signal)
+      set((s) => ({ pendingMessages: s.pendingMessages.filter((p) => p.clientId !== clientId) }));
+    } catch (err) {
+      // Mark as failed so UI can show retry
+      set((s) => ({
+        pendingMessages: s.pendingMessages.map((p) =>
+          p.clientId === clientId ? { ...p, status: 'failed' as const } : p
+        ),
+      }));
+      throw err;
+    }
+  },
+
+  retryPendingMessage: async (clientId) => {
+    const pending = get().pendingMessages.find((p) => p.clientId === clientId);
+    if (!pending || pending.status !== 'failed') return;
+
+    set((s) => ({
+      pendingMessages: s.pendingMessages.map((p) =>
+        p.clientId === clientId ? { ...p, status: 'sending' as const } : p
+      ),
+    }));
+
+    try {
+      await resilientInvoke('SendMessage', pending.channelId, pending.content, pending.attachmentIds, pending.replyToMessageId);
+      set((s) => ({ pendingMessages: s.pendingMessages.filter((p) => p.clientId !== clientId) }));
+    } catch {
+      set((s) => ({
+        pendingMessages: s.pendingMessages.map((p) =>
+          p.clientId === clientId ? { ...p, status: 'failed' as const } : p
+        ),
+      }));
+    }
+  },
+
+  discardPendingMessage: (clientId) => {
+    set((s) => ({ pendingMessages: s.pendingMessages.filter((p) => p.clientId !== clientId) }));
   },
 
   joinChannel: async (channelId) => {
@@ -358,6 +425,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     messages: [],
     pinnedByChannel: {},
     channelCache: {},
+    pendingMessages: [],
     loading: false,
     pinnedLoading: false,
     hasMore: true,
@@ -368,3 +436,12 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     lastPrependCount: 0,
   }),
 }));
+
+// Auto-retry failed pending messages when SignalR reconnects
+onReconnected(() => {
+  const { pendingMessages, retryPendingMessage } = useMessageStore.getState();
+  const failed = pendingMessages.filter((p) => p.status === 'failed');
+  for (const p of failed) {
+    retryPendingMessage(p.clientId).catch(() => {});
+  }
+});

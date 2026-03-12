@@ -68,7 +68,7 @@ function recordDebug(
   reportDiagnostic({
     category: 'signalr',
     message: `${info.trigger}: ${info.detail}`,
-    level: level === 'warn' ? 'breadcrumb' : 'breadcrumb',
+    level: (level === 'warn' && options?.err) ? 'warning' : 'breadcrumb',
     data: { ...info },
     error: options?.err instanceof Error ? options.err : null,
   });
@@ -126,12 +126,20 @@ function getOrCreateProxy(): SignalRProxy {
     else if (level === "debug") console.debug(message);
     else console.log(message);
 
-    // Forward worker-level logs as breadcrumbs so they appear in Sentry context
+    // Forward worker-level logs to Sentry. Most go as breadcrumbs (context),
+    // but critical failures are promoted to warning-level events.
     if (level !== "debug") {
+      const isSignificantFailure = level === 'warn' && (
+        message.includes('restartConnection failed') ||
+        message.includes('threshold reached') ||
+        message.includes('watchdog: restart stuck') ||
+        message.includes('onclose (unexpected')
+      );
       reportDiagnostic({
         category: 'signalr',
         message,
-        level: 'breadcrumb',
+        level: isSignificantFailure ? 'warning' : 'breadcrumb',
+        error: isSignificantFailure ? new Error(message) : null,
       });
     }
   };

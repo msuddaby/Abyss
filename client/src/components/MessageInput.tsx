@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
-import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, useRateLimitStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
+import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, useRateLimitStore, useSignalRStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import GifPicker from "./GifPicker";
@@ -84,6 +84,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const sendMessage = useMessageStore((s) => s.sendMessage);
   const replyingTo = useMessageStore((s) => s.replyingTo);
   const setReplyingTo = useMessageStore((s) => s.setReplyingTo);
+  const pendingMessages = useMessageStore((s) => s.pendingMessages);
+  const retryPendingMessage = useMessageStore((s) => s.retryPendingMessage);
+  const discardPendingMessage = useMessageStore((s) => s.discardPendingMessage);
   const activeServer = useServerStore((s) => s.activeServer);
   const activeChannel = useServerStore((s) => s.activeChannel);
   const members = useServerStore((s) => s.members);
@@ -92,6 +95,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
   const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
   const addToast = useToastStore((s) => s.addToast);
+  const signalRStatus = useSignalRStore((s) => s.status);
   const rateLimitEntry = useRateLimitStore((s) => s.activeLimits['SendMessage']);
   const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
 
@@ -119,6 +123,8 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const isVoiceChat = !!channelIdOverride;
   const effectiveChannelId = channelIdOverride || (isDmMode ? activeDmChannel?.id : activeChannel?.id);
   const isChannelActive = !!effectiveChannelId;
+  const isDisconnected = signalRStatus !== 'connected';
+  const channelPending = pendingMessages.filter((p) => p.channelId === effectiveChannelId);
   const canSendMessages = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
   const canAttachFiles = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
   const canMentionEveryone = (isVoiceChat || isDmMode) ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
@@ -757,7 +763,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
         );
         attachmentIds.push(result.id);
       }
-      await sendMessage(effectiveChannelId, content, attachmentIds, replyingTo?.id);
+      // Clear the editor optimistically — the pending message system will handle
+      // retry/discard if the send fails, so the user can keep typing.
+      const replyId = replyingTo?.id;
       editorRef.current.focus();
       document.execCommand('selectAll');
       document.execCommand('delete');
@@ -771,9 +779,12 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       triggerRef.current = null;
       setReplyingTo(null);
       setInputError(null);
-    } catch (err) {
-      console.error("Failed to send message:", err);
-      addToast('Message not sent — connection lost. Try again.', 'error');
+      // sendMessage adds to pending queue and throws on failure — but we've
+      // already cleared the editor so the user can keep typing. Failed messages
+      // appear as pending with retry/discard options.
+      await sendMessage(effectiveChannelId, content, attachmentIds, replyId);
+    } catch {
+      // Failure is surfaced via the pending message UI (retry/discard), not a toast
     } finally {
       setSending(false);
     }
@@ -915,6 +926,30 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       {isRateLimited && (
         <div className="rate-limit-banner">
           You're sending messages too quickly. Please wait {rateLimitRemaining}s.
+        </div>
+      )}
+      {channelPending.length > 0 && (
+        <div className="pending-messages-bar">
+          {channelPending.map((p) => (
+            <div key={p.clientId} className={`pending-message ${p.status}`}>
+              <span className="pending-message-text">
+                {p.status === 'sending' ? 'Sending...' : 'Failed to send:'}
+                {' '}
+                <span className="pending-message-content">{p.content.length > 80 ? p.content.slice(0, 80) + '...' : p.content}</span>
+              </span>
+              {p.status === 'failed' && (
+                <span className="pending-message-actions">
+                  <button className="pending-retry-btn" onClick={() => retryPendingMessage(p.clientId)}>Retry</button>
+                  <button className="pending-discard-btn" onClick={() => discardPendingMessage(p.clientId)}>Discard</button>
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {isDisconnected && (
+        <div className="input-connection-banner">
+          {signalRStatus === 'reconnecting' ? 'Reconnecting — messages will be sent when connection is restored...' : 'Connection lost — messages will retry automatically when reconnected.'}
         </div>
       )}
       <form className="message-input-form" onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}>

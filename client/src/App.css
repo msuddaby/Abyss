@@ -2607,6 +2607,87 @@ label.has-error select:focus {
   margin: 0 0 4px;
 }
 
+.input-connection-banner {
+  padding: 6px 12px;
+  background: rgba(217, 164, 65, 0.16);
+  color: var(--text-warning, #d9a441);
+  font-size: 12px;
+  border-radius: 4px;
+  margin: 0 0 4px;
+}
+
+.pending-messages-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 4px;
+}
+
+.pending-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.pending-message.sending {
+  background: rgba(52, 152, 219, 0.12);
+  color: var(--text-muted);
+}
+
+.pending-message.failed {
+  background: rgba(231, 76, 60, 0.14);
+  color: var(--text-normal);
+}
+
+.pending-message-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pending-message-content {
+  color: var(--text-muted);
+}
+
+.pending-message-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.pending-retry-btn,
+.pending-discard-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.pending-retry-btn {
+  color: var(--text-link);
+  background: rgba(88, 101, 242, 0.15);
+}
+
+.pending-retry-btn:hover {
+  background: rgba(88, 101, 242, 0.3);
+}
+
+.pending-discard-btn {
+  color: var(--text-muted);
+}
+
+.pending-discard-btn:hover {
+  color: var(--text-normal);
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .file-previews {
   display: flex;
   gap: 8px;

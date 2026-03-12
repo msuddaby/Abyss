@@ -371,10 +371,12 @@ export interface AdminSettings {
   forceRelayMode: boolean;
   liveKitConfigured: boolean;
   codes: Invite[];
+  ytDlpEnabled: boolean;
+  ytDlpAllowedDomains: string[];
 }
 
 // Media provider types
-export type MediaProviderType = 'Plex' | 'YouTube' | 'Spotify' | 'Twitch' | 'SoundCloud';
+export type MediaProviderType = 'Plex' | 'YouTube' | 'Spotify' | 'Twitch' | 'SoundCloud' | 'YtDlp';
 
 export interface MediaProviderConnection {
   id: string;
@@ -447,6 +449,14 @@ export interface YouTubeResolveResult {
   thumbnailUrl: string;
 }
 
+export interface YtDlpResolveResult {
+  connectionId: string;
+  url: string;
+  title: string;
+  thumbnailUrl?: string;
+  durationMs?: number;
+}
+
 export interface SoundboardClip {
   id: string;
   serverId: string;
@@ -482,6 +492,7 @@ export const Permission = {
   UseSoundboard: 1 << 20,
   AddToWatchTogether: 1 << 21,
   ModerateWatchTogether: 1 << 22,
+  UseYtDlp: 1 << 23,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

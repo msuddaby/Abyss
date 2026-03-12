@@ -152,6 +152,11 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.send('screen-share-selected', sourceId);
   },
 
+  // Forward Sentry DSN to main process (renderer has it baked in by Vite)
+  sendSentryDsn: (dsn: string) => {
+    ipcRenderer.send('sentry-dsn', dsn);
+  },
+
   // TTS fallback via espeak-ng (for Linux where Chromium speechSynthesis is broken)
   tts: {
     speak: (text: string) => {

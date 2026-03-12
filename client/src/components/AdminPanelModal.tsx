@@ -33,6 +33,9 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const setMaxMessageLength = useAppConfigStore((s) => s.setMaxMessageLength);
   const [savingForceRelay, setSavingForceRelay] = useState(false);
   const setForceRelayMode = useAppConfigStore((s) => s.setForceRelayMode);
+  const [savingYtDlp, setSavingYtDlp] = useState(false);
+  const [ytDlpDomainsInput, setYtDlpDomainsInput] = useState('');
+  const [savingYtDlpDomains, setSavingYtDlpDomains] = useState(false);
 
   // Pagination state
   const [serverPage, setServerPage] = useState(0);
@@ -83,6 +86,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setStats(overviewRes.data);
       setSettings(settingsRes.data);
       setMaxMessageLengthInput(String(settingsRes.data.maxMessageLength ?? 4000));
+      setYtDlpDomainsInput((settingsRes.data.ytDlpAllowedDomains ?? []).join('\n'));
     } catch (err: any) {
       setError(err?.response?.data || 'Failed to load admin overview.');
     } finally {
@@ -250,6 +254,35 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setError(err?.response?.data || 'Failed to update force relay mode.');
     } finally {
       setSavingForceRelay(false);
+    }
+  };
+
+  const updateYtDlpEnabled = async (enabled: boolean) => {
+    if (!settings) return;
+    setSavingYtDlp(true);
+    setError(null);
+    try {
+      await api.put('/admin/settings/ytdlp-enabled', { enabled });
+      setSettings({ ...settings, ytDlpEnabled: enabled });
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to update yt-dlp setting.');
+    } finally {
+      setSavingYtDlp(false);
+    }
+  };
+
+  const updateYtDlpDomains = async () => {
+    if (!settings) return;
+    setSavingYtDlpDomains(true);
+    setError(null);
+    try {
+      const domains = ytDlpDomainsInput.split('\n').map((d) => d.trim()).filter(Boolean);
+      await api.put('/admin/settings/ytdlp-allowed-domains', { domains });
+      setSettings({ ...settings, ytDlpAllowedDomains: domains });
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to update yt-dlp domains.');
+    } finally {
+      setSavingYtDlpDomains(false);
     }
   };
 
@@ -1125,6 +1158,47 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                     </button>
                   </div>
                 </div>
+                <div className="us-card admin-setting-card">
+                  <div>
+                    <div className="admin-setting-title">yt-dlp (Direct Links)</div>
+                    <div className="admin-setting-desc">
+                      Allow watch parties from arbitrary URLs using yt-dlp. Requires yt-dlp on server PATH.
+                    </div>
+                  </div>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => updateYtDlpEnabled(!(settings?.ytDlpEnabled ?? false))}
+                    disabled={savingYtDlp || !settings}
+                  >
+                    {savingYtDlp ? 'Saving...' : (settings?.ytDlpEnabled ? 'Disable' : 'Enable')}
+                  </button>
+                </div>
+                {settings?.ytDlpEnabled && (
+                  <div className="us-card admin-setting-card admin-code-card">
+                    <div>
+                      <div className="admin-setting-title">yt-dlp Allowed Domains</div>
+                      <div className="admin-setting-desc">
+                        One domain per line (e.g. twitch.tv, vimeo.com). Empty = allow all domains.
+                      </div>
+                    </div>
+                    <div className="admin-code-actions" style={{ flexDirection: 'column', gap: '8px' }}>
+                      <textarea
+                        rows={4}
+                        value={ytDlpDomainsInput}
+                        onChange={(e) => setYtDlpDomainsInput(e.target.value)}
+                        placeholder="twitch.tv&#10;vimeo.com&#10;dailymotion.com"
+                        style={{ width: '100%', resize: 'vertical', background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: '4px', padding: '8px', fontFamily: 'monospace', fontSize: '13px' }}
+                      />
+                      <button
+                        className="btn-secondary"
+                        onClick={updateYtDlpDomains}
+                        disabled={savingYtDlpDomains}
+                      >
+                        {savingYtDlpDomains ? 'Saving...' : 'Save Domains'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

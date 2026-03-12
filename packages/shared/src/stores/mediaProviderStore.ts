@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import api, { getApiBase } from '../services/api.js';
 import { getStorage } from '../storage.js';
-import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo, YouTubeResolveResult } from '../types/index.js';
+import type { MediaProviderConnection, MediaLibrary, MediaItem, PlaybackInfo, YouTubeResolveResult, YtDlpResolveResult } from '../types/index.js';
 
 function resolveProxyUrls<T extends { thumbnailUrl?: string }>(items: T[]): T[] {
   const base = getApiBase();
@@ -34,6 +34,7 @@ interface MediaProviderState {
   searchItems: (serverId: string, connectionId: string, query: string, libraryId?: string) => Promise<void>;
   getPlaybackInfo: (serverId: string, connectionId: string, itemId: string) => Promise<PlaybackInfo | null>;
   resolveYouTubeUrl: (serverId: string, url: string) => Promise<YouTubeResolveResult | null>;
+  resolveYtDlpUrl: (serverId: string, url: string) => Promise<YtDlpResolveResult | null>;
   setConnections: (connections: MediaProviderConnection[]) => void;
   addConnection: (connection: MediaProviderConnection) => void;
   removeConnection: (connectionId: string) => void;
@@ -154,6 +155,16 @@ export const useMediaProviderStore = create<MediaProviderState>((set, get) => ({
       return res.data as YouTubeResolveResult;
     } catch (e) {
       console.error('Failed to resolve YouTube URL:', e);
+      return null;
+    }
+  },
+
+  resolveYtDlpUrl: async (serverId, url) => {
+    try {
+      const res = await api.get(`/servers/${serverId}/media-providers/ytdlp/resolve`, { params: { url } });
+      return res.data as YtDlpResolveResult;
+    } catch (e) {
+      console.error('Failed to resolve yt-dlp URL:', e);
       return null;
     }
   },

@@ -491,14 +491,38 @@ self.onmessage = (e: MessageEvent<MainToWorkerMessage>) => {
 
     case 'invoke': {
       const { id, method, args } = msg;
+
+      const doInvoke = () => {
+        const c = connection;
+        if (!c || c.state !== signalR.HubConnectionState.Connected) {
+          post({ type: 'invoke-result', id, ok: false, error: `Cannot invoke '${method}': not connected (state=${c?.state ?? 'null'})` });
+          return;
+        }
+        c.invoke(method, ...args)
+          .then((result) => post({ type: 'invoke-result', id, ok: true, result }))
+          .catch((err) => post({ type: 'invoke-result', id, ok: false, error: toErrorMessage(err) ?? 'Invoke failed' }));
+      };
+
       const conn = connection;
-      if (!conn || conn.state !== signalR.HubConnectionState.Connected) {
-        post({ type: 'invoke-result', id, ok: false, error: `Cannot invoke '${method}': not connected (state=${conn?.state ?? 'null'})` });
-        break;
+      if (conn && (conn.state === signalR.HubConnectionState.Connecting || conn.state === signalR.HubConnectionState.Reconnecting)) {
+        // Connection is in a transient state — wait for it to settle instead of
+        // rejecting immediately. This prevents noisy errors when invocations
+        // arrive while startConnection() or auto-reconnect is in progress.
+        let attempts = 0;
+        const poll = setInterval(() => {
+          attempts++;
+          const c = connection;
+          if (c?.state === signalR.HubConnectionState.Connected) {
+            clearInterval(poll);
+            doInvoke();
+          } else if (!c || c.state === signalR.HubConnectionState.Disconnected || attempts >= 100) {
+            clearInterval(poll);
+            post({ type: 'invoke-result', id, ok: false, error: `Cannot invoke '${method}': not connected (state=${c?.state ?? 'null'})` });
+          }
+        }, 100);
+      } else {
+        doInvoke();
       }
-      conn.invoke(method, ...args)
-        .then((result) => post({ type: 'invoke-result', id, ok: true, result }))
-        .catch((err) => post({ type: 'invoke-result', id, ok: false, error: toErrorMessage(err) ?? 'Invoke failed' }));
       break;
     }
 

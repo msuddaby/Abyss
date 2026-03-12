@@ -28,6 +28,7 @@ public class MediaProvidersController : ControllerBase
     private readonly ProviderConfigProtector _protector;
     private readonly WatchPartyService _watchPartyService;
     private readonly IMemoryCache _thumbCache;
+    private readonly YtDlpService _ytDlpService;
     private static readonly MemoryCacheEntryOptions ThumbCacheOptions = new()
     {
         AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
@@ -42,7 +43,8 @@ public class MediaProvidersController : ControllerBase
         MediaProviderFactory providerFactory,
         ProviderConfigProtector protector,
         WatchPartyService watchPartyService,
-        IMemoryCache thumbCache)
+        IMemoryCache thumbCache,
+        YtDlpService ytDlpService)
     {
         _db = db;
         _perms = perms;
@@ -51,6 +53,7 @@ public class MediaProvidersController : ControllerBase
         _protector = protector;
         _watchPartyService = watchPartyService;
         _thumbCache = thumbCache;
+        _ytDlpService = ytDlpService;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -574,7 +577,7 @@ public class MediaProvidersController : ControllerBase
                 OwnerId = UserId,
                 ProviderType = MediaProviderType.YouTube,
                 DisplayName = "YouTube",
-                ProviderConfigJson = "{}",
+                ProviderConfigJson = _protector.Encrypt("{}"),
                 LinkedAt = DateTime.UtcNow,
                 LastValidatedAt = DateTime.UtcNow
             };
@@ -590,6 +593,131 @@ public class MediaProvidersController : ControllerBase
 
         var (videoId, title, thumbnailUrl) = result.Value;
         return Ok(new YouTubeResolveDto(connection.Id, videoId, title, thumbnailUrl));
+    }
+
+    [HttpGet("ytdlp/resolve")]
+    public async Task<ActionResult> ResolveYtDlpUrl(Guid serverId, [FromQuery] string url)
+    {
+        if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
+        if (!await _ytDlpService.IsEnabledAsync())
+            return BadRequest("yt-dlp is not enabled on this server");
+
+        var allowedDomains = await _ytDlpService.GetAllowedDomainsAsync();
+        if (!_ytDlpService.ValidateDomain(url, allowedDomains))
+            return BadRequest("This domain is not allowed");
+
+        var meta = await _ytDlpService.GetMetadataAsync(url);
+        if (meta == null) return BadRequest("Failed to resolve URL — yt-dlp could not extract metadata");
+
+        // Auto-create or reuse YtDlp connection for this server
+        var connection = await _db.MediaProviderConnections
+            .FirstOrDefaultAsync(c => c.ServerId == serverId && c.ProviderType == MediaProviderType.YtDlp);
+
+        if (connection == null)
+        {
+            connection = new MediaProviderConnection
+            {
+                Id = Guid.NewGuid(),
+                ServerId = serverId,
+                OwnerId = UserId,
+                ProviderType = MediaProviderType.YtDlp,
+                DisplayName = "Direct Link (yt-dlp)",
+                ProviderConfigJson = _protector.Encrypt("{}"),
+                LinkedAt = DateTime.UtcNow,
+                LastValidatedAt = DateTime.UtcNow
+            };
+            _db.MediaProviderConnections.Add(connection);
+            await _db.SaveChangesAsync();
+
+            var connDto = new MediaProviderConnectionDto(
+                connection.Id, connection.ServerId, connection.OwnerId,
+                connection.ProviderType.ToString(), connection.DisplayName,
+                connection.LinkedAt, connection.LastValidatedAt);
+            await _hub.Clients.Group($"server:{serverId}").SendAsync("MediaProviderLinked", connDto);
+        }
+
+        return Ok(new
+        {
+            connectionId = connection.Id,
+            url,
+            title = meta.Title,
+            thumbnailUrl = meta.Thumbnail,
+            durationMs = meta.DurationMs,
+        });
+    }
+
+    [AllowAnonymous]
+    [HttpGet("{connectionId}/ytdlp-stream")]
+    public async Task<IActionResult> YtDlpStreamProxy(Guid serverId, Guid connectionId, [FromQuery] string url, [FromQuery] string? token = null)
+    {
+        // Auth check (same pattern as StreamItem)
+        string? userId = null;
+        if (!string.IsNullOrEmpty(token))
+        {
+            try
+            {
+                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                var jwtToken = tokenHandler.ReadJwtToken(token);
+                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            }
+            catch { return Unauthorized(); }
+        }
+        else
+        {
+            userId = UserId;
+        }
+        if (string.IsNullOrEmpty(userId)) return Unauthorized();
+        if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
+
+        var connection = await _db.MediaProviderConnections
+            .FirstOrDefaultAsync(c => c.Id == connectionId && c.ServerId == serverId);
+        if (connection == null || connection.ProviderType != MediaProviderType.YtDlp) return NotFound();
+
+        if (!await _ytDlpService.IsEnabledAsync()) return BadRequest("yt-dlp is not enabled");
+
+        var allowedDomains = await _ytDlpService.GetAllowedDomainsAsync();
+        if (!_ytDlpService.ValidateDomain(url, allowedDomains)) return BadRequest("Domain not allowed");
+
+        var playback = await _ytDlpService.GetPlaybackUrlAsync(url);
+        if (playback == null) return BadRequest("Failed to resolve playback URL");
+
+        using var httpClient = new HttpClient();
+        var request = new HttpRequestMessage(HttpMethod.Get, playback.Url);
+
+        if (Request.Headers.ContainsKey("Range"))
+            request.Headers.TryAddWithoutValidation("Range", Request.Headers["Range"].ToString());
+
+        foreach (var header in playback.Headers)
+            request.Headers.TryAddWithoutValidation(header.Key, header.Value);
+
+        try
+        {
+            var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode);
+
+            Response.ContentType = playback.ContentType;
+            if (response.Content.Headers.ContentLength.HasValue)
+                Response.ContentLength = response.Content.Headers.ContentLength.Value;
+
+            if (response.StatusCode == System.Net.HttpStatusCode.PartialContent)
+            {
+                Response.StatusCode = 206;
+                if (response.Content.Headers.ContentRange != null)
+                    Response.Headers["Content-Range"] = response.Content.Headers.ContentRange.ToString();
+            }
+
+            Response.Headers["Accept-Ranges"] = "bytes";
+
+            await using var stream = await response.Content.ReadAsStreamAsync();
+            await stream.CopyToAsync(Response.Body);
+            return new EmptyResult();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error proxying yt-dlp stream: {ex.Message}");
+            return StatusCode(500, "Failed to stream content");
+        }
     }
 
     [AllowAnonymous]

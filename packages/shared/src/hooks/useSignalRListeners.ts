@@ -111,7 +111,17 @@ function playVoiceSound(url: string | null | undefined, fallbackPath: string) {
   }
 }
 
+// Helper: schedule an invoke after a delay (for staggering reconnect bursts)
+function delayedInvoke(conn: SignalRConnection, delayMs: number, method: string, ...args: unknown[]): Promise<unknown> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      conn.invoke(method, ...args).then(resolve).catch((err) => { console.error(err); resolve(undefined); });
+    }, delayMs);
+  });
+}
+
 export function fetchServerState(conn: SignalRConnection, serverId: string) {
+  // Tier 1 — immediate: voice state (critical for sidebar + voice view)
   conn.invoke('GetServerVoiceUsers', serverId).then((data: Record<string, Record<string, { displayName: string; isMuted: boolean; isDeafened: boolean; isServerMuted: boolean; isServerDeafened: boolean }>>) => {
     useServerStore.getState().setVoiceChannelUsers(data);
   }).catch(console.error);
@@ -124,52 +134,59 @@ export function fetchServerState(conn: SignalRConnection, serverId: string) {
     useServerStore.getState().setVoiceChannelCameras(data);
   }).catch(console.error);
 
-  conn.invoke('GetServerWatchParties', serverId).then((data: Record<string, string>) => {
-    useServerStore.getState().setVoiceChannelWatchParties(data);
-  }).catch(console.error);
+  // Tier 2 — 300ms delay: online users, watch parties
+  delayedInvoke(conn, 300, 'GetServerWatchParties', serverId).then((data) => {
+    if (data) useServerStore.getState().setVoiceChannelWatchParties(data as Record<string, string>);
+  });
 
-  conn.invoke('GetOnlineUsers', serverId).then((data: Record<string, number>) => {
+  delayedInvoke(conn, 300, 'GetOnlineUsers', serverId).then((data) => {
+    if (!data) return;
+    const typed = data as Record<string, number>;
     const store = usePresenceStore.getState();
-    store.setOnlineUsers(Object.keys(data));
-    for (const [userId, status] of Object.entries(data)) {
+    store.setOnlineUsers(Object.keys(typed));
+    for (const [userId, status] of Object.entries(typed)) {
       store.setUserStatus(userId, status);
     }
-  }).catch(console.error);
+  });
 
-  useMediaProviderStore.getState().fetchConnections(serverId);
+  // Tier 3 — 600ms delay: unreads, settings, soundboard, media providers
+  delayedInvoke(conn, 600, 'GetUnreadState', serverId).then((unreads) => {
+    if (unreads) useUnreadStore.getState().setChannelUnreads(serverId, unreads as { channelId: string; hasUnread: boolean; mentionCount: number }[]);
+  });
 
-  conn.invoke('GetUnreadState', serverId).then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
-    useUnreadStore.getState().setChannelUnreads(serverId, unreads);
-  }).catch(console.error);
-
-  useNotificationSettingsStore.getState().fetchSettings(serverId);
-
-  useSoundboardStore.getState().fetchClips(serverId);
+  setTimeout(() => {
+    useMediaProviderStore.getState().fetchConnections(serverId);
+    useNotificationSettingsStore.getState().fetchSettings(serverId);
+    useSoundboardStore.getState().fetchClips(serverId);
+  }, 600);
 }
 
 export function refreshSignalRState(conn: SignalRConnection) {
-  conn.invoke('GetAllServerUnreads').then((unreads: { serverId: string; hasUnread: boolean; mentionCount: number }[]) => {
-    useUnreadStore.getState().setServerUnreads(unreads);
-  }).catch(console.error);
+  // Tier 1 — immediate: active server voice state + DM channels (visible UI)
+  const server = useServerStore.getState().activeServer;
+  if (server) {
+    fetchServerState(conn, server.id);
+  }
 
   conn.invoke('GetDmChannels', 0, 50).then((dms: DmChannel[]) => {
     useDmStore.setState({ dmChannels: dms });
   }).catch(console.error);
 
-  conn.invoke('GetDmUnreads').then((unreads: { channelId: string; hasUnread: boolean; mentionCount: number }[]) => {
-    useUnreadStore.getState().setDmUnreads(unreads);
-  }).catch(console.error);
+  // Tier 2 — 400ms delay: unreads (badges)
+  delayedInvoke(conn, 400, 'GetAllServerUnreads').then((unreads) => {
+    if (unreads) useUnreadStore.getState().setServerUnreads(unreads as { serverId: string; hasUnread: boolean; mentionCount: number }[]);
+  });
 
-  // Fetch user preferences from server (source of truth)
-  useUserPreferencesStore.getState().fetchPreferences();
+  delayedInvoke(conn, 400, 'GetDmUnreads').then((unreads) => {
+    if (unreads) useUnreadStore.getState().setDmUnreads(unreads as { channelId: string; hasUnread: boolean; mentionCount: number }[]);
+  });
 
-  useFriendStore.getState().fetchFriends().catch(console.error);
-  useFriendStore.getState().fetchRequests().catch(console.error);
-
-  const server = useServerStore.getState().activeServer;
-  if (server) {
-    fetchServerState(conn, server.id);
-  }
+  // Tier 3 — 800ms delay: friends, preferences (background data)
+  setTimeout(() => {
+    useUserPreferencesStore.getState().fetchPreferences();
+    useFriendStore.getState().fetchFriends().catch(console.error);
+    useFriendStore.getState().fetchRequests().catch(console.error);
+  }, 800);
 }
 
 export async function rejoinActiveChannel(conn: SignalRConnection) {

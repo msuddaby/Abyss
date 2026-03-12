@@ -13,5 +13,16 @@ public class ProviderConfigProtector
 
     public string Encrypt(string plainText) => _protector.Protect(plainText);
 
-    public string Decrypt(string cipherText) => _protector.Unprotect(cipherText);
+    public string Decrypt(string cipherText)
+    {
+        try
+        {
+            return _protector.Unprotect(cipherText);
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            // Legacy rows stored plain-text JSON before encryption was enforced
+            return cipherText;
+        }
+    }
 }

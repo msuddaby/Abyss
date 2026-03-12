@@ -135,6 +135,8 @@ builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached thumbnails
 builder.Services.AddHttpClient<PlexMediaProvider>();
 builder.Services.AddHttpClient<YouTubeMediaProvider>();
+builder.Services.AddSingleton<YtDlpService>();
+builder.Services.AddSingleton<YtDlpMediaProvider>();
 
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>
@@ -225,7 +227,7 @@ builder.Services.AddSignalR(options =>
     // Default is 1 — serialises ALL hub invocations per connection.
     // When the client sends a burst of state-refresh calls on tab-focus,
     // a lightweight Ping gets stuck behind heavy DB queries and times out.
-    options.MaximumParallelInvocationsPerClient = 5;
+    options.MaximumParallelInvocationsPerClient = 10;
     options.AddFilter<RateLimitFilter>();
 });
 

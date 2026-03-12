@@ -111,6 +111,7 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
     perms: [
       { perm: Permission.AddToWatchTogether, label: 'Add to Queue', description: 'Add items to the Watch Together queue' },
       { perm: Permission.ModerateWatchTogether, label: 'Moderate Watch Together', description: 'Pause, stop, skip, and reorder Watch Together queue' },
+      { perm: Permission.UseYtDlp, label: 'Use Direct Links (yt-dlp)', description: 'Start watch parties from arbitrary URLs via yt-dlp' },
     ],
   },
 ];

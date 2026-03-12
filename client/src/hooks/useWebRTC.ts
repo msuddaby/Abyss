@@ -20,6 +20,7 @@ import {
   sfuSetUserVolume,
   sfuSetScreenAudioVolume,
   sfuSetInputDevice,
+  sfuReplaceAudioTrack,
   sfuPublishScreenShare,
   sfuUnpublishScreenShare,
   sfuPublishCamera,
@@ -219,6 +220,17 @@ async function fallbackToSFU(reason: string): Promise<void> {
 
     // Connect via LiveKit SFU (sets mode to 'sfu' on success)
     await connectToLiveKit(channelId);
+
+    // Replace LiveKit's track with our RNNoise-processed output if suppressor is active
+    const processedTrack = peerStream?.getAudioTracks()[0];
+    if (noiseSuppressor && processedTrack) {
+      try {
+        await sfuReplaceAudioTrack(processedTrack);
+        console.log('[fallback/sfu] RNNoise applied to SFU audio track');
+      } catch (err) {
+        console.warn('[fallback/sfu] Failed to apply RNNoise to SFU track:', err);
+      }
+    }
 
     // Notify other peers in the channel that relay is active
     const conn = getConnection();
@@ -806,6 +818,11 @@ function enqueueSignaling(
   };
   const next = prev.then(guarded, guarded).catch((err) => {
     console.error(`Signaling error for ${peerId}:`, err);
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      level: 'error',
+      tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'signaling' },
+      contexts: { voice: { peerId } },
+    });
   });
   signalingQueues.set(peerId, next);
   return next;
@@ -1919,7 +1936,15 @@ function createPeerConnection(
       const conn = getConnection();
       conn
         .invoke("SendSignal", peerId, JSON.stringify(event.candidate.toJSON()))
-        .catch((err) => console.error("Failed to send ICE candidate:", err));
+        .catch((err) => {
+          console.error("Failed to send ICE candidate:", err);
+          Sentry.addBreadcrumb({
+            category: 'webrtc',
+            message: `Failed to send ICE candidate to ${peerId}`,
+            level: 'error',
+            data: { peerId, error: err instanceof Error ? err.message : String(err) },
+          });
+        });
     } else {
       // ICE gathering complete for this peer
       console.log(`[ICE] Gathering complete for ${peerId}`);
@@ -2363,6 +2388,12 @@ async function startScreenShareInternal() {
     await conn.invoke("NotifyScreenShare", voiceState.currentChannelId, true);
   } catch (err: any) {
     console.error("Could not get display media:", err);
+    if (err?.name !== "NotAllowedError") {
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+        level: 'error',
+        tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'screen-share' },
+      });
+    }
     // Don't toast for user cancel (NotAllowedError)
     if (err?.name !== "NotAllowedError") {
       useToastStore.getState().addToast("Could not start screen share.", "error");
@@ -2516,6 +2547,10 @@ async function startCameraInternal() {
     await conn.invoke("NotifyCamera", voiceState.currentChannelId, true);
   } catch (err) {
     console.error("Could not get camera:", err);
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      level: 'error',
+      tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'camera' },
+    });
     useToastStore.getState().addToast("Could not access camera. Check permissions.", "error");
   } finally {
     voiceState.setCameraLoading(false);
@@ -2981,6 +3016,11 @@ async function attemptVoiceRejoin(reason: string, options?: { silent?: boolean }
   } catch (err) {
     cancelInitialParticipantWait();
     console.error(`Failed to rejoin voice (${reason}):`, err);
+    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+      level: 'error',
+      tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'rejoin' },
+      contexts: { voice: { reason, channelId } },
+    });
     if (!silent) useToastStore.getState().addToast("Failed to reconnect to voice channel.", "error");
     // Full cleanup on failure — drop user out of voice
     cleanupAll();
@@ -3546,8 +3586,10 @@ export function useWebRTC() {
     if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) {
       return;
     }
-    // In SFU mode, delegate device switching to LiveKit
-    if (isInSfuMode()) {
+    // In SFU mode without RNNoise, delegate device switching to LiveKit.
+    // With RNNoise active (isManualMicPublish), sfuSetInputDevice no-ops —
+    // we need to recapture the mic and swap the suppressor input ourselves.
+    if (isInSfuMode() && !noiseSuppressor) {
       void sfuSetInputDevice(inputDeviceId);
       return;
     }
@@ -3590,18 +3632,44 @@ export function useWebRTC() {
 
   // Toggle RNNoise suppressor mid-call when noiseSuppression setting changes
   useEffect(() => {
-    if (!currentChannelId || !localStream) return;
+    if (!currentChannelId) return;
     // Skip if we just joined — applySuppressor already ran
     if (Date.now() - lastVoiceJoinTime < DEVICE_EFFECT_SKIP_WINDOW_MS) return;
+
+    const sfuMode = isInSfuMode();
+
+    // In SFU mode we may not have a localStream yet (LiveKit captured its own).
+    // In P2P mode we need localStream to feed the suppressor.
+    if (!sfuMode && !localStream) return;
 
     let cancelled = false;
     (async () => {
       try {
         if (noiseSuppression && !noiseSuppressor) {
-          // Enable: create suppressor, replace peer tracks with processed output
+          // If in SFU mode and we don't have a local stream, capture one
+          let rawStream = localStream;
+          if (sfuMode && !rawStream) {
+            const vs = useVoiceStore.getState();
+            const audioConstraints: MediaTrackConstraints = {
+              noiseSuppression: true,
+              echoCancellation: vs.echoCancellation,
+              autoGainControl: vs.autoGainControl,
+            };
+            if (vs.inputDeviceId && vs.inputDeviceId !== 'default') {
+              audioConstraints.deviceId = { exact: vs.inputDeviceId };
+            }
+            rawStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+            if (cancelled) {
+              rawStream.getTracks().forEach(t => t.stop());
+              return;
+            }
+            localStream = rawStream;
+          }
+
+          // Enable: create suppressor, replace tracks with processed output
           const suppressor = await createNoiseSuppressor();
           const ctx = ensureAudioContext();
-          const processed = await suppressor.initialize(localStream!, ctx);
+          const processed = await suppressor.initialize(rawStream!, ctx);
           if (cancelled) {
             suppressor.destroy();
             return;
@@ -3611,35 +3679,47 @@ export function useWebRTC() {
             peerStream = processed;
             const processedTrack = processed.getAudioTracks()[0];
             if (processedTrack) {
-              // Collect screen-audio track IDs to skip
-              const screenAudioTrackIds = new Set<string>();
-              for (const senders of screenTrackSenders.values()) {
-                for (const s of senders) {
-                  if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+              if (sfuMode) {
+                // SFU: replace the LiveKit-published mic track
+                await sfuReplaceAudioTrack(processedTrack);
+              } else {
+                // P2P: replace tracks on all peer connections
+                const screenAudioTrackIds = new Set<string>();
+                for (const senders of screenTrackSenders.values()) {
+                  for (const s of senders) {
+                    if (s.track?.kind === "audio") screenAudioTrackIds.add(s.track.id);
+                  }
                 }
-              }
-              for (const [peerId, pc] of peers) {
-                const sender = pc.getSenders().find(
-                  s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
-                );
-                if (sender) {
-                  try {
-                    await sender.replaceTrack(processedTrack);
-                  } catch (err) {
-                    console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
+                for (const [peerId, pc] of peers) {
+                  const sender = pc.getSenders().find(
+                    s => s.track?.kind === "audio" && !screenAudioTrackIds.has(s.track!.id)
+                  );
+                  if (sender) {
+                    try {
+                      await sender.replaceTrack(processedTrack);
+                    } catch (err) {
+                      console.warn(`[noiseSuppression] Failed to replace track for ${peerId}:`, err);
+                    }
                   }
                 }
               }
             }
-            console.log("[noiseSuppression] RNNoise enabled mid-call");
+            console.log(`[noiseSuppression] RNNoise enabled mid-call (${sfuMode ? 'SFU' : 'P2P'})`);
           }
         } else if (!noiseSuppression && noiseSuppressor) {
-          // Disable: destroy suppressor, replace peer tracks with raw localStream
+          // Disable: destroy suppressor, replace tracks with raw localStream
           noiseSuppressor.destroy();
           noiseSuppressor = null;
           peerStream = localStream;
-          const rawTrack = localStream!.getAudioTracks()[0];
-          if (rawTrack) {
+          const rawTrack = localStream?.getAudioTracks()[0];
+
+          if (sfuMode) {
+            // SFU: replace LiveKit track with raw mic, or re-enable LiveKit's own capture
+            if (rawTrack) {
+              await sfuReplaceAudioTrack(rawTrack);
+            }
+          } else if (rawTrack) {
+            // P2P: replace tracks on all peer connections
             const screenAudioTrackIds = new Set<string>();
             for (const senders of screenTrackSenders.values()) {
               for (const s of senders) {
@@ -3659,7 +3739,7 @@ export function useWebRTC() {
               }
             }
           }
-          console.log("[noiseSuppression] RNNoise disabled mid-call");
+          console.log(`[noiseSuppression] RNNoise disabled mid-call (${sfuMode ? 'SFU' : 'P2P'})`);
         }
       } catch (err) {
         console.error("[noiseSuppression] Failed to toggle RNNoise:", err);
@@ -3869,6 +3949,36 @@ export function useWebRTC() {
           // Connect via LiveKit
           await connectToLiveKit(channelId);
 
+          // Apply RNNoise to the LiveKit-published mic track if enabled.
+          // LiveKit's publishAudio only sets the browser's native noiseSuppression
+          // constraint — we need to replace the track with our RNNoise-processed one.
+          if (voiceState.noiseSuppression) {
+            try {
+              const audioConstraints: MediaTrackConstraints = {
+                noiseSuppression: true,
+                echoCancellation: voiceState.echoCancellation,
+                autoGainControl: voiceState.autoGainControl,
+              };
+              if (voiceState.inputDeviceId && voiceState.inputDeviceId !== 'default') {
+                audioConstraints.deviceId = { exact: voiceState.inputDeviceId };
+              } else {
+                const resolvedId = await resolveDefaultInputDevice();
+                if (resolvedId !== 'default') {
+                  audioConstraints.deviceId = { exact: resolvedId };
+                }
+              }
+              localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+              await applySuppressor(localStream);
+              const processedTrack = peerStream?.getAudioTracks()[0];
+              if (processedTrack) {
+                await sfuReplaceAudioTrack(processedTrack);
+                console.log('[join/sfu] RNNoise applied to SFU audio track');
+              }
+            } catch (err) {
+              console.warn('[join/sfu] Failed to apply RNNoise, using LiveKit native capture:', err);
+            }
+          }
+
           // Notify other peers in the channel that relay is active
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
@@ -3913,6 +4023,10 @@ export function useWebRTC() {
           );
         } catch (err) {
           console.error("Could not access microphone:", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            level: 'error',
+            tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'mic-access' },
+          });
           useToastStore.getState().addToast("Could not access microphone. Check permissions.", "error");
           return;
         }
@@ -3951,6 +4065,11 @@ export function useWebRTC() {
         } catch (err) {
           cancelInitialParticipantWait();
           console.error("Failed to join voice channel:", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            level: 'error',
+            tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'join' },
+            contexts: { voice: { channelId } },
+          });
           cleanupAll();
           setCurrentChannel(null);
           setParticipants(new Map());
@@ -3986,6 +4105,16 @@ export function useWebRTC() {
           console.log('[join] Channel has relay users, connecting via SFU');
           cleanupP2PConnections();
           await connectToLiveKit(channelId);
+          // applySuppressor already ran above — replace LiveKit's track with our RNNoise output
+          const processedTrack = peerStream?.getAudioTracks()[0];
+          if (noiseSuppressor && processedTrack) {
+            try {
+              await sfuReplaceAudioTrack(processedTrack);
+              console.log('[join/sfu-relay] RNNoise applied to SFU audio track');
+            } catch (err) {
+              console.warn('[join/sfu-relay] Failed to apply RNNoise to SFU track:', err);
+            }
+          }
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
           startAudioKeepAlive();
           voiceState.setConnectionState('connected');
@@ -4160,6 +4289,10 @@ export function useWebRTC() {
         } catch (err) {
           cancelInitialParticipantWait();
           console.error("[voice] Failed to re-register voice after SignalR reconnect:", err);
+          Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+            level: 'error',
+            tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'reconnect-reregister' },
+          });
           // Only do a full rejoin if re-registration fails (e.g. server restart cleared voice state)
           if (document.hidden) {
             pendingVisibilityRejoin = true;

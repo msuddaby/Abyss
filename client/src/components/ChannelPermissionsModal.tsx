@@ -37,6 +37,7 @@ const CHANNEL_PERM_SECTIONS = [
     perms: [
       { key: 'AddToWatchTogether', label: 'Add to Queue', desc: 'Add items to the Watch Together queue', value: Permission.AddToWatchTogether },
       { key: 'ModerateWatchTogether', label: 'Moderate Watch Together', desc: 'Pause, stop, skip, and reorder queue', value: Permission.ModerateWatchTogether },
+      { key: 'UseYtDlp', label: 'Use Direct Links (yt-dlp)', desc: 'Start watch parties from arbitrary URLs via yt-dlp', value: Permission.UseYtDlp },
     ],
   },
 ];

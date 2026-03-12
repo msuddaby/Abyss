@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMediaProviderStore, useServerStore, useVoiceStore, useWatchPartyStore, useToastStore } from '@abyss/shared';
-import type { MediaLibrary, MediaItem, MediaProviderConnection, YouTubeResolveResult } from '@abyss/shared';
+import type { MediaLibrary, MediaItem, MediaProviderConnection, YouTubeResolveResult, YtDlpResolveResult } from '@abyss/shared';
 
 interface Props {
   onClose: () => void;
@@ -25,7 +25,7 @@ function isContainer(type: string): boolean {
   return type === 'show' || type === 'season' || type === 'artist' || type === 'album';
 }
 
-type Tab = 'library' | 'youtube';
+type Tab = 'library' | 'youtube' | 'ytdlp';
 
 export default function MediaLibraryBrowser({ onClose }: Props) {
   const activeServer = useServerStore((s) => s.activeServer);
@@ -51,6 +51,12 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
   const [ytResolved, setYtResolved] = useState<YouTubeResolveResult | null>(null);
   const [ytError, setYtError] = useState('');
   const [ytLoading, setYtLoading] = useState(false);
+
+  // yt-dlp tab state
+  const [dlpUrl, setDlpUrl] = useState('');
+  const [dlpResolved, setDlpResolved] = useState<YtDlpResolveResult | null>(null);
+  const [dlpError, setDlpError] = useState('');
+  const [dlpLoading, setDlpLoading] = useState(false);
 
   // Active party's provider type (for cross-provider queue gating)
   const activePartyIsYouTube = activeParty?.providerType === 'YouTube';
@@ -228,6 +234,61 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
     }
   };
 
+  // yt-dlp handlers
+  const handleDlpResolve = async () => {
+    if (!dlpUrl.trim() || !activeServer) return;
+    setDlpError('');
+    setDlpResolved(null);
+    setDlpLoading(true);
+    const result = await useMediaProviderStore.getState().resolveYtDlpUrl(activeServer.id, dlpUrl.trim());
+    setDlpLoading(false);
+    if (result) {
+      setDlpResolved(result);
+    } else {
+      setDlpError('Failed to resolve URL. Check that it\'s from an allowed domain and yt-dlp is enabled.');
+    }
+  };
+
+  const handleDlpPlay = async () => {
+    if (!dlpResolved || !currentChannelId) return;
+    try {
+      if (activeParty) {
+        await useWatchPartyStore.getState().stopWatchParty(currentChannelId);
+      }
+      await useWatchPartyStore.getState().startWatchParty(currentChannelId, {
+        mediaProviderConnectionId: dlpResolved.connectionId,
+        providerItemId: dlpResolved.url,
+        itemTitle: dlpResolved.title,
+        itemThumbnail: dlpResolved.thumbnailUrl,
+        itemDurationMs: dlpResolved.durationMs,
+      });
+      onClose();
+    } catch (e) {
+      console.error('Failed to start yt-dlp watch party:', e);
+    }
+  };
+
+  const handleDlpAddToQueue = async () => {
+    if (!dlpResolved || !currentChannelId || !activeParty) return;
+    try {
+      await useWatchPartyStore.getState().addToQueue(currentChannelId, {
+        providerItemId: dlpResolved.url,
+        title: dlpResolved.title,
+        thumbnail: dlpResolved.thumbnailUrl,
+        durationMs: dlpResolved.durationMs,
+      });
+      setDlpResolved(null);
+      setDlpUrl('');
+    } catch (e: any) {
+      const status = e?.response?.status;
+      if (status === 403) {
+        useToastStore.getState().addToast('You don\'t have permission to add to the queue. Ask a server admin to grant the "Add to Queue" permission.', 'error');
+      } else {
+        useToastStore.getState().addToast('Failed to add to queue', 'error');
+      }
+    }
+  };
+
   const displayItems = searchQuery.trim() ? searchResults : (drillItems ?? libraryItems);
 
   return (
@@ -249,11 +310,61 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
             >
               YouTube
             </button>
+            <button
+              className={`mlb-tab ${activeTab === 'ytdlp' ? 'active' : ''}`}
+              onClick={() => setActiveTab('ytdlp')}
+            >
+              Direct Link
+            </button>
           </div>
           <button className="mlb-close-btn" onClick={onClose}>✕</button>
         </div>
 
-        {activeTab === 'youtube' ? (
+        {activeTab === 'ytdlp' ? (
+          <div className="mlb-yt-section">
+            <div className="mlb-yt-input-row">
+              <input
+                type="text"
+                className="mlb-yt-input"
+                placeholder="Paste any video URL (Twitch, Vimeo, etc.)..."
+                value={dlpUrl}
+                onChange={(e) => setDlpUrl(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleDlpResolve()}
+              />
+              <button
+                className="mlb-yt-load-btn"
+                onClick={handleDlpResolve}
+                disabled={dlpLoading || !dlpUrl.trim()}
+              >
+                {dlpLoading ? 'Resolving...' : 'Resolve'}
+              </button>
+            </div>
+            {dlpError && <div className="mlb-yt-error">{dlpError}</div>}
+            {dlpResolved && (
+              <div className="mlb-yt-preview">
+                {dlpResolved.thumbnailUrl && (
+                  <img src={dlpResolved.thumbnailUrl} alt={dlpResolved.title} className="mlb-yt-thumb" />
+                )}
+                <div className="mlb-yt-preview-info">
+                  <div className="mlb-yt-preview-title">{dlpResolved.title}</div>
+                  {dlpResolved.durationMs && (
+                    <div className="mlb-card-duration">{formatDuration(dlpResolved.durationMs)}</div>
+                  )}
+                  <div className="mlb-yt-preview-actions">
+                    <button className="mlb-play-btn" onClick={handleDlpPlay}>
+                      ▶ Play Now
+                    </button>
+                    {activeParty && activeParty.providerType === 'YtDlp' && (
+                      <button className="mlb-queue-btn" onClick={handleDlpAddToQueue}>
+                        + Queue
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'youtube' ? (
           <div className="mlb-yt-section">
             <div className="mlb-yt-input-row">
               <input

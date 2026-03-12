@@ -17,6 +17,7 @@ public class MediaProviderFactory
         {
             MediaProviderType.Plex => _serviceProvider.GetService<PlexMediaProvider>(),
             MediaProviderType.YouTube => _serviceProvider.GetService<YouTubeMediaProvider>(),
+            MediaProviderType.YtDlp => _serviceProvider.GetService<YtDlpMediaProvider>(),
             _ => null
         };
     }

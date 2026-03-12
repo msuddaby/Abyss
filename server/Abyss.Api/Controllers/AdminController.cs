@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,8 @@ public class AdminController : ControllerBase
     private const string InviteOnlyKey = "InviteOnly";
     private const string MaxMessageLengthKey = "MaxMessageLength";
     private const string ForceRelayModeKey = "ForceRelayMode";
+    private const string YtDlpEnabledKey = "YtDlpEnabled";
+    private const string YtDlpAllowedDomainsKey = "YtDlpAllowedDomains";
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -176,6 +179,8 @@ public class AdminController : ControllerBase
         var inviteOnly = await GetInviteOnlyAsync();
         var maxMessageLength = await GetMaxMessageLengthAsync();
         var forceRelayMode = await GetForceRelayModeAsync();
+        var ytDlpEnabled = await GetYtDlpEnabledAsync();
+        var ytDlpAllowedDomains = await GetYtDlpAllowedDomainsAsync();
         var codes = await _db.Invites
             .Where(i => i.ServerId == null)
             .OrderByDescending(c => c.CreatedAt)
@@ -190,7 +195,7 @@ public class AdminController : ControllerBase
                 c.LastUsedAt))
             .ToListAsync();
 
-        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, forceRelayMode, _liveKit.IsConfigured, codes));
+        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, forceRelayMode, _liveKit.IsConfigured, codes, ytDlpEnabled, ytDlpAllowedDomains));
     }
 
     [HttpPut("settings/invite-only")]
@@ -222,6 +227,25 @@ public class AdminController : ControllerBase
         await SetForceRelayModeAsync(request.ForceRelayMode);
         await _hub.Clients.All.SendAsync("ConfigUpdated", new { forceRelayMode = request.ForceRelayMode });
         return Ok(new { forceRelayMode = request.ForceRelayMode });
+    }
+
+    [HttpPut("settings/ytdlp-enabled")]
+    public async Task<IActionResult> UpdateYtDlpEnabled(UpdateYtDlpEnabledRequest request)
+    {
+        if (!IsSysadmin()) return Forbid();
+        await SetYtDlpEnabledAsync(request.Enabled);
+        await _hub.Clients.All.SendAsync("ConfigUpdated", new { ytDlpEnabled = request.Enabled });
+        return Ok(new { ytDlpEnabled = request.Enabled });
+    }
+
+    [HttpPut("settings/ytdlp-allowed-domains")]
+    public async Task<IActionResult> UpdateYtDlpAllowedDomains(UpdateYtDlpAllowedDomainsRequest request)
+    {
+        if (!IsSysadmin()) return Forbid();
+        var domains = request.Domains ?? new List<string>();
+        await SetYtDlpAllowedDomainsAsync(domains);
+        await _hub.Clients.All.SendAsync("ConfigUpdated", new { ytDlpAllowedDomains = domains });
+        return Ok(new { ytDlpAllowedDomains = domains });
     }
 
     [HttpPost("invite-codes")]
@@ -308,6 +332,60 @@ public class AdminController : ControllerBase
             row.UpdatedAt = DateTime.UtcNow;
         }
 
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task<bool> GetYtDlpEnabledAsync()
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == YtDlpEnabledKey);
+        if (row == null) return false;
+        return bool.TryParse(row.Value, out var value) && value;
+    }
+
+    private async Task SetYtDlpEnabledAsync(bool enabled)
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == YtDlpEnabledKey);
+        if (row == null)
+        {
+            row = new Models.AppConfig { Key = YtDlpEnabledKey, Value = enabled.ToString() };
+            _db.AppConfigs.Add(row);
+        }
+        else
+        {
+            row.Value = enabled.ToString();
+            row.UpdatedAt = DateTime.UtcNow;
+        }
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task<List<string>> GetYtDlpAllowedDomainsAsync()
+    {
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == YtDlpAllowedDomainsKey);
+        if (row == null || string.IsNullOrWhiteSpace(row.Value)) return new List<string>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(row.Value) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private async Task SetYtDlpAllowedDomainsAsync(List<string> domains)
+    {
+        var json = JsonSerializer.Serialize(domains);
+        var row = await _db.AppConfigs.FirstOrDefaultAsync(c => c.Key == YtDlpAllowedDomainsKey);
+        if (row == null)
+        {
+            row = new Models.AppConfig { Key = YtDlpAllowedDomainsKey, Value = json };
+            _db.AppConfigs.Add(row);
+        }
+        else
+        {
+            row.Value = json;
+            row.UpdatedAt = DateTime.UtcNow;
+        }
         await _db.SaveChangesAsync();
     }
 

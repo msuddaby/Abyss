@@ -25,6 +25,7 @@ public class WatchPartyController : ControllerBase
     private readonly VoiceStateService _voiceState;
     private readonly MediaProviderFactory _providerFactory;
     private readonly ProviderConfigProtector _protector;
+    private readonly YtDlpService _ytDlpService;
 
     public WatchPartyController(
         AppDbContext db,
@@ -33,7 +34,8 @@ public class WatchPartyController : ControllerBase
         WatchPartyService watchPartyService,
         VoiceStateService voiceState,
         MediaProviderFactory providerFactory,
-        ProviderConfigProtector protector)
+        ProviderConfigProtector protector,
+        YtDlpService ytDlpService)
     {
         _db = db;
         _perms = perms;
@@ -42,6 +44,7 @@ public class WatchPartyController : ControllerBase
         _voiceState = voiceState;
         _providerFactory = providerFactory;
         _protector = protector;
+        _ytDlpService = ytDlpService;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -81,6 +84,18 @@ public class WatchPartyController : ControllerBase
             .FirstOrDefaultAsync(c => c.Id == req.MediaProviderConnectionId && c.ServerId == serverId);
         if (connection == null) return BadRequest("Invalid media provider connection");
 
+        // yt-dlp specific checks
+        if (connection.ProviderType == MediaProviderType.YtDlp)
+        {
+            if (!await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.UseYtDlp))
+                return Forbid();
+            if (!await _ytDlpService.IsEnabledAsync())
+                return BadRequest("yt-dlp is not enabled on this server");
+            var allowedDomains = await _ytDlpService.GetAllowedDomainsAsync();
+            if (!_ytDlpService.ValidateDomain(req.ProviderItemId, allowedDomains))
+                return BadRequest("This domain is not allowed");
+        }
+
         var id = Guid.NewGuid();
         var state = new WatchPartyState
         {
@@ -105,23 +120,31 @@ public class WatchPartyController : ControllerBase
         {
             try
             {
-                var provider = _providerFactory.GetProvider(connection.ProviderType);
-                if (provider != null)
+                if (connection.ProviderType == MediaProviderType.YtDlp)
                 {
-                    var configJson = _protector.Decrypt(connection.ProviderConfigJson);
-                    var playback = await provider.GetPlaybackInfoAsync(configJson, req.ProviderItemId);
-                    if (playback != null)
+                    // Route through our yt-dlp proxy so resolved URL + headers are handled server-side
+                    state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/ytdlp-stream?url={Uri.EscapeDataString(req.ProviderItemId)}";
+                }
+                else
+                {
+                    var provider = _providerFactory.GetProvider(connection.ProviderType);
+                    if (provider != null)
                     {
-                        if (playback.ContentType == "application/x-mpegURL")
+                        var configJson = _protector.Decrypt(connection.ProviderConfigJson);
+                        var playback = await provider.GetPlaybackInfoAsync(configJson, req.ProviderItemId);
+                        if (playback != null)
                         {
-                            var plexUri = new Uri(playback.Url);
-                            var plexPath = System.Text.RegularExpressions.Regex.Replace(
-                                plexUri.PathAndQuery, @"[&?]X-Plex-Token=[^&]*", "");
-                            state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/hls?path={Uri.EscapeDataString(plexPath)}";
-                        }
-                        else
-                        {
-                            state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/stream/{Uri.EscapeDataString(req.ProviderItemId)}";
+                            if (playback.ContentType == "application/x-mpegURL")
+                            {
+                                var plexUri = new Uri(playback.Url);
+                                var plexPath = System.Text.RegularExpressions.Regex.Replace(
+                                    plexUri.PathAndQuery, @"[&?]X-Plex-Token=[^&]*", "");
+                                state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/hls?path={Uri.EscapeDataString(plexPath)}";
+                            }
+                            else
+                            {
+                                state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/stream/{Uri.EscapeDataString(req.ProviderItemId)}";
+                            }
                         }
                     }
                 }

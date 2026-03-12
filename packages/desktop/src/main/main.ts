@@ -1,3 +1,6 @@
+// Sentry must init before anything else to capture early crashes
+import './sentry';
+
 import { app, BrowserWindow, desktopCapturer, ipcMain, net, powerMonitor, protocol, session, shell } from 'electron';
 import * as path from 'path';
 import { setupIpcHandlers } from './ipc-handlers';

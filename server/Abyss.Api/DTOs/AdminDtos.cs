@@ -28,9 +28,11 @@ public record AdminUsersResponse(List<AdminUserDto> Users, int TotalCount);
 public record AdminOverviewStatsDto(int ServerCount, int UserCount, int MessageCount);
 
 public record InviteCodeDto(Guid Id, string Code, string? CreatorId, DateTime CreatedAt, DateTime? ExpiresAt, int? MaxUses, int Uses, DateTime? LastUsedAt);
-public record AdminSettingsDto(bool InviteOnly, int MaxMessageLength, bool ForceRelayMode, bool LiveKitConfigured, List<InviteCodeDto> Codes);
+public record AdminSettingsDto(bool InviteOnly, int MaxMessageLength, bool ForceRelayMode, bool LiveKitConfigured, List<InviteCodeDto> Codes, bool YtDlpEnabled = false, List<string>? YtDlpAllowedDomains = null);
 public record UpdateForceRelayModeRequest(bool ForceRelayMode);
 public record UpdateInviteOnlyRequest(bool InviteOnly);
 public record UpdateMaxMessageLengthRequest([Range(100, 10000)] int MaxMessageLength);
 public record CreateInviteCodeRequest([FutureDate] DateTime? ExpiresAt, [Range(1, int.MaxValue)] int? MaxUses);
 public record TransferServerOwnershipRequest([Required] string NewOwnerId);
+public record UpdateYtDlpEnabledRequest(bool Enabled);
+public record UpdateYtDlpAllowedDomainsRequest(List<string>? Domains);

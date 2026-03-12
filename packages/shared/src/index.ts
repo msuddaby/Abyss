@@ -21,7 +21,7 @@ export { showDesktopNotification, isElectron, navigateToNotification, setupNotif
 // Stores
 export { useAuthStore, onBeforeLogout } from './stores/authStore.js';
 export { useServerStore } from './stores/serverStore.js';
-export { useMessageStore } from './stores/messageStore.js';
+export { useMessageStore, type PendingMessage, type PendingMessageStatus } from './stores/messageStore.js';
 export { useVoiceStore, hydrateVoiceStore } from './stores/voiceStore.js';
 export type { CameraQuality, ScreenShareQuality, ConnectionMode } from './stores/voiceStore.js';
 export { usePresenceStore } from './stores/presenceStore.js';
