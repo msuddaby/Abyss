@@ -7,7 +7,9 @@ RUN dotnet publish Abyss.Api/Abyss.Api.csproj -c Release -o /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ffmpeg python3 python3-pip && \
+    pip3 install --break-system-packages yt-dlp && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/publish .
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
