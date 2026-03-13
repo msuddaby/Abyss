@@ -88,6 +88,9 @@ let pendingVisibilityRejoin = false;
 let channelRelayDetected = false;
 // Guard to prevent concurrent visibility-triggered rejoins
 let rejoinInProgress = false;
+// Channel ID that needs a server-side LeaveVoiceChannel notification.
+// Set when leaveVoice's invoke fails so the onReconnected handler can retry.
+let pendingServerLeave: string | null = null;
 
 // Monotonically-increasing session ID — incremented on cleanupAll() so that
 // any async work enqueued before cleanup can detect the session ended and bail.
@@ -3924,15 +3927,22 @@ export function useWebRTC() {
       useVoiceStore.getState().setJoiningVoice(true);
       pendingVisibilityRejoin = false;
       rejoinInProgress = false;
+      pendingServerLeave = null; // Starting a new join supersedes any pending leave
       try {
         // Leave current if any (both P2P and SFU)
         if (currentChannelId) {
           if (isInSfuMode()) {
             await disconnectFromLiveKit();
           }
-          const conn = getConnection();
-          await conn.invoke("LeaveVoiceChannel", currentChannelId);
           cleanupAll();
+          try {
+            const conn = getConnection();
+            await conn.invoke("LeaveVoiceChannel", currentChannelId);
+          } catch (e) {
+            // Best-effort — the JoinVoiceChannel below will handle the
+            // server-side leave atomically (single voice session enforcement).
+            console.warn("[joinVoice] LeaveVoiceChannel failed, server will clean up on join:", e);
+          }
         }
 
         // Reset failure tracking for new session
@@ -4188,12 +4198,17 @@ export function useWebRTC() {
     cleanupAll();
     p2pFailedPeers.clear();
 
-    // === SERVER NOTIFICATION (best-effort) ===
+    // === SERVER NOTIFICATION ===
+    // If the invoke fails (e.g. connection being restarted), stash the channel
+    // so the onReconnected handler can retry — otherwise the server keeps
+    // broadcasting us as a voice member until the 30s grace period expires.
     try {
       const conn = getConnection();
       await conn.invoke("LeaveVoiceChannel", channelId);
+      pendingServerLeave = null;
     } catch (error) {
       console.warn("Failed to notify server when leaving voice channel:", error);
+      pendingServerLeave = channelId;
     }
   }, [currentChannelId, setCurrentChannel, setParticipants]);
 
@@ -4266,6 +4281,23 @@ export function useWebRTC() {
   // tear down and rebuild peers, mic, or noise suppressor.
   useEffect(() => {
     return onReconnected(async () => {
+      // If leaveVoice failed to notify the server (connection died mid-leave),
+      // retry the leave now that the connection is back — this prevents the
+      // "ghost user" staying in the sidebar until the 30s grace period.
+      if (pendingServerLeave) {
+        const leaveChannelId = pendingServerLeave;
+        pendingServerLeave = null;
+        console.log(`[voice] SignalR reconnected, retrying pending LeaveVoiceChannel for ${leaveChannelId}`);
+        try {
+          const conn = getConnection();
+          await conn.invoke("LeaveVoiceChannel", leaveChannelId);
+        } catch (err) {
+          console.warn("[voice] Retry LeaveVoiceChannel failed:", (err as Error)?.message);
+        }
+        // Don't proceed to re-registration — user has left voice
+        return;
+      }
+
       const vs = useVoiceStore.getState();
       const channelId = vs.currentChannelId;
       if (!channelId) return;
