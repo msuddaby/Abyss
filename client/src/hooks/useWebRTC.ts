@@ -897,6 +897,12 @@ async function applySuppressor(rawStream: MediaStream): Promise<void> {
     peerStream = rawStream;
     return;
   }
+  // Destroy any existing suppressor to prevent leaked audio nodes
+  // (can happen if a useEffect race created one before the join flow)
+  if (noiseSuppressor) {
+    noiseSuppressor.destroy();
+    noiseSuppressor = null;
+  }
   const suppressor = await createNoiseSuppressor();
   const ctx = ensureAudioContext();
   const processed = await suppressor.initialize(rawStream, ctx);
@@ -3938,6 +3944,10 @@ export function useWebRTC() {
         // Check if user wants SFU mode
         if (useVoiceStore.getState().forceSfuMode) {
           console.log('[join] User preference: using SFU relay mode');
+          // Set lastVoiceJoinTime BEFORE setCurrentChannel so the device switching
+          // and RNNoise effects (which depend on currentChannelId) are properly
+          // skipped during the join window — same pattern as the P2P path.
+          lastVoiceJoinTime = Date.now();
           setCurrentChannel(channelId);
           useVoiceStore.getState().setConnectionMode('attempting-sfu');
 
