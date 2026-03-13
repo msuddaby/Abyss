@@ -1678,15 +1678,15 @@ label.has-error select:focus {
 .message-scroller {
   flex: 1;
   overflow-y: auto;
-  overflow-anchor: auto;
-  display: flex;
-  flex-direction: column-reverse;
+  overflow-anchor: none;
   min-height: 0;
 }
 
 .message-scroller-content {
   display: flex;
   flex-direction: column;
+  min-height: 100%;
+  justify-content: flex-end;
 }
 
 .load-more-sentinel,

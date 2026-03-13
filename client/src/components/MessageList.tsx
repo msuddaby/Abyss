@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useState,
@@ -17,7 +18,7 @@ import { showDesktopNotification, isElectron } from "@abyss/shared/services/elec
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
-const AT_BOTTOM_THRESHOLD = 50;
+const AT_BOTTOM_THRESHOLD = 300;
 
 type MessageSegmentPosition = "single" | "start" | "middle" | "end";
 const DEFAULT_COSMETIC_BORDER_RADIUS = "4px";
@@ -182,6 +183,8 @@ export default function MessageList() {
   const isAtBottomRef = useRef(true);
   const isLoadingRef = useRef(false);
   const isLoadingNewerRef = useRef(false);
+  const needsInitialScrollRef = useRef(true);
+  const prependSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
 
   // ── Compute rows ───────────────────────────────────────────────────────
   const rows = useMemo<MessageRow[]>(() => {
@@ -213,12 +216,10 @@ export default function MessageList() {
   }, [messages]);
 
   // ── Scroll helpers ────────────────────────────────────────────────────
-  // In a column-reverse container, scrollTop=0 is the bottom (newest messages).
-  // scrollTop increases as you scroll up toward older messages.
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollerRef.current;
     if (el) {
-      el.scrollTo({ top: 0, behavior: "smooth" });
+      el.scrollTo({ top: el.scrollHeight, behavior });
     }
     setShowScrollToBottom(false);
   }, []);
@@ -228,7 +229,8 @@ export default function MessageList() {
     const el = scrollerRef.current;
     if (!el) return;
     const onScroll = () => {
-      const atBottom = el.scrollTop <= AT_BOTTOM_THRESHOLD;
+      const atBottom =
+        el.scrollHeight - el.scrollTop - el.clientHeight <= AT_BOTTOM_THRESHOLD;
       isAtBottomRef.current = atBottom;
       setShowScrollToBottom(!atBottom);
     };
@@ -237,6 +239,7 @@ export default function MessageList() {
   }, [currentChannelId]);
 
   // ── Load older messages (top sentinel) ────────────────────────────────
+  const hasMessages = messages.length > 0;
   useEffect(() => {
     const sentinel = topSentinelRef.current;
     const scroller = scrollerRef.current;
@@ -245,6 +248,11 @@ export default function MessageList() {
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries[0].isIntersecting || isLoadingRef.current || !hasMore) return;
+        // Snapshot scroll state BEFORE the prepend so we can restore it
+        prependSnapshotRef.current = {
+          scrollHeight: scroller.scrollHeight,
+          scrollTop: scroller.scrollTop,
+        };
         isLoadingRef.current = true;
         loadMore().finally(() => {
           isLoadingRef.current = false;
@@ -254,7 +262,7 @@ export default function MessageList() {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, loadMore, currentChannelId]);
+  }, [hasMore, loadMore, currentChannelId, hasMessages]);
 
   // ── Load newer messages (bottom sentinel, for /around/ jumps) ─────────
   useEffect(() => {
@@ -274,7 +282,7 @@ export default function MessageList() {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasNewer, loadNewer, currentChannelId]);
+  }, [hasNewer, loadNewer, currentChannelId, hasMessages]);
 
   // ── SignalR handlers ──────────────────────────────────────────────────
   useEffect(() => {
@@ -376,24 +384,47 @@ export default function MessageList() {
     currentChannelId,
   ]);
 
+  // ── Scroll to bottom on initial load / channel switch ─────────────────
+  useLayoutEffect(() => {
+    if (!needsInitialScrollRef.current || messages.length === 0) return;
+    needsInitialScrollRef.current = false;
+    const el = scrollerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [messages]);
+
+  // ── Preserve scroll position when older messages are prepended ────────
+  // Runs before paint: restores scrollTop so the viewport doesn't jump.
+  useLayoutEffect(() => {
+    const snapshot = prependSnapshotRef.current;
+    if (!snapshot) return;
+    prependSnapshotRef.current = null;
+    const el = scrollerRef.current;
+    if (!el) return;
+
+    const delta = el.scrollHeight - snapshot.scrollHeight;
+    el.scrollTop = snapshot.scrollTop + delta;
+  }, [messages]);
+
   // ── Auto-scroll on new messages ──────────────────────────────────────
-  // In column-reverse, scrollTop=0 is the bottom. When the user is at
-  // the bottom, new messages naturally appear without scroll adjustment.
-  // We only need to nudge scroll for the user's own messages when they've
-  // scrolled up slightly.
-  const prevMsgCountRef = useRef(messages.length);
+  const prevLastMsgIdRef = useRef<string | null>(null);
   useEffect(() => {
-    const prevCount = prevMsgCountRef.current;
-    prevMsgCountRef.current = messages.length;
-    if (messages.length <= prevCount) return;
+    const lastMsg = messages[messages.length - 1];
+    const lastId = lastMsg?.id ?? null;
+    const prevId = prevLastMsgIdRef.current;
+    prevLastMsgIdRef.current = lastId;
+
+    // Only react to new messages appended at the end (not prepends)
+    if (!lastId || lastId === prevId || !prevId) return;
     if (highlightedMessageId) return;
 
-    const lastMsg = messages[messages.length - 1];
-    const isOwn = lastMsg?.authorId === currentUserId;
+    const isOwn = lastMsg.authorId === currentUserId;
     if (isOwn || isAtBottomRef.current) {
-      // Own messages: always scroll to bottom (even if scrolled up)
-      // Others' messages: scroll to bottom only if user is near the bottom
-      scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+      const el = scrollerRef.current;
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      }
     }
   }, [messages, currentUserId, highlightedMessageId]);
 
@@ -403,10 +434,7 @@ export default function MessageList() {
     isAtBottomRef.current = true;
     isLoadingRef.current = false;
     isLoadingNewerRef.current = false;
-    // column-reverse: scrollTop=0 is the bottom, which is the default
-    if (scrollerRef.current) {
-      scrollerRef.current.scrollTop = 0;
-    }
+    needsInitialScrollRef.current = true;
   }, [currentChannelId]);
 
   // ── Highlighted message scroll ────────────────────────────────────────
@@ -550,29 +578,11 @@ export default function MessageList() {
   );
 
   // ── Render ────────────────────────────────────────────────────────────
-  if (loading && messages.length === 0) {
-    return (
-      <div className="message-list">
-        <div className="loading">Loading messages...</div>
-      </div>
-    );
-  }
-
-  if (messages.length === 0) {
-    return (
-      <div className="message-list">
-        <div className="empty-channel-message">
-          <p>ha ha empty channel</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="message-list">
       {showScrollToBottom && (
         <div className="scroll-to-bottom-banner">
-          <button type="button" onClick={scrollToBottom}>
+          <button type="button" onClick={() => scrollToBottom()}>
             You're viewing earlier messages — jump to latest
           </button>
         </div>
@@ -583,10 +593,19 @@ export default function MessageList() {
         className="message-scroller"
       >
         <div className="message-scroller-content">
-          {hasMore && <div ref={topSentinelRef} className="load-more-sentinel" />}
-          {loading && <div className="loading">Loading older messages...</div>}
-          {rows.map(renderRow)}
-          {hasNewer && <div ref={bottomSentinelRef} className="load-newer-sentinel" />}
+          {loading && messages.length === 0 ? (
+            <div className="loading">Loading messages...</div>
+          ) : messages.length === 0 ? (
+            <div className="empty-channel-message">
+              <p>ha ha empty channel</p>
+            </div>
+          ) : (
+            <>
+              {hasMore && <div ref={topSentinelRef} className="load-more-sentinel" />}
+              {rows.map(renderRow)}
+              {hasNewer && <div ref={bottomSentinelRef} className="load-newer-sentinel" />}
+            </>
+          )}
         </div>
       </div>
     </div>
