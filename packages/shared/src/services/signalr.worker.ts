@@ -317,6 +317,16 @@ async function healthCheck(): Promise<void> {
   if (conn.state !== signalR.HubConnectionState.Connected) return;
   if (pingInFlight) return;
 
+  // If we received real data recently, the connection is provably alive —
+  // skip the ping entirely. This avoids false-positive reconnects when the
+  // server is slow to respond to Ping invokes but data is still flowing.
+  const msSinceActivity = Date.now() - lastActivity;
+  if (lastActivity > 0 && msSinceActivity < HEALTH_INTERVAL_MS) {
+    log('debug', `[SignalR Worker] healthCheck: skipping ping — received data ${msSinceActivity}ms ago`);
+    consecutivePingFailures = 0;
+    return;
+  }
+
   pingInFlight = true;
   const pingStart = Date.now();
   log('debug', `[SignalR Worker] ping start hidden=${isHidden} connState=${conn.state} failures=${consecutivePingFailures} lastActivity=${Date.now() - lastActivity}ms ago`);
@@ -341,6 +351,14 @@ async function healthCheck(): Promise<void> {
     consecutivePingFailures = 0;
   } catch (err) {
     if (intentionalStop) {
+      pingInFlight = false;
+      return;
+    }
+    // If real data arrived while this ping was in flight, the connection is
+    // alive — the Ping invoke was just slow. Don't count it as a failure.
+    if (lastActivity >= pingStart) {
+      log('debug', `[SignalR Worker] ping timed out but data received ${Date.now() - lastActivity}ms ago — connection alive`);
+      consecutivePingFailures = 0;
       pingInFlight = false;
       return;
     }

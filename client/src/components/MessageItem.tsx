@@ -49,12 +49,10 @@ export default function MessageItem({
   message,
   grouped,
   onScrollToMessage,
-  forceHovered,
 }: {
   message: Message;
   grouped?: boolean;
   onScrollToMessage?: (id: string) => void;
-  forceHovered?: boolean;
 }) {
   const [profileCard, setProfileCard] = useState<{
     x: number;
@@ -95,11 +93,12 @@ export default function MessageItem({
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
-  const isEffectivelyHovered = isHovered || !!forceHovered;
-  // Always add animationPlayState control if there's any nameplateStyle (not just when animation property exists)
+  // animationPlayState starts paused; CSS `.message-group-hovered *` overrides
+  // to running when the group is hovered (managed imperatively by MessageList).
+  // The item's own isHovered state handles direct hover on this message.
   const authorStyle: React.CSSProperties | undefined = nameplateStyle ? {
     ...nameplateStyle,
-    animationPlayState: isEffectivelyHovered ? 'running' : 'paused',
+    animationPlayState: isHovered ? 'running' : 'paused',
     ...(nameplateStyle?.animation ? {
       willChange: 'background-position',
       transform: 'translateZ(0)',
@@ -438,15 +437,13 @@ export default function MessageItem({
 
                     return (
                       <div
-                        className={`attachment-image-shell${bounds ? " has-dimensions" : ""}`}
-                        style={
-                          bounds
-                            ? {
-                                maxWidth: `${bounds.width}px`,
-                                aspectRatio: `${bounds.width} / ${bounds.height}`,
-                              }
-                            : undefined
-                        }
+                        className="attachment-image-shell has-dimensions"
+                        style={{
+                          maxWidth: `${bounds?.width ?? MESSAGE_ATTACHMENT_MAX_WIDTH}px`,
+                          aspectRatio: bounds
+                            ? `${bounds.width} / ${bounds.height}`
+                            : "4 / 3",
+                        }}
                       >
                         <img
                           src={`${getApiBase()}${att.filePath}`}

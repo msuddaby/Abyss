@@ -1675,6 +1675,26 @@ label.has-error select:focus {
   min-height: 0;
 }
 
+.message-scroller {
+  flex: 1;
+  overflow-y: auto;
+  overflow-anchor: auto;
+  display: flex;
+  flex-direction: column-reverse;
+  min-height: 0;
+}
+
+.message-scroller-content {
+  display: flex;
+  flex-direction: column;
+}
+
+.load-more-sentinel,
+.load-newer-sentinel {
+  height: 1px;
+  flex-shrink: 0;
+}
+
 .scroll-to-bottom-banner {
   flex-shrink: 0;
   z-index: 2;
@@ -1739,6 +1759,11 @@ label.has-error select:focus {
 .message-cosmetic-group-overlay {
   position: absolute;
   z-index: 0;
+  display: none;
+}
+
+.message-group-hovered > .message-cosmetic-group-overlay {
+  display: block;
 }
 
 .message-row-single {
@@ -2241,7 +2266,8 @@ label.has-error select:focus {
 
 .attachment-video {
   width: 100%;
-  max-height: 320px;
+  height: 100%;
+  object-fit: contain;
   border-radius: 8px;
   background: #0b0b0e;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
@@ -2250,6 +2276,8 @@ label.has-error select:focus {
 .attachment-video-shell {
   position: relative;
   width: 100%;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .attachment-video-shell:fullscreen,

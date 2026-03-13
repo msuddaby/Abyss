@@ -3,6 +3,24 @@ import { getApiBase } from "@abyss/shared";
 import type { Attachment } from "@abyss/shared";
 import { formatFileSize } from "../../utils/messageUtils";
 
+const VIDEO_MAX_WIDTH = 520;
+const VIDEO_MAX_HEIGHT = 320;
+
+function getVideoBounds(att: Attachment) {
+  if (!att.width || !att.height || att.width <= 0 || att.height <= 0) {
+    return null;
+  }
+  const scale = Math.min(
+    1,
+    VIDEO_MAX_WIDTH / att.width,
+    VIDEO_MAX_HEIGHT / att.height,
+  );
+  return {
+    width: Math.max(1, Math.round(att.width * scale)),
+    height: Math.max(1, Math.round(att.height * scale)),
+  };
+}
+
 // Extend HTMLVideoElement with webkit-specific properties for iOS
 interface WebkitHTMLVideoElement extends HTMLVideoElement {
   webkitEnterFullscreen?: () => void;
@@ -218,10 +236,21 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     }
   };
 
+  const videoBounds = isVideo ? getVideoBounds(att) : null;
+
   if (isVideo) {
     return (
       <div className="attachment-media" ref={containerRef}>
-        <div className="attachment-video-shell" ref={videoShellRef}>
+        <div
+          className="attachment-video-shell"
+          ref={videoShellRef}
+          style={{
+            maxWidth: `${videoBounds?.width ?? VIDEO_MAX_WIDTH}px`,
+            aspectRatio: videoBounds
+              ? `${videoBounds.width} / ${videoBounds.height}`
+              : "16 / 9",
+          }}
+        >
           <video
             className="attachment-video"
             ref={videoRef}

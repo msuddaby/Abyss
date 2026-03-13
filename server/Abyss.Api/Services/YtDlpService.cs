@@ -134,9 +134,11 @@ public class YtDlpService
             return cached;
 
         // Use -j to get JSON with direct URL info
+        // Prefer combined (audio+video) formats first — avoids the merged-format problem
+        // where yt-dlp returns separate streams with no root url
         var (exitCode, stdout, stderr) = await RunAsync(
             "-j", "--no-playlist", "--no-exec",
-            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "-f", "best[vcodec!=none][acodec!=none][ext=mp4]/best[vcodec!=none][acodec!=none]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best",
             url);
 
         if (exitCode != 0)
@@ -152,6 +154,7 @@ public class YtDlpService
 
             string? playbackUrl = null;
             string contentType = "video/mp4";
+            var headers = new Dictionary<string, string>();
 
             // Check for manifest_url (HLS/DASH) first
             if (root.TryGetProperty("manifest_url", out var manifest) && manifest.GetString() is string manifestUrl)
@@ -172,11 +175,44 @@ public class YtDlpService
                     _ => "video/mp4"
                 };
             }
+            // Fallback: merged format (bestvideo+bestaudio) — root url is absent,
+            // but requested_formats has the individual stream URLs
+            else if (root.TryGetProperty("requested_formats", out var reqFormats)
+                     && reqFormats.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var fmt in reqFormats.EnumerateArray())
+                {
+                    // Pick the video stream (has vcodec != none)
+                    if (fmt.TryGetProperty("vcodec", out var vc) && vc.GetString() is string vcodec
+                        && vcodec != "none"
+                        && fmt.TryGetProperty("url", out var fmtUrl) && fmtUrl.GetString() is string videoUrl)
+                    {
+                        playbackUrl = videoUrl;
+                        var ext = fmt.TryGetProperty("ext", out var fmtExt) ? fmtExt.GetString() : "mp4";
+                        contentType = ext switch
+                        {
+                            "mp4" => "video/mp4",
+                            "webm" => "video/webm",
+                            _ => "video/mp4"
+                        };
+                        // Use headers from this specific format entry
+                        if (fmt.TryGetProperty("http_headers", out var fmtHdrs) && fmtHdrs.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var prop in fmtHdrs.EnumerateObject())
+                            {
+                                if (prop.Value.GetString() is string val)
+                                    headers[prop.Name] = val;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
 
             if (playbackUrl == null) return null;
 
-            var headers = new Dictionary<string, string>();
-            if (root.TryGetProperty("http_headers", out var hdrs) && hdrs.ValueKind == JsonValueKind.Object)
+            // Use root-level headers if none were set by a format-specific branch
+            if (headers.Count == 0 && root.TryGetProperty("http_headers", out var hdrs) && hdrs.ValueKind == JsonValueKind.Object)
             {
                 foreach (var prop in hdrs.EnumerateObject())
                 {

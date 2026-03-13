@@ -162,6 +162,21 @@ function setupRoomListeners(room: Room): void {
     }
   });
 
+  // Prevent auto-subscription to screen share audio — only subscribe when
+  // the local user is actively watching that participant's screen share.
+  room.on(RoomEvent.TrackPublished, (
+    publication: RemoteTrackPublication,
+    participant: RemoteParticipant,
+  ) => {
+    if (publication.source === Track.Source.ScreenShareAudio) {
+      const watchingUserId = useVoiceStore.getState().watchingUserId;
+      if (watchingUserId !== participant.identity) {
+        console.log('[livekit] Blocking screen audio subscription from:', participant.identity, '(not watching)');
+        publication.setSubscribed(false);
+      }
+    }
+  });
+
   room.on(RoomEvent.TrackSubscribed, (
     track: RemoteTrack,
     publication: RemoteTrackPublication,
@@ -198,6 +213,8 @@ function setupRoomListeners(room: Room): void {
         // Auto-watch if we don't have a current watch target
         if (!voiceState.watchingUserId) {
           voiceState.setWatching(participant.identity);
+          // Subscribe to this participant's screen share audio now that we're watching
+          sfuSetScreenShareAudioSubscribed(participant.identity, true);
         }
         voiceState.bumpScreenStreamVersion();
       } else if (source === Track.Source.Camera) {
@@ -369,6 +386,19 @@ export function sfuSetDeafened(deafened: boolean): void {
     for (const audio of sfuScreenAudioElements.values()) {
       audio.volume = clampedVol;
       audio.muted = clampedVol === 0;
+    }
+  }
+}
+
+export function sfuSetScreenShareAudioSubscribed(participantId: string, subscribed: boolean): void {
+  if (!currentRoom) return;
+  const participant = currentRoom.remoteParticipants.get(participantId);
+  if (!participant) return;
+  for (const pub of participant.trackPublications.values()) {
+    if (pub.source === Track.Source.ScreenShareAudio) {
+      console.log(`[livekit] ${subscribed ? 'Subscribing' : 'Unsubscribing'} screen audio for:`, participantId);
+      pub.setSubscribed(subscribed);
+      break;
     }
   }
 }

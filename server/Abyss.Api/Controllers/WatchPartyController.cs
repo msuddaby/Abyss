@@ -176,8 +176,8 @@ public class WatchPartyController : ControllerBase
         _db.WatchParties.Add(dbEntity);
         await _db.SaveChangesAsync();
 
-        await _perms.LogAsync(serverId, AuditAction.WatchPartyStarted, UserId,
-            targetName: req.ItemTitle);
+        // await _perms.LogAsync(serverId, AuditAction.WatchPartyStarted, UserId,
+        //     targetName: req.ItemTitle);
 
         var dto = MapToDto(state);
         await _hub.Clients.Group($"voice:{channelId}").SendAsync("WatchPartyStarted", dto);
@@ -212,8 +212,8 @@ public class WatchPartyController : ControllerBase
             await _db.SaveChangesAsync();
         }
 
-        await _perms.LogAsync(serverId, AuditAction.WatchPartyStopped, UserId,
-            targetName: state.ItemTitle);
+        // await _perms.LogAsync(serverId, AuditAction.WatchPartyStopped, UserId,
+        //     targetName: state.ItemTitle);
 
         await _hub.Clients.Group($"voice:{channelId}").SendAsync("WatchPartyStopped", channelId.ToString());
         await _hub.Clients.Group($"server:{serverId}").SendAsync("WatchPartyStoppedInChannel", channelId.ToString());

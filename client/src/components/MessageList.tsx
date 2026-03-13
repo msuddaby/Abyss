@@ -4,7 +4,6 @@ import {
   useCallback,
   useState,
   useMemo,
-  useLayoutEffect,
 } from "react";
 import {
   useAuthStore,
@@ -17,24 +16,8 @@ import {
 import { showDesktopNotification, isElectron } from "@abyss/shared/services/electronNotifications";
 import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
 import MessageItem from "./MessageItem";
-import {
-  Virtuoso,
-  type VirtuosoHandle,
-  type ItemProps,
-  type ListRange,
-} from "react-virtuoso";
 
-const START_INDEX = 1_000_000;
-const TOP_PRELOAD_ITEM_THRESHOLD = 24;
-
-// Flex container prevents child margins from collapsing out of the wrapper,
-// which ensures Virtuoso's offsetHeight measurements include the full visual
-// space for per-message cosmetic shells.
-const VirtuosoItem = ({ children, ...props }: ItemProps<MessageRow>) => (
-  <div {...props} style={{ display: "flex", flexDirection: "column" }}>
-    {children}
-  </div>
-);
+const AT_BOTTOM_THRESHOLD = 50;
 
 type MessageSegmentPosition = "single" | "start" | "middle" | "end";
 const DEFAULT_COSMETIC_BORDER_RADIUS = "4px";
@@ -181,7 +164,6 @@ export default function MessageList() {
   const setHighlightedMessageId = useMessageStore(
     (s) => s.setHighlightedMessageId,
   );
-  const lastPrependCount = useMessageStore((s) => s.lastPrependCount);
   const addMessage = useMessageStore((s) => s.addMessage);
   const updateMessage = useMessageStore((s) => s.updateMessage);
   const markDeleted = useMessageStore((s) => s.markDeleted);
@@ -191,21 +173,15 @@ export default function MessageList() {
   const removePinnedMessage = useMessageStore((s) => s.removePinnedMessage);
   const currentUserId = useAuthStore((s) => s.user?.id);
 
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const scrollerRef = useRef<HTMLElement | null>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const incomingSoundRef = useRef<HTMLAudioElement | null>(null);
-  const [firstItemIndex, setFirstItemIndex] = useState(START_INDEX);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
-  const [hoveredGroup, setHoveredGroup] = useState<{
-    key: string;
-    height: number;
-  } | null>(null);
+  const hoveredGroupRef = useRef<string | null>(null);
   const isAtBottomRef = useRef(true);
-  const prevChannelRef = useRef<string | null>(null);
   const isLoadingRef = useRef(false);
   const isLoadingNewerRef = useRef(false);
-  const prevLastMsgIdRef = useRef<string | null>(null);
-
 
   // ── Compute rows ───────────────────────────────────────────────────────
   const rows = useMemo<MessageRow[]>(() => {
@@ -236,35 +212,76 @@ export default function MessageList() {
     return result;
   }, [messages]);
 
-  // ── Map message ID → row index (for scrollToIndex) ────────────────────
-  const msgIdToRowIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    rows.forEach((row, i) => map.set(row.msg.id, i));
-    return map;
-  }, [rows]);
+  // ── Scroll helpers ────────────────────────────────────────────────────
+  // In a column-reverse container, scrollTop=0 is the bottom (newest messages).
+  // scrollTop increases as you scroll up toward older messages.
+  const scrollToBottom = useCallback(() => {
+    const el = scrollerRef.current;
+    if (el) {
+      el.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    setShowScrollToBottom(false);
+  }, []);
 
-  // Apply prepend math in the same render that receives the older page.
-  // Virtuoso uses firstItemIndex to preserve the viewport anchor, so
-  // delaying the correction until after paint causes visible jumps.
-  const effectiveFirstItemIndex = firstItemIndex - lastPrependCount;
-
-  // ── Commit prepend bookkeeping before paint ────────────────────────────
-  useLayoutEffect(() => {
-    if (lastPrependCount <= 0) return;
-
-    useMessageStore.setState({ lastPrependCount: 0 });
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setFirstItemIndex((current) => current - lastPrependCount);
-  }, [lastPrependCount]);
-
-  // ── SignalR handlers (unchanged) ──────────────────────────────────────
+  // ── Track scroll position for "at bottom" detection ───────────────────
   useEffect(() => {
-    console.log(`[MessageList] effect MOUNT — registering handlers (channelId=${currentChannelId})`);
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const atBottom = el.scrollTop <= AT_BOTTOM_THRESHOLD;
+      isAtBottomRef.current = atBottom;
+      setShowScrollToBottom(!atBottom);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [currentChannelId]);
+
+  // ── Load older messages (top sentinel) ────────────────────────────────
+  useEffect(() => {
+    const sentinel = topSentinelRef.current;
+    const scroller = scrollerRef.current;
+    if (!sentinel || !scroller) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0].isIntersecting || isLoadingRef.current || !hasMore) return;
+        isLoadingRef.current = true;
+        loadMore().finally(() => {
+          isLoadingRef.current = false;
+        });
+      },
+      { root: scroller, rootMargin: "200px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore, currentChannelId]);
+
+  // ── Load newer messages (bottom sentinel, for /around/ jumps) ─────────
+  useEffect(() => {
+    const sentinel = bottomSentinelRef.current;
+    const scroller = scrollerRef.current;
+    if (!sentinel || !scroller) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0].isIntersecting || isLoadingNewerRef.current || !hasNewer) return;
+        isLoadingNewerRef.current = true;
+        loadNewer().finally(() => {
+          isLoadingNewerRef.current = false;
+        });
+      },
+      { root: scroller, rootMargin: "200px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasNewer, loadNewer, currentChannelId]);
+
+  // ── SignalR handlers ──────────────────────────────────────────────────
+  useEffect(() => {
     incomingSoundRef.current = new Audio(`${import.meta.env.BASE_URL}sounds/new-message.ogg`);
     incomingSoundRef.current.preload = "auto";
     const conn = getConnection();
     const handler = async (message: Message) => {
-      console.log(`[MessageList] ReceiveMessage handler fired — msgId=${message.id} channelId=${message.channelId} currentChannel=${currentChannelId}`);
       addMessage(message);
       const isFromOtherUser =
         message.authorId && message.authorId !== currentUserId;
@@ -338,7 +355,6 @@ export default function MessageList() {
     conn.on("MessagePinned", pinHandler);
     conn.on("MessageUnpinned", unpinHandler);
     return () => {
-      console.log(`[MessageList] effect CLEANUP — deregistering handlers (channelId=${currentChannelId})`);
       incomingSoundRef.current = null;
       conn.off("ReceiveMessage", handler);
       conn.off("MessageEdited", editHandler);
@@ -361,260 +377,176 @@ export default function MessageList() {
   ]);
 
   // ── Auto-scroll on new messages ──────────────────────────────────────
-  // Scrolls to the bottom when a new message arrives and the user is
-  // already near the bottom, or when the user sends their own message.
-  // Uses the raw DOM scroller instead of Virtuoso's scrollToIndex because
-  // the latter can undershoot when items haven't been measured yet.
+  // In column-reverse, scrollTop=0 is the bottom. When the user is at
+  // the bottom, new messages naturally appear without scroll adjustment.
+  // We only need to nudge scroll for the user's own messages when they've
+  // scrolled up slightly.
+  const prevMsgCountRef = useRef(messages.length);
   useEffect(() => {
-    const lastMsg = messages[messages.length - 1];
-    const lastMsgId = lastMsg?.id ?? null;
-    const prevId = prevLastMsgIdRef.current;
-    prevLastMsgIdRef.current = lastMsgId;
-
-    // Only react to new messages appended at the end
-    if (!lastMsgId || lastMsgId === prevId) return;
-    // Skip on first mount / channel switch (prevId is null)
-    if (!prevId) return;
+    const prevCount = prevMsgCountRef.current;
+    prevMsgCountRef.current = messages.length;
+    if (messages.length <= prevCount) return;
     if (highlightedMessageId) return;
 
-    if (isAtBottomRef.current || lastMsg.authorId === currentUserId) {
-      // Scroll the raw DOM element to the bottom after Virtuoso renders the new content.
-      // We use the DOM element directly because Virtuoso's scrollToIndex can undershoot
-      // when it hasn't measured new/resized items yet. Two passes ensure we catch both
-      // new groups (rendered quickly) and merged groups (re-measured after layout).
-      const scrollToEnd = () => {
-        const el = scrollerRef.current;
-        if (el) {
-          el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-        }
-      };
-      setTimeout(scrollToEnd, 50);
-      setTimeout(scrollToEnd, 150);
+    const lastMsg = messages[messages.length - 1];
+    const isOwn = lastMsg?.authorId === currentUserId;
+    if (isOwn || isAtBottomRef.current) {
+      // Own messages: always scroll to bottom (even if scrolled up)
+      // Others' messages: scroll to bottom only if user is near the bottom
+      scrollerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [messages, currentUserId, highlightedMessageId]);
 
   // ── Reset on channel switch ───────────────────────────────────────────
   useEffect(() => {
-    if (currentChannelId !== prevChannelRef.current) {
-      prevChannelRef.current = currentChannelId;
-      setFirstItemIndex(START_INDEX);
-      setShowScrollToBottom(false);
-      isAtBottomRef.current = true;
-      isLoadingRef.current = false;
-      isLoadingNewerRef.current = false;
-      prevLastMsgIdRef.current = messages[messages.length - 1]?.id ?? null;
-      // After Virtuoso remounts (via key prop), nudge scroll to sync internal isAtBottom state
-      setTimeout(() => {
-        virtuosoRef.current?.scrollToIndex({
-          index: "LAST",
-          behavior: "auto",
-        });
-      }, 50);
+    setShowScrollToBottom(false);
+    isAtBottomRef.current = true;
+    isLoadingRef.current = false;
+    isLoadingNewerRef.current = false;
+    // column-reverse: scrollTop=0 is the bottom, which is the default
+    if (scrollerRef.current) {
+      scrollerRef.current.scrollTop = 0;
     }
   }, [currentChannelId]);
-
-  // ── Reset firstItemIndex on /around/ jump (search/pin click) ──────────
-  // Only reset when highlightedMessageId is newly set (null → value),
-  // not on subsequent messages changes while the highlight is still active
-  // (e.g. loadMore prepending during the 1.5s highlight window).
-  const prevHighlightRef = useRef<string | null>(null);
-  useEffect(() => {
-    const justSet = !!highlightedMessageId && !prevHighlightRef.current;
-    prevHighlightRef.current = highlightedMessageId;
-    if (justSet) {
-      setFirstItemIndex(START_INDEX);
-    }
-  }, [highlightedMessageId]);
 
   // ── Highlighted message scroll ────────────────────────────────────────
   useEffect(() => {
     if (!highlightedMessageId) return;
 
     const tryScroll = (attempts = 0) => {
-      const rowIdx = msgIdToRowIndex.get(highlightedMessageId);
-      if (rowIdx === undefined) {
+      const el = document.querySelector(
+        `[data-message-id="${highlightedMessageId}"]`,
+      );
+      if (!el) {
         if (attempts < 20) setTimeout(() => tryScroll(attempts + 1), 100);
         return;
       }
 
-      virtuosoRef.current?.scrollToIndex({
-        index: rowIdx,
-        align: "center",
-        behavior: "smooth",
-      });
-
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
       setShowScrollToBottom(true);
 
       // Apply highlight class after scroll settles
       setTimeout(() => {
-        const el = document.querySelector(
-          `[data-message-id="${highlightedMessageId}"]`,
-        );
-        if (el) {
-          el.classList.add("message-highlight");
-          setTimeout(() => {
-            el.classList.remove("message-highlight");
-            setHighlightedMessageId(null);
-          }, 1500);
-        } else {
+        el.classList.add("message-highlight");
+        setTimeout(() => {
+          el.classList.remove("message-highlight");
           setHighlightedMessageId(null);
-        }
+        }, 1500);
       }, 300);
     };
 
     requestAnimationFrame(() => tryScroll());
-  }, [highlightedMessageId, setHighlightedMessageId, msgIdToRowIndex]);
+  }, [highlightedMessageId, setHighlightedMessageId]);
 
-  // ── Virtuoso callbacks ────────────────────────────────────────────────
-  const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    isAtBottomRef.current = atBottom;
-    setShowScrollToBottom(!atBottom);
+  // ── Imperative hover management (no React state, no re-renders) ──────
+  const clearHoveredGroup = useCallback(() => {
+    const prev = hoveredGroupRef.current;
+    if (!prev) return;
+    hoveredGroupRef.current = null;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const rows = scroller.querySelectorAll<HTMLElement>(
+      `[data-hover-group-key="${prev}"]`,
+    );
+    rows.forEach((row) => row.classList.remove("message-group-hovered"));
   }, []);
-
-  const handleRangeChanged = useCallback((range: ListRange) => {
-    const distanceFromTop = range.startIndex - effectiveFirstItemIndex;
-    if (
-      distanceFromTop > TOP_PRELOAD_ITEM_THRESHOLD ||
-      isLoadingRef.current ||
-      !hasMore
-    ) {
-      return;
-    }
-
-    isLoadingRef.current = true;
-    loadMore().finally(() => {
-      isLoadingRef.current = false;
-    });
-  }, [effectiveFirstItemIndex, hasMore, loadMore]);
-
-  // Disabled — we handle all auto-scrolling via the manual useEffect above
-  // using the raw DOM scroller, which is more reliable than Virtuoso's
-  // followOutput (which can undershoot on unmeasured items).
-  const followOutput = useCallback(
-    (): false | "smooth" | "auto" => false,
-    [],
-  );
-
-  const handleEndReached = useCallback(() => {
-    if (isLoadingNewerRef.current || !hasNewer) return;
-    isLoadingNewerRef.current = true;
-    loadNewer().finally(() => {
-      isLoadingNewerRef.current = false;
-    });
-  }, [hasNewer, loadNewer]);
-
-  const scrollToBottom = useCallback(() => {
-    const el = scrollerRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    }
-    setShowScrollToBottom(false);
-  }, []);
-
-  const scrollToMessage = useCallback(
-    (id: string) => {
-      const rowIdx = msgIdToRowIndex.get(id);
-      if (rowIdx === undefined) return;
-      virtuosoRef.current?.scrollToIndex({
-        index: rowIdx,
-        align: "center",
-        behavior: "smooth",
-      });
-      setTimeout(() => {
-        const el = document.querySelector(`[data-message-id="${id}"]`);
-        if (el) {
-          el.classList.add("message-highlight");
-          setTimeout(() => el.classList.remove("message-highlight"), 1500);
-        }
-      }, 300);
-    },
-    [msgIdToRowIndex],
-  );
 
   const handleRowMouseEnter = useCallback((
-    event: React.MouseEvent<HTMLDivElement>,
+    _event: React.MouseEvent<HTMLDivElement>,
     groupKey: string,
   ) => {
+    if (hoveredGroupRef.current === groupKey) return;
     const scroller = scrollerRef.current;
-    const hoveredRow = event.currentTarget;
-    const groupRows = scroller?.querySelectorAll<HTMLElement>(
+    if (!scroller) return;
+
+    // Clear previous group
+    clearHoveredGroup();
+
+    hoveredGroupRef.current = groupKey;
+    const groupRows = scroller.querySelectorAll<HTMLElement>(
       `[data-hover-group-key="${groupKey}"]`,
     );
-    const measuredHeight = groupRows
-      ? Array.from(groupRows).reduce((total, row) => total + row.offsetHeight, 0)
-      : hoveredRow.offsetHeight;
-
-    setHoveredGroup((current) => {
-      if (current?.key === groupKey && current.height === measuredHeight) {
-        return current;
-      }
-
-      return {
-        key: groupKey,
-        height: measuredHeight,
-      };
+    let totalHeight = 0;
+    groupRows.forEach((row) => {
+      row.classList.add("message-group-hovered");
+      totalHeight += row.offsetHeight;
     });
-  }, []);
+
+    // Set overlay height via CSS variable on the start/single row
+    const startRow = scroller.querySelector<HTMLElement>(
+      `[data-hover-group-key="${groupKey}"][data-segment-position="start"], [data-hover-group-key="${groupKey}"][data-segment-position="single"]`,
+    );
+    if (startRow) {
+      startRow.style.setProperty("--cosmetic-group-height", `${totalHeight}px`);
+    }
+  }, [clearHoveredGroup]);
 
   const handleRowMouseLeave = useCallback((
     event: React.MouseEvent<HTMLDivElement>,
     groupKey: string,
   ) => {
-    const nextTarget = event.relatedTarget as HTMLElement | null;
+    const nextTarget = event.relatedTarget instanceof HTMLElement ? event.relatedTarget : null;
     if (nextTarget?.closest(`[data-hover-group-key="${groupKey}"]`)) {
       return;
     }
+    if (hoveredGroupRef.current === groupKey) {
+      clearHoveredGroup();
+    }
+  }, [clearHoveredGroup]);
 
-    setHoveredGroup((current) => (
-      current?.key === groupKey ? null : current
-    ));
+  // ── Scroll to message (for reply clicks) ──────────────────────────────
+  const scrollToMessage = useCallback((id: string) => {
+    const el = document.querySelector(`[data-message-id="${id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => {
+      el.classList.add("message-highlight");
+      setTimeout(() => el.classList.remove("message-highlight"), 1500);
+    }, 300);
   }, []);
 
   // ── Row renderer ───────────────────────────────────────────────────────
   const renderRow = useCallback(
-    (_index: number, row: MessageRow) => {
-      const isGroupHovered = hoveredGroup?.key === row.hoverGroupKey;
+    (row: MessageRow) => {
       const shellStyle = getCosmeticShellStyle(
         row.cosmeticStyle,
         row.segmentPosition,
       );
-      const groupOverlayStyle =
-        isGroupHovered && row.segmentPosition === "start"
-          ? getCosmeticGroupOverlayStyle(
-              row.cosmeticStyle,
-              hoveredGroup?.height ?? 0,
-            )
-          : undefined;
+
+      const hasOverlaySlot =
+        (row.segmentPosition === "start" || row.segmentPosition === "single") &&
+        row.cosmeticStyle?.animation;
+      const overlayBaseStyle = hasOverlaySlot
+        ? getCosmeticGroupOverlayStyle(row.cosmeticStyle, 1)
+        : undefined;
 
       return (
         <div
-          className={`message-row message-row-${row.segmentPosition}${row.cosmeticStyle ? " message-cosmetic-group message-cosmetic-row" : ""}${isGroupHovered ? " message-group-hovered" : ""}`}
+          key={row.key}
+          className={`message-row message-row-${row.segmentPosition}${row.cosmeticStyle ? " message-cosmetic-group message-cosmetic-row" : ""}`}
           data-hover-group-key={row.hoverGroupKey}
           data-segment-position={row.segmentPosition}
           style={shellStyle}
           onMouseEnter={(event) => handleRowMouseEnter(event, row.hoverGroupKey)}
           onMouseLeave={(event) => handleRowMouseLeave(event, row.hoverGroupKey)}
         >
-          {groupOverlayStyle && (
-            <div className="message-cosmetic-group-overlay" style={groupOverlayStyle} />
+          {overlayBaseStyle && (
+            <div
+              className="message-cosmetic-group-overlay"
+              style={{ ...overlayBaseStyle, height: "var(--cosmetic-group-height, 0px)" }}
+            />
           )}
           <div className="message-row-content" data-message-id={row.msg.id}>
             <MessageItem
               message={row.msg}
               grouped={row.grouped}
               onScrollToMessage={scrollToMessage}
-              forceHovered={isGroupHovered}
             />
           </div>
         </div>
       );
     },
-    [
-      handleRowMouseEnter,
-      handleRowMouseLeave,
-      hoveredGroup,
-      scrollToMessage,
-    ],
+    [handleRowMouseEnter, handleRowMouseLeave, scrollToMessage],
   );
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -645,24 +577,18 @@ export default function MessageList() {
           </button>
         </div>
       )}
-      <Virtuoso
+      <div
         key={currentChannelId}
-        ref={virtuosoRef}
-        scrollerRef={(el) => { scrollerRef.current = el as HTMLElement | null; }}
-        style={{ height: "100%", width: "100%" }}
-        components={{ Item: VirtuosoItem }}
-        data={rows}
-        firstItemIndex={effectiveFirstItemIndex}
-        initialTopMostItemIndex={rows.length - 1}
-        computeItemKey={(_index, row) => row.key}
-        increaseViewportBy={{ top: 400, bottom: 400 }}
-        followOutput={followOutput}
-        endReached={handleEndReached}
-        atBottomStateChange={handleAtBottomChange}
-        rangeChanged={handleRangeChanged}
-        itemContent={renderRow}
-        atBottomThreshold={400}
-      />
+        ref={scrollerRef}
+        className="message-scroller"
+      >
+        <div className="message-scroller-content">
+          {hasMore && <div ref={topSentinelRef} className="load-more-sentinel" />}
+          {loading && <div className="loading">Loading older messages...</div>}
+          {rows.map(renderRow)}
+          {hasNewer && <div ref={bottomSentinelRef} className="load-newer-sentinel" />}
+        </div>
+      </div>
     </div>
   );
 }

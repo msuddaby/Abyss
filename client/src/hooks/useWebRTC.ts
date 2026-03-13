@@ -31,6 +31,7 @@ import {
   getSfuLocalScreenStream,
   sfuUpdateScreenShareQuality,
   sfuUpdateCameraQuality,
+  sfuSetScreenShareAudioSubscribed,
   isInSfuMode,
   getLiveKitRoom,
 } from "@abyss/shared";
@@ -2779,7 +2780,12 @@ async function removeVideoTrackForViewer(viewerUserId: string) {
 // Exported for ScreenShareView to call
 export async function requestWatch(sharerUserId: string) {
   if (isInSfuMode()) {
-    // SFU mode: tracks are auto-subscribed, just set watching state
+    // SFU mode: subscribe to the watched user's screen audio, unsubscribe previous
+    const oldWatching = useVoiceStore.getState().watchingUserId;
+    if (oldWatching && oldWatching !== sharerUserId) {
+      sfuSetScreenShareAudioSubscribed(oldWatching, false);
+    }
+    sfuSetScreenShareAudioSubscribed(sharerUserId, true);
     useVoiceStore.getState().setWatching(sharerUserId);
     useVoiceStore.getState().bumpScreenStreamVersion();
     return;
@@ -2805,7 +2811,10 @@ export async function stopWatching() {
   if (!sharerUserId) return;
 
   if (isInSfuMode()) {
-    // SFU mode: just clear watching state (track stays subscribed)
+    // SFU mode: unsubscribe from the screen share audio and clear watching state
+    if (sharerUserId) {
+      sfuSetScreenShareAudioSubscribed(sharerUserId, false);
+    }
     store.setWatching(null);
     store.bumpScreenStreamVersion();
     return;

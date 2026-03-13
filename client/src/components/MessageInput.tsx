@@ -125,6 +125,34 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const isChannelActive = !!effectiveChannelId;
   const isDisconnected = signalRStatus !== 'connected';
   const channelPending = pendingMessages.filter((p) => p.channelId === effectiveChannelId);
+
+  // Delay showing "sending" status to avoid layout flash on fast sends
+  const [delayedSendingIds, setDelayedSendingIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    const newSending = channelPending.filter(p => p.status === 'sending' && !delayedSendingIds.has(p.clientId));
+    if (newSending.length === 0) return;
+    const timers = newSending.map(p => {
+      const elapsed = Date.now() - p.createdAt;
+      const remaining = Math.max(0, 500 - elapsed);
+      return setTimeout(() => {
+        setDelayedSendingIds(prev => new Set(prev).add(p.clientId));
+      }, remaining);
+    });
+    return () => timers.forEach(clearTimeout);
+  }, [channelPending, delayedSendingIds]);
+
+  useEffect(() => {
+    const currentIds = new Set(channelPending.map(p => p.clientId));
+    setDelayedSendingIds(prev => {
+      const next = new Set([...prev].filter(id => currentIds.has(id)));
+      return next.size !== prev.size ? next : prev;
+    });
+  }, [channelPending]);
+
+  const visiblePending = channelPending.filter(p =>
+    p.status === 'failed' || delayedSendingIds.has(p.clientId)
+  );
   const canSendMessages = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.SendMessages);
   const canAttachFiles = isVoiceChat ? true : isDmMode ? true : hasChannelPermission(activeChannel?.permissions, Permission.AttachFiles);
   const canMentionEveryone = (isVoiceChat || isDmMode) ? false : hasChannelPermission(activeChannel?.permissions, Permission.MentionEveryone);
@@ -928,9 +956,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
           You're sending messages too quickly. Please wait {rateLimitRemaining}s.
         </div>
       )}
-      {channelPending.length > 0 && (
+      {visiblePending.length > 0 && (
         <div className="pending-messages-bar">
-          {channelPending.map((p) => (
+          {visiblePending.map((p) => (
             <div key={p.clientId} className={`pending-message ${p.status}`}>
               <span className="pending-message-text">
                 {p.status === 'sending' ? 'Sending...' : 'Failed to send:'}
