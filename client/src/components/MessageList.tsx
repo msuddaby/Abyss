@@ -384,6 +384,17 @@ export default function MessageList() {
     currentChannelId,
   ]);
 
+  // ── Reset on channel switch (must run before initial-scroll check) ────
+  const prevLastMsgIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    setShowScrollToBottom(false);
+    isAtBottomRef.current = true;
+    isLoadingRef.current = false;
+    isLoadingNewerRef.current = false;
+    needsInitialScrollRef.current = true;
+    prevLastMsgIdRef.current = null;
+  }, [currentChannelId]);
+
   // ── Scroll to bottom on initial load / channel switch ─────────────────
   useLayoutEffect(() => {
     if (!needsInitialScrollRef.current || messages.length === 0) return;
@@ -408,7 +419,6 @@ export default function MessageList() {
   }, [messages]);
 
   // ── Auto-scroll on new messages ──────────────────────────────────────
-  const prevLastMsgIdRef = useRef<string | null>(null);
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
     const lastId = lastMsg?.id ?? null;
@@ -428,14 +438,6 @@ export default function MessageList() {
     }
   }, [messages, currentUserId, highlightedMessageId]);
 
-  // ── Reset on channel switch ───────────────────────────────────────────
-  useEffect(() => {
-    setShowScrollToBottom(false);
-    isAtBottomRef.current = true;
-    isLoadingRef.current = false;
-    isLoadingNewerRef.current = false;
-    needsInitialScrollRef.current = true;
-  }, [currentChannelId]);
 
   // ── Highlighted message scroll ────────────────────────────────────────
   useEffect(() => {
