@@ -2266,6 +2266,66 @@ function cleanupAll() {
   }
 }
 
+// Recover a dead mic track in SFU mode. Re-acquires the mic, swaps the
+// NoiseSuppressor input (if active) or replaces the LiveKit-published track.
+// Called from the mic track's onended handler and the visibility-change check.
+let sfuMicRecoveryInFlight = false;
+async function recoverSfuMicTrack(reason: string) {
+  if (!isInSfuMode()) return;
+  if (sfuMicRecoveryInFlight) return;
+  sfuMicRecoveryInFlight = true;
+  try {
+    const vs = useVoiceStore.getState();
+    if (!vs.currentChannelId) return;
+    console.warn(`[SFU] Recovering mic track (${reason})`);
+
+    const audioConstraints: MediaTrackConstraints = {
+      noiseSuppression: vs.noiseSuppression,
+      echoCancellation: vs.echoCancellation,
+      autoGainControl: vs.autoGainControl,
+    };
+    if (vs.inputDeviceId && vs.inputDeviceId !== 'default') {
+      audioConstraints.deviceId = { exact: vs.inputDeviceId };
+    } else {
+      const resolvedId = await resolveDefaultInputDevice();
+      if (resolvedId !== 'default') {
+        audioConstraints.deviceId = { exact: resolvedId };
+      }
+    }
+
+    const newStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    if (localStream) {
+      localStream.getTracks().forEach(t => t.stop());
+    }
+    localStream = newStream;
+
+    // Re-attach onended handler to the new track
+    const newMicTrack = newStream.getAudioTracks()[0];
+    if (newMicTrack) {
+      newMicTrack.onended = () => {
+        console.warn('[SFU] Mic track ended unexpectedly');
+        void recoverSfuMicTrack('mic-track-ended');
+      };
+    }
+
+    if (noiseSuppressor) {
+      // Swap input — output track identity stays the same, no LiveKit replace needed
+      noiseSuppressor.replaceInput(newStream);
+      console.log('[SFU] Mic recovered via NoiseSuppressor input swap');
+    } else {
+      // No RNNoise — replace the LiveKit-published track directly
+      if (newMicTrack) {
+        await sfuReplaceAudioTrack(newMicTrack);
+        console.log('[SFU] Mic recovered via LiveKit track replace');
+      }
+    }
+  } catch (err) {
+    console.error('[SFU] Mic recovery failed:', err);
+  } finally {
+    sfuMicRecoveryInFlight = false;
+  }
+}
+
 async function replaceLocalAudioStream(newStream: MediaStream) {
   const newTrack = newStream.getAudioTracks()[0];
   if (!newTrack) return;
@@ -2311,6 +2371,14 @@ async function replaceLocalAudioStream(newStream: MediaStream) {
     localStream.getTracks().forEach((track) => track.stop());
   }
   localStream = newStream;
+
+  // Monitor mic track health in SFU mode — recover if the track ends
+  if (isInSfuMode()) {
+    newTrack.onended = () => {
+      console.warn('[SFU] Mic track ended unexpectedly (post-replace)');
+      void recoverSfuMicTrack('mic-track-ended');
+    };
+  }
 
   const voiceState = useVoiceStore.getState();
   const shouldEnable =
@@ -4008,6 +4076,18 @@ export function useWebRTC() {
             }
           }
 
+          // Monitor mic track health — recover automatically if the track ends
+          // (e.g. device disconnected, OS reassigned mic to another app)
+          if (localStream) {
+            const micTrack = localStream.getAudioTracks()[0];
+            if (micTrack) {
+              micTrack.onended = () => {
+                console.warn('[SFU] Mic track ended unexpectedly');
+                void recoverSfuMicTrack('mic-track-ended');
+              };
+            }
+          }
+
           // Notify other peers in the channel that relay is active
           conn.invoke('NotifyRelayMode', channelId).catch(() => {});
 
@@ -4374,6 +4454,15 @@ export function useWebRTC() {
           await attemptVoiceRejoin("visibility-pending");
         }
         return;
+      }
+
+      // SFU mode: verify the published mic track is still alive. The track
+      // can silently die while hidden (device disconnect, OS mic reassignment).
+      if (isInSfuMode() && localStream) {
+        const micTrack = localStream.getAudioTracks()[0];
+        if (!micTrack || micTrack.readyState === 'ended') {
+          void recoverSfuMicTrack('visibility-stale-track');
+        }
       }
 
       // ICE state changes are suppressed while the tab is hidden to prevent

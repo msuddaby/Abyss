@@ -227,10 +227,14 @@ public class AuthController : ControllerBase
         await _userManager.UpdateAsync(user);
 
         // Clear server auto-away flag so PresenceMonitorService can re-detect
-        // future idle periods, and refresh the heartbeat since the user is
-        // clearly active (they just made an API call).
+        // future idle periods.
         ChatHub._serverAutoAway.TryRemove(userId, out _);
-        ChatHub._lastHeartbeats[userId] = DateTime.UtcNow;
+
+        // Only refresh heartbeat when going Online — refreshing when going Away
+        // would misleadingly keep _lastHeartbeats fresh and delay the server-side
+        // idle detection fallback (PresenceMonitorService).
+        if (request.PresenceStatus == 0)
+            ChatHub._lastHeartbeats[userId] = DateTime.UtcNow;
 
         // Broadcast status change via SignalR
         await BroadcastPresenceChange(userId, request.PresenceStatus);

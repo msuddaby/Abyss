@@ -52,6 +52,12 @@ export function useIdleDetection() {
     // when the user is active in another app but not interacting with Abyss.
     let nativeHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
+    // Only send a native heartbeat if the user has been system-active within
+    // the last (IDLE_TIMEOUT - HEARTBEAT_THROTTLE) seconds.  This avoids
+    // extending the server's _lastHeartbeats right before the idle threshold,
+    // which would delay stale detection by an extra heartbeat interval.
+    const NATIVE_HB_IDLE_LIMIT_S = IDLE_TIMEOUT_S - HEARTBEAT_THROTTLE_MS / 1000;
+
     const startNativeHeartbeat = () => {
       if (nativeHeartbeatInterval) return;
       console.log('[IdleDetection] Starting system-activity-based heartbeat');
@@ -63,7 +69,7 @@ export function useIdleDetection() {
         }
         try {
           const sysIdleSec = await window.electron!.getSystemIdleTime();
-          if (sysIdleSec < IDLE_TIMEOUT_S) {
+          if (sysIdleSec < NATIVE_HB_IDLE_LIMIT_S) {
             try {
               const conn = getConnection();
               if (conn.state === 'Connected') {

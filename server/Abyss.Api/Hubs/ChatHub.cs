@@ -701,10 +701,11 @@ public class ChatHub : Hub
                 .Select(u => u.Id)
                 .ToHashSetAsync();
             var onlineUserIds = new HashSet<string>(connectedIds.Except(awayIds));
-            var activeChannelUserIds = GetActiveChannelUserIds(channelGuid);
-            activeChannelUserIds.ExceptWith(awayIds); // Away users should get push notifications even if channel is open on desktop
-
-            var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds, activeChannelUserIds);
+            // Don't filter by activeChannelUserIds — the backend can't know if the
+            // user's window is focused or minimized.  Always create the notification
+            // and send the MentionReceived signal; the frontend decides whether to
+            // show a desktop notification based on window visibility.
+            var notifications = await _notifications.CreateMentionNotifications(message, channel.ServerId.Value, channelGuid, onlineUserIds);
             var notifiedUserIds = new HashSet<string>(notifications.Select(n => n.UserId));
             foreach (var notification in notifications)
             {
@@ -715,9 +716,7 @@ public class ChatHub : Hub
             // Reply notification: if replying to someone else who wasn't already notified
             if (replyToGuid.HasValue && replyDto != null && replyDto.AuthorId != UserId && !notifiedUserIds.Contains(replyDto.AuthorId))
             {
-                var isReplyTargetViewingChannel = activeChannelUserIds.Contains(replyDto.AuthorId);
-                if (!isReplyTargetViewingChannel
-                    && await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel)
+                if (await _perms.HasChannelPermissionAsync(channelGuid, replyDto.AuthorId, Permission.ViewChannel)
                     && await _notifications.ShouldNotify(replyDto.AuthorId, channel.ServerId.Value, channelGuid, NotificationType.ReplyMention))
                 {
                     var isReplyTargetOffline = !onlineUserIds.Contains(replyDto.AuthorId);
@@ -747,7 +746,7 @@ public class ChatHub : Hub
             // AllMessages notifications for users with that notification level
             var allMsgNotifications = await _notifications.CreateAllMessageNotifications(
                 message, channel.ServerId.Value, channelGuid,
-                onlineUserIds, activeChannelUserIds, notifiedUserIds);
+                onlineUserIds, notifiedUserIds);
 
             foreach (var notification in allMsgNotifications)
             {

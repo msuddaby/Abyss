@@ -224,7 +224,6 @@ public class NotificationService
     public async Task<List<Notification>> CreateAllMessageNotifications(
         Message message, Guid serverId, Guid channelId,
         HashSet<string> onlineUserIds,
-        HashSet<string> activeChannelUserIds,
         HashSet<string> alreadyNotifiedUserIds)
     {
         var notifications = new List<Notification>();
@@ -247,7 +246,6 @@ public class NotificationService
         foreach (var userId in memberIds)
         {
             if (alreadyNotifiedUserIds.Contains(userId)) continue;
-            if (activeChannelUserIds.Contains(userId)) continue;
             if (!await _perms.HasChannelPermissionAsync(channelId, userId, Permission.ViewChannel)) continue;
 
             // Resolve effective notification level

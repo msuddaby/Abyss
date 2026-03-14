@@ -63,6 +63,45 @@ function App() {
     return () => { unsubscribe?.(); };
   }, [isAuthenticated, initialized]);
 
+  // Suspend SignalR when the mobile app backgrounds so the server sees the user
+  // as offline and delivers push notifications via FCM instead of relying on the
+  // (suspended) WebView to process SignalR signals.  A 5-second grace period
+  // avoids unnecessary disconnects for quick app switches (copying a link, etc.).
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !isAuthenticated) return;
+
+    let cleanup: (() => Promise<void>) | undefined;
+    let suspendTimer: ReturnType<typeof setTimeout> | null = null;
+
+    import('@capacitor/app').then(({ App }) => {
+      const handle = App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          // Cancel pending suspend if user returned quickly
+          if (suspendTimer) {
+            clearTimeout(suspendTimer);
+            suspendTimer = null;
+          }
+          import('@abyss/shared').then(({ startConnection }) => {
+            startConnection();
+          });
+        } else {
+          suspendTimer = setTimeout(() => {
+            suspendTimer = null;
+            import('@abyss/shared').then(({ suspendConnection }) => {
+              suspendConnection();
+            });
+          }, 5_000);
+        }
+      });
+      cleanup = async () => (await handle).remove();
+    });
+
+    return () => {
+      if (suspendTimer) clearTimeout(suspendTimer);
+      cleanup?.();
+    };
+  }, [isAuthenticated]);
+
   // Pause all animations globally when window is not visible
   useEffect(() => {
     if (isWindowVisible) {
