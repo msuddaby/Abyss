@@ -16,6 +16,8 @@ All API endpoints require a valid JWT bearer token unless noted otherwise. The J
 | `PUT` | `/api/auth/profile` | Yes | Update username, display name, bio |
 | `POST` | `/api/auth/avatar` | Yes | Upload a new avatar image |
 | `PUT` | `/api/auth/presence` | Yes | Update presence status (Online, Away, DnD) |
+| `POST` | `/api/auth/forgot-password` | None | Request a password reset email |
+| `POST` | `/api/auth/reset-password` | None | Reset password using emailed token |
 
 ## Servers
 

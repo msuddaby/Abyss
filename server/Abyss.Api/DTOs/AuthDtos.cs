@@ -37,3 +37,11 @@ public record GuestJoinResponse(string Token, string RefreshToken, UserDto User,
 public record UpgradeGuestRequest(
     [Required, EmailAddress] string Email,
     [Required, StringLength(128, MinimumLength = 8)] string Password);
+
+public record ForgotPasswordRequest(
+    [Required, EmailAddress] string Email);
+
+public record ResetPasswordRequest(
+    [Required] string Email,
+    [Required] string Token,
+    [Required, StringLength(128, MinimumLength = 8)] string NewPassword);

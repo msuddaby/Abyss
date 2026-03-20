@@ -15,8 +15,15 @@ Complete inventory of user-facing features currently implemented in Abyss.
 | **Social** | Friend requests and list, direct messages, user presence and status |
 | **Personalization** | Avatars, custom emoji, soundboard clips, cosmetics |
 | **Notifications** | In-app notifications, per-server/channel settings, mobile push via Firebase |
+| **Account** | Password reset via email (SMTP) |
 | **Administration** | System admin panel, user and server management, instance settings |
 | **Platform Support** | Web, iOS/Android (Capacitor), Electron desktop |
+
+---
+
+## Account Management
+
+- **Password reset** — users can reset their password via email. Requires SMTP configuration (see [Configuration](/configuration)). If SMTP is not configured, the feature is disabled gracefully.
 
 ---
 

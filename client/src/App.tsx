@@ -4,6 +4,8 @@ import { Capacitor } from '@capacitor/core';
 import { useAuthStore, onBeforeLogout } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import QuickJoinPage from './pages/QuickJoinPage';
 import MainLayout from './pages/MainLayout';
 import ToastHost from './components/ToastHost';
@@ -120,6 +122,8 @@ function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/join/:code" element={<QuickJoinPage />} />
         <Route
           path="/*"

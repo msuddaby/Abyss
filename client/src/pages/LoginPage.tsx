@@ -81,6 +81,9 @@ export default function LoginPage() {
 
           <button type="submit">Log In</button>
           <p className="auth-link">
+            <Link to="/forgot-password">Forgot your password?</Link>
+          </p>
+          <p className="auth-link">
             Need an account? <Link to="/register">Register</Link>
           </p>
           {!isProductionWeb && (

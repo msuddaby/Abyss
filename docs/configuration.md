@@ -126,6 +126,26 @@ The file is mounted into the Docker container via `docker-compose.yml`. If the f
 
 ---
 
+## SMTP (Password Reset)
+
+Password reset emails require an SMTP server. If `SMTP_HOST` is not set, the password reset feature is disabled and the backend logs a message on startup. Everything else works normally.
+
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `SMTP_HOST` | Yes | SMTP server hostname | `smtp.example.com` |
+| `SMTP_PORT` | No | SMTP server port | `587` |
+| `SMTP_USERNAME` | No | SMTP authentication username | — |
+| `SMTP_PASSWORD` | No | SMTP authentication password | — |
+| `SMTP_FROM_ADDRESS` | No | Sender email address | `noreply@your-domain.com` |
+| `SMTP_FROM_NAME` | No | Sender display name | `Abyss` |
+| `SMTP_ENABLE_SSL` | No | Enable TLS/SSL for SMTP connection | `true` |
+
+Any SMTP provider works: Gmail, AWS SES, Mailgun, SendGrid, Postmark, self-hosted Postfix, etc.
+
+For local development, use a mail catcher like [Mailpit](https://mailpit.axllent.org/) (`SMTP_HOST=localhost`, `SMTP_PORT=1025`, `SMTP_ENABLE_SSL=false`).
+
+---
+
 ## Sentry (Error Tracking)
 
 The frontend uses `@sentry/react` to capture errors, performance traces, and session replays. Sentry is disabled when `VITE_SENTRY_DSN` is empty.

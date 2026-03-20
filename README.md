@@ -30,6 +30,7 @@ Abyss is an open-source, self-hosted alternative to managed chat platforms. No t
 - Friend system
 - Direct messages
 - Push notifications (mobile, via Firebase)
+- Password reset via email (SMTP)
 - System administrator control panel
 
 ## Tech Stack
@@ -305,6 +306,13 @@ cp .env.example .env
 | `LIVEKIT_URL` | LiveKit server URL (backend) | `ws://livekit:7880` |
 | `VITE_LIVEKIT_URL` | LiveKit server URL (client, via Caddy) | `wss://your-domain.com/lk` |
 | `FIREBASE_SERVICE_ACCOUNT_PATH` | Firebase service account JSON path | `/app/firebase-service-account.json` |
+| `SMTP_HOST` | SMTP server hostname (enables password reset) | `smtp.example.com` |
+| `SMTP_PORT` | SMTP server port | `587` |
+| `SMTP_USERNAME` | SMTP authentication username | — |
+| `SMTP_PASSWORD` | SMTP authentication password | — |
+| `SMTP_FROM_ADDRESS` | Sender email address | `noreply@your-domain.com` |
+| `SMTP_FROM_NAME` | Sender display name | `Abyss` |
+| `SMTP_ENABLE_SSL` | Enable TLS/SSL for SMTP | `true` |
 
 **CORS origins** must include all clients that will connect:
 
@@ -441,6 +449,57 @@ The Docker Compose file mounts this file into the container. If the file is not 
 3. Tapping a notification navigates to the relevant channel/DM
 4. On logout, the token is unregistered (`DELETE /api/notifications/unregister-device`)
 5. Stale tokens are automatically cleaned up when FCM reports them as unregistered
+
+---
+
+## Password Reset
+
+Password reset works via email using SMTP. Users can click "Forgot your password?" on the login page, enter their email, and receive a reset link.
+
+### Configuration
+
+Add SMTP credentials to your `.env`:
+
+```sh
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+SMTP_FROM_ADDRESS=noreply@your-domain.com
+SMTP_FROM_NAME=Abyss
+SMTP_ENABLE_SSL=true
+```
+
+Any standard SMTP provider works — Gmail, AWS SES, Mailgun, Sendgrid, Postmark, a self-hosted Postfix, etc. The only requirement is a valid SMTP endpoint.
+
+| Variable | Required | Description | Default |
+|---|---|---|---|
+| `SMTP_HOST` | Yes | SMTP server hostname | — |
+| `SMTP_PORT` | No | SMTP server port | `587` |
+| `SMTP_USERNAME` | No | SMTP auth username (omit for unauthenticated relays) | — |
+| `SMTP_PASSWORD` | No | SMTP auth password | — |
+| `SMTP_FROM_ADDRESS` | No | Sender email address | `noreply@example.com` |
+| `SMTP_FROM_NAME` | No | Sender display name | `Abyss` |
+| `SMTP_ENABLE_SSL` | No | Enable TLS/SSL | `true` |
+
+If SMTP is not configured, the password reset feature is disabled and the backend logs a message on startup. All other functionality works normally.
+
+### Local Development
+
+For local testing, use a mail-catching tool like [Mailpit](https://mailpit.axllent.org/) or [MailHog](https://github.com/mailhog/MailHog):
+
+```sh
+# Run Mailpit (catches all outgoing mail, UI at http://localhost:8025)
+docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit
+```
+
+Then set in `.env.dev`:
+
+```sh
+SMTP_HOST=localhost
+SMTP_PORT=1025
+SMTP_ENABLE_SSL=false
+```
 
 ---
 

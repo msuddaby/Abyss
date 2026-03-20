@@ -119,6 +119,7 @@ builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
 builder.Services.AddScoped<CosmeticService>();
+builder.Services.AddSingleton<EmailService>();
 
 // Watch party / media providers
 // Use local directory for dev, /app for Docker/production

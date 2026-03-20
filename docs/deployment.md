@@ -174,7 +174,23 @@ sudo caddy start --config /path/to/Caddyfile
 
 Caddy automatically obtains and renews TLS certificates via Let's Encrypt. Ensure ports 80 and 443 are open and your domain's A record points to the server.
 
-## 7. Push Notifications (Optional)
+## 7. Email / Password Reset (Optional)
+
+Add SMTP credentials to `.env` to enable password reset via email:
+
+```sh
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=your_username
+SMTP_PASSWORD=your_password
+SMTP_FROM_ADDRESS=noreply@your-domain.com
+SMTP_FROM_NAME=Abyss
+SMTP_ENABLE_SSL=true
+```
+
+Any SMTP provider works (Gmail, AWS SES, Mailgun, SendGrid, etc.). If SMTP is not configured, password reset is disabled — all other features work normally.
+
+## 8. Push Notifications (Optional)
 
 See the [Push Notifications section in the README](https://github.com/msuddaby/Abyss#push-notifications-mobile) for Firebase setup instructions.
 

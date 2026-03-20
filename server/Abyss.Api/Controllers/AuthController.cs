@@ -24,6 +24,7 @@ public class AuthController : ControllerBase
     private readonly AppDbContext _db;
     private readonly ImageService _imageService;
     private readonly CosmeticService _cosmeticService;
+    private readonly EmailService _emailService;
     private const string InviteOnlyKey = "InviteOnly";
 
     public AuthController(
@@ -33,7 +34,8 @@ public class AuthController : ControllerBase
         IHubContext<ChatHub> hubContext,
         AppDbContext db,
         ImageService imageService,
-        CosmeticService cosmeticService)
+        CosmeticService cosmeticService,
+        EmailService emailService)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -42,6 +44,7 @@ public class AuthController : ControllerBase
         _db = db;
         _cosmeticService = cosmeticService;
         _imageService = imageService;
+        _emailService = emailService;
     }
 
     [HttpPost("register")]
@@ -279,6 +282,70 @@ public class AuthController : ControllerBase
 
         var response = await CreateAuthResponseAsync(user);
         return Ok(response);
+    }
+
+    [HttpPost("forgot-password")]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request)
+    {
+        // Always return OK to prevent email enumeration
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user == null || user.IsGuest)
+            return Ok(new { message = "If an account with that email exists, a password reset link has been sent." });
+
+        if (!_emailService.IsConfigured)
+            return StatusCode(503, "Email service is not configured. Contact your server administrator.");
+
+        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var encodedToken = Uri.EscapeDataString(token);
+        var encodedEmail = Uri.EscapeDataString(request.Email);
+
+        // Build the reset URL — explicit VITE_API_URL is preferred since it's always the
+        // public web client origin. Falls back to first https:// CORS origin.
+        var clientUrl = Environment.GetEnvironmentVariable("VITE_API_URL");
+        if (string.IsNullOrWhiteSpace(clientUrl))
+        {
+            var corsOrigins = Environment.GetEnvironmentVariable("CORS_ORIGINS") ?? "http://localhost:5173";
+            clientUrl = corsOrigins.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .FirstOrDefault(o => o.StartsWith("https://"))
+                ?? corsOrigins.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault(o => o.StartsWith("http://"))
+                ?? "http://localhost:5173";
+        }
+        var resetUrl = $"{clientUrl.TrimEnd('/')}/reset-password?token={encodedToken}&email={encodedEmail}";
+
+        try
+        {
+            await _emailService.SendPasswordResetEmailAsync(request.Email, resetUrl);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to send password reset email: {ex.Message}");
+            return StatusCode(500, "Failed to send email. Please try again later.");
+        }
+
+        return Ok(new { message = "If an account with that email exists, a password reset link has been sent." });
+    }
+
+    [HttpPost("reset-password")]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequest request)
+    {
+        var user = await _userManager.FindByEmailAsync(request.Email);
+        if (user == null)
+            return BadRequest("Invalid or expired reset token.");
+
+        var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword);
+        if (!result.Succeeded)
+        {
+            var errors = result.Errors.Select(e => e.Description).ToList();
+            // Identity returns generic "Invalid token." for expired/invalid tokens
+            if (errors.Any(e => e.Contains("Invalid token")))
+                return BadRequest("Invalid or expired reset token.");
+            return BadRequest(result.Errors);
+        }
+
+        return Ok(new { message = "Password has been reset successfully." });
     }
 
     private async Task BroadcastProfileUpdate(string userId, UserDto dto)
