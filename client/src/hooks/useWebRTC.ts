@@ -34,6 +34,9 @@ import {
   sfuSetScreenShareAudioSubscribed,
   isInSfuMode,
   getLiveKitRoom,
+  setSfuRecoveryCallback,
+  cancelSfuRecovery,
+  attemptSfuAudioUnlock,
 } from "@abyss/shared";
 import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
@@ -1128,6 +1131,7 @@ export async function attemptAudioUnlock() {
   const store = useVoiceStore.getState();
   let failed = false;
   const plays: Promise<void>[] = [];
+  // P2P audio elements
   audioElements.forEach((audio) => {
     if (!audio.srcObject) return;
     plays.push(
@@ -1148,6 +1152,11 @@ export async function attemptAudioUnlock() {
   });
   if (plays.length > 0) {
     await Promise.all(plays);
+  }
+  // SFU audio elements (managed by livekitService)
+  if (isInSfuMode()) {
+    const sfuOk = await attemptSfuAudioUnlock();
+    if (!sfuOk) failed = true;
   }
   store.setNeedsAudioUnlock(failed);
 }
@@ -3123,6 +3132,41 @@ function setupSignalRListeners() {
   if (listenersRegisteredForConnection === conn) return;
   listenersRegisteredForConnection = conn;
 
+  // Register SFU recovery callback so livekitService can trigger a full
+  // reconnect (including RNNoise re-application) when LiveKit unexpectedly drops.
+  setSfuRecoveryCallback(async (channelId: string) => {
+    console.log(`[sfu-recovery] Reconnecting to LiveKit for channel ${channelId}`);
+    await connectToLiveKit(channelId);
+
+    // Re-apply RNNoise to the SFU track if noise suppression is active
+    const vs = useVoiceStore.getState();
+    if (vs.noiseSuppression && localStream) {
+      try {
+        const audioConstraints: MediaTrackConstraints = {
+          noiseSuppression: true,
+          echoCancellation: vs.echoCancellation,
+          autoGainControl: vs.autoGainControl,
+        };
+        if (vs.inputDeviceId && vs.inputDeviceId !== 'default') {
+          audioConstraints.deviceId = { exact: vs.inputDeviceId };
+        }
+        // Re-use existing localStream if the mic track is still alive
+        const micTrack = localStream.getAudioTracks()[0];
+        if (!micTrack || micTrack.readyState === 'ended') {
+          localStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        }
+        await applySuppressor(localStream);
+        const processedTrack = peerStream?.getAudioTracks()[0];
+        if (processedTrack) {
+          await sfuReplaceAudioTrack(processedTrack);
+          console.log('[sfu-recovery] RNNoise re-applied to SFU audio track');
+        }
+      } catch (err) {
+        console.warn('[sfu-recovery] Failed to re-apply RNNoise, using native capture:', err);
+      }
+    }
+  });
+
   conn.on("UserJoinedVoice", (userId: string, displayName: string) => {
     console.log(`UserJoinedVoice: ${displayName} (${userId})`);
 
@@ -3536,6 +3580,7 @@ function setupSignalRListeners() {
     // Force leave voice - clean up all WebRTC state
     pendingVisibilityRejoin = false;
     rejoinInProgress = false;
+    cancelSfuRecovery();
     cleanupAll();
     useVoiceStore.getState().setCurrentChannel(null);
     useVoiceStore.getState().setParticipants(new Map());
@@ -4030,6 +4075,7 @@ export function useWebRTC() {
 
         // Check if user wants SFU mode
         if (useVoiceStore.getState().forceSfuMode) {
+          const sfuJoinT0 = performance.now();
           console.log('[join] User preference: using SFU relay mode');
           // Set lastVoiceJoinTime BEFORE setCurrentChannel so the device switching
           // and RNNoise effects (which depend on currentChannelId) are properly
@@ -4042,9 +4088,11 @@ export function useWebRTC() {
           const conn = getConnection();
           const voiceState = useVoiceStore.getState();
           await conn.invoke('JoinVoiceChannel', channelId, voiceState.isMuted, voiceState.isDeafened);
+          console.log(`[join/sfu] SignalR JoinVoiceChannel completed in ${Math.round(performance.now() - sfuJoinT0)}ms — now connecting LiveKit`);
 
           // Connect via LiveKit
           await connectToLiveKit(channelId);
+          console.log(`[join/sfu] LiveKit connected — total SFU join: ${Math.round(performance.now() - sfuJoinT0)}ms`);
 
           // Apply RNNoise to the LiveKit-published mic track if enabled.
           // LiveKit's publishAudio only sets the browser's native noiseSuppression
@@ -4262,6 +4310,7 @@ export function useWebRTC() {
     // regardless of SignalR or LiveKit connection state.
     pendingVisibilityRejoin = false;
     rejoinInProgress = false;
+    cancelSfuRecovery();
     setCurrentChannel(null);
     setParticipants(new Map());
     useVoiceStore.getState().setScreenSharing(false);
