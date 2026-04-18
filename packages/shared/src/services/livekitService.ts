@@ -60,9 +60,8 @@ const sfuCameraStreams = new Map<string, MediaStream>();
 
 export async function connectToLiveKit(channelId: string): Promise<void> {
   const t0 = performance.now();
-  console.log('[livekit] Connecting to SFU for channel:', channelId);
-
   const voiceState = useVoiceStore.getState();
+  console.log(`[livekit] Connecting to SFU for channel: ${channelId} | reason: ${voiceState.sfuFallbackReason ?? 'user-preference'} | previousMode: ${voiceState.connectionMode} | forceSfu: ${voiceState.forceSfuMode} | p2pFailures: ${voiceState.p2pFailureCount}`);
   voiceState.setConnectionMode('attempting-sfu');
 
   try {
@@ -164,17 +163,19 @@ export async function connectToLiveKit(channelId: string): Promise<void> {
 
 function setupRoomListeners(room: Room): void {
   room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-    console.log('[livekit] Participant joined:', participant.identity);
-    useVoiceStore.getState().addParticipant(participant.identity, participant.name || participant.identity);
+    const vs = useVoiceStore.getState();
+    console.log(`[livekit] Participant joined: ${participant.identity} (${participant.name}) | room participants: ${room.remoteParticipants.size} | our mode: ${vs.connectionMode}`);
+    vs.addParticipant(participant.identity, participant.name || participant.identity);
   });
 
   room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
-    console.log('[livekit] Participant left:', participant.identity);
-    useVoiceStore.getState().removeParticipant(participant.identity);
+    const vs = useVoiceStore.getState();
+    console.log(`[livekit] Participant left: ${participant.identity} (${participant.name}) | remaining room participants: ${room.remoteParticipants.size} | channel: ${vs.currentChannelId} | had audio element: ${sfuAudioElements.has(participant.identity)} | had gain node: ${sfuGainNodes.has(participant.identity)}`);
+    vs.removeParticipant(participant.identity);
     cleanupParticipantAudio(participant.identity);
     // Also clean sidebar state — VoiceUserLeftChannel may have been suppressed
     // if SignalR disconnected before LiveKit did.
-    const channelId = useVoiceStore.getState().currentChannelId;
+    const channelId = vs.currentChannelId;
     if (channelId) {
       useServerStore.getState().voiceUserLeft(channelId, participant.identity);
     }
@@ -227,8 +228,17 @@ function setupRoomListeners(room: Room): void {
       if (playPromise) {
         playPromise.then(() => {
           console.log(`[livekit] Audio element playing for ${participant.identity} — paused=${audioElement.paused} volume=${audioElement.volume} muted=${audioElement.muted} srcObject=${!!audioElement.srcObject}`);
+          if (!isScreenAudio) {
+            useVoiceStore.getState().setNeedsAudioUnlock(false);
+          }
         }).catch((err) => {
           console.warn(`[livekit] Audio element play FAILED for ${participant.identity}:`, err.name, err.message, `— paused=${audioElement.paused} hidden=${document.hidden}`);
+          // Mirror the P2P path — surface a "tap to unlock" banner so the user
+          // can recover from browser autoplay blocks. Screen-share audio has
+          // its own gated subscribe path and shouldn't drive this global flag.
+          if (!isScreenAudio) {
+            useVoiceStore.getState().setNeedsAudioUnlock(true);
+          }
         });
       }
     } else if (track.kind === Track.Kind.Video) {
@@ -293,8 +303,8 @@ function setupRoomListeners(room: Room): void {
   });
 
   room.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
-    console.log('[livekit] Connection state:', state);
     const voiceState = useVoiceStore.getState();
+    console.log(`[livekit] Connection state: ${state} | previous: ${voiceState.connectionState} | channel: ${voiceState.currentChannelId} | participants: ${room.remoteParticipants.size} | isManualDisconnect: ${isManualDisconnect}`);
     if (state === ConnectionState.Connected) {
       voiceState.setConnectionState('connected');
     } else if (state === ConnectionState.Reconnecting) {
@@ -317,18 +327,22 @@ function setupRoomListeners(room: Room): void {
   });
 
   room.on(RoomEvent.Disconnected, () => {
-    console.log('[livekit] Disconnected from room');
+    const vs = useVoiceStore.getState();
+    console.log(`[livekit] Disconnected from room | manual: ${isManualDisconnect} | channel: ${vs.currentChannelId} | recoveryAttempt: ${sfuRecoveryAttempt}/${MAX_SFU_RECOVERY_ATTEMPTS} | audioElements: ${sfuAudioElements.size} | screenStreams: ${sfuScreenStreams.size}`);
     reportDiagnostic({
       category: 'livekit',
       message: 'Disconnected from SFU room',
       level: 'warning',
-      data: { channelId: useVoiceStore.getState().currentChannelId },
+      data: { channelId: vs.currentChannelId },
     });
     cleanup();
 
     // Attempt automatic recovery if this wasn't a manual disconnect
     if (!isManualDisconnect) {
+      console.log(`[livekit] Unexpected disconnect — scheduling recovery (attempt ${sfuRecoveryAttempt + 1}/${MAX_SFU_RECOVERY_ATTEMPTS})`);
       scheduleSfuRecovery();
+    } else {
+      console.log('[livekit] Manual disconnect — skipping recovery');
     }
   });
 
@@ -383,7 +397,9 @@ export async function sfuReplaceAudioTrack(newTrack: MediaStreamTrack): Promise<
 }
 
 export async function sfuToggleMute(muted: boolean): Promise<void> {
-  if (!currentRoom) return;
+  if (!currentRoom) { console.log(`[livekit] sfuToggleMute(${muted}) — no room, skipping`); return; }
+  const method = isManualMicPublish ? 'publication-mute' : 'setMicrophoneEnabled';
+  console.log(`[livekit] sfuToggleMute(${muted}) via ${method}`);
   if (isManualMicPublish) {
     // When we manually published the track (RNNoise), use publication-level
     // mute/unmute to avoid LiveKit destroying and recapturing the mic.
@@ -391,6 +407,8 @@ export async function sfuToggleMute(muted: boolean): Promise<void> {
     if (pub) {
       if (muted) await pub.mute();
       else await pub.unmute();
+    } else {
+      console.warn('[livekit] sfuToggleMute — no mic publication found');
     }
   } else {
     await currentRoom.localParticipant.setMicrophoneEnabled(!muted);
@@ -398,6 +416,7 @@ export async function sfuToggleMute(muted: boolean): Promise<void> {
 }
 
 export function sfuSetDeafened(deafened: boolean): void {
+  console.log(`[livekit] sfuSetDeafened(${deafened}) | audioElements: ${sfuAudioElements.size} | gainNodes: ${sfuGainNodes.size} | screenAudioElements: ${sfuScreenAudioElements.size}`);
   if (deafened) {
     for (const audio of sfuAudioElements.values()) {
       audio.volume = 0;
@@ -481,10 +500,11 @@ export function sfuSetUserVolume(userId: string, volume: number): void {
 }
 
 export async function sfuSetInputDevice(deviceId: string): Promise<void> {
-  if (!currentRoom) return;
+  if (!currentRoom) { console.log(`[livekit] sfuSetInputDevice(${deviceId}) — no room, skipping`); return; }
   // When using manual mic publish (RNNoise), device switching is handled
   // by useWebRTC which recaptures the mic and calls noiseSuppressor.replaceInput().
-  if (isManualMicPublish) return;
+  if (isManualMicPublish) { console.log(`[livekit] sfuSetInputDevice(${deviceId}) — manual mic publish active, handled by useWebRTC`); return; }
+  console.log(`[livekit] sfuSetInputDevice — switching to device: ${deviceId}`);
   const voiceState = useVoiceStore.getState();
   await currentRoom.localParticipant.setMicrophoneEnabled(false);
   await currentRoom.localParticipant.setMicrophoneEnabled(true, {
@@ -677,8 +697,9 @@ export async function sfuUpdateCameraQuality(opts: {
 }
 
 export async function disconnectFromLiveKit(): Promise<void> {
-  if (!currentRoom) return;
-  console.log('[livekit] Disconnecting...');
+  if (!currentRoom) { console.log('[livekit] disconnectFromLiveKit — no room, skipping'); return; }
+  const vs = useVoiceStore.getState();
+  console.log(`[livekit] Disconnecting... | channel: ${vs.currentChannelId} | participants: ${currentRoom.remoteParticipants.size} | audioElements: ${sfuAudioElements.size} | screenStreams: ${sfuScreenStreams.size} | cameraStreams: ${sfuCameraStreams.size}`);
 
   // Prevent the Disconnected handler from scheduling recovery
   isManualDisconnect = true;
@@ -720,6 +741,7 @@ function cleanupParticipantAudio(participantId: string): void {
 }
 
 function cleanup(): void {
+  console.log(`[livekit] Cleanup — gainNodes: ${sfuGainNodes.size} | audioElements: ${sfuAudioElements.size} | screenAudioElements: ${sfuScreenAudioElements.size} | screenStreams: ${sfuScreenStreams.size} | cameraStreams: ${sfuCameraStreams.size} | linuxScreenShare: ${!!linuxScreenShareTrack}`);
   for (const entry of sfuGainNodes.values()) {
     entry.gain.disconnect();
     entry.source.disconnect();
@@ -755,6 +777,56 @@ export function isInSfuMode(): boolean {
   return currentRoom !== null;
 }
 
+export interface LiveKitHealthSnapshot {
+  state: ConnectionState;
+  remoteParticipants: number;
+  isE2EEEnabled: boolean;
+}
+
+/**
+ * Returns the current LiveKit connection health, or null if no room is active.
+ * Used to detect silent-zombie LiveKit sessions after a network blip — a Connected
+ * room with 0 remote participants when SignalR's authoritative list says otherwise
+ * indicates the signalling socket missed ParticipantConnected events.
+ */
+export function getLiveKitHealth(): LiveKitHealthSnapshot | null {
+  if (!currentRoom) return null;
+  return {
+    state: currentRoom.state,
+    remoteParticipants: currentRoom.remoteParticipants.size,
+    isE2EEEnabled: currentRoom.isE2EEEnabled,
+  };
+}
+
+/**
+ * Force a full SFU reconnect. Tears down any existing (possibly stale) room
+ * without scheduling auto-recovery, then re-runs the registered recovery
+ * callback (which re-applies RNNoise) or falls back to connectToLiveKit.
+ * Callers are responsible for deciding when to invoke this — see the
+ * post-SignalR-reconnect health check in useWebRTC.
+ */
+export async function sfuTriggerRecovery(channelId: string): Promise<void> {
+  console.warn(`[livekit] sfuTriggerRecovery invoked for channel ${channelId} | currentRoom=${!!currentRoom} state=${currentRoom?.state ?? 'none'} remoteParticipants=${currentRoom?.remoteParticipants.size ?? 0}`);
+  cancelSfuRecovery();
+
+  if (currentRoom) {
+    isManualDisconnect = true;
+    try {
+      await currentRoom.disconnect();
+    } catch (err) {
+      console.warn('[livekit] sfuTriggerRecovery: disconnect of stale room threw:', err);
+    }
+    cleanup();
+    isManualDisconnect = false;
+  }
+
+  if (sfuRecoveryCallback) {
+    await sfuRecoveryCallback(channelId);
+  } else {
+    await connectToLiveKit(channelId);
+  }
+}
+
 // --- SFU disconnection recovery ---
 
 /**
@@ -775,11 +847,12 @@ export function cancelSfuRecovery(): void {
 }
 
 function scheduleSfuRecovery(): void {
-  const channelId = useVoiceStore.getState().currentChannelId;
-  if (!channelId) return;
+  const vs = useVoiceStore.getState();
+  const channelId = vs.currentChannelId;
+  if (!channelId) { console.log('[livekit] scheduleSfuRecovery — no channel, aborting'); return; }
 
   if (sfuRecoveryAttempt >= MAX_SFU_RECOVERY_ATTEMPTS) {
-    console.error(`[livekit] Max SFU recovery attempts (${MAX_SFU_RECOVERY_ATTEMPTS}) reached, giving up`);
+    console.error(`[livekit] Max SFU recovery attempts (${MAX_SFU_RECOVERY_ATTEMPTS}) reached, giving up | channel: ${channelId} | connectionMode: ${vs.connectionMode}`);
     sfuRecoveryAttempt = 0;
     useToastStore.getState().addToast('Voice relay connection lost. Please rejoin.', 'error');
     return;
@@ -787,7 +860,7 @@ function scheduleSfuRecovery(): void {
 
   sfuRecoveryAttempt++;
   const delay = Math.min(2000 * sfuRecoveryAttempt, 10000);
-  console.log(`[livekit] Scheduling SFU recovery attempt ${sfuRecoveryAttempt}/${MAX_SFU_RECOVERY_ATTEMPTS} in ${delay}ms`);
+  console.log(`[livekit] Scheduling SFU recovery attempt ${sfuRecoveryAttempt}/${MAX_SFU_RECOVERY_ATTEMPTS} in ${delay}ms | channel: ${channelId} | hasRecoveryCallback: ${!!sfuRecoveryCallback}`);
 
   sfuRecoveryTimer = setTimeout(async () => {
     sfuRecoveryTimer = null;
@@ -798,21 +871,26 @@ function scheduleSfuRecovery(): void {
     }
 
     try {
+      const recoveryMethod = sfuRecoveryCallback ? 'callback' : 'connectToLiveKit';
+      console.log(`[livekit] Starting SFU recovery via ${recoveryMethod} for channel: ${currentChannelId}`);
       if (sfuRecoveryCallback) {
         await sfuRecoveryCallback(currentChannelId);
       } else {
         await connectToLiveKit(currentChannelId);
       }
       sfuRecoveryAttempt = 0;
-      console.log('[livekit] SFU recovery successful');
+      console.log(`[livekit] SFU recovery successful via ${recoveryMethod}`);
     } catch (err) {
-      console.error('[livekit] SFU recovery attempt failed:', err);
+      console.error(`[livekit] SFU recovery attempt ${sfuRecoveryAttempt}/${MAX_SFU_RECOVERY_ATTEMPTS} failed:`, err);
       // If connectToLiveKit fails early (API error, token failure), no
       // Disconnected event fires, so we must schedule the next retry ourselves.
       // If it fails late (room connected then dropped), Disconnected will fire
       // and call scheduleSfuRecovery again — but the timer guard prevents doubles.
       if (!sfuRecoveryTimer) {
+        console.log('[livekit] No pending recovery timer — scheduling next attempt');
         scheduleSfuRecovery();
+      } else {
+        console.log('[livekit] Recovery timer already pending — Disconnected event will handle next attempt');
       }
     }
   }, delay);

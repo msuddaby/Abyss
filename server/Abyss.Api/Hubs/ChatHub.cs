@@ -133,8 +133,10 @@ public class ChatHub : Hub
             await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
         }
 
-        if (_voiceState.ChannelHasRelayUsers(channelGuid))
+        var hasRelayUsers = _voiceState.ChannelHasRelayUsers(channelGuid);
+        if (hasRelayUsers)
         {
+            Console.WriteLine($"[relay] Sending ChannelRelayActive to joining user {UserId} ({DisplayName}) — channel {channelId} has existing relay users");
             await Clients.Caller.SendAsync("ChannelRelayActive");
         }
 
@@ -1067,6 +1069,7 @@ public class ChatHub : Hub
             currentChannel.Value == channelGuid &&
             string.Equals(currentVoiceConnectionId, Context.ConnectionId, StringComparison.Ordinal))
         {
+            Console.WriteLine($"[voice] Silent refresh for {UserId} ({DisplayName}) in channel {channelId} — same connection, sending current state");
             _voiceState.UpdateUserState(channelGuid, UserId, effectiveMuted, isDeafened, canSpeak ? null : true, null);
             await SendCurrentVoiceChannelStateToCaller(channelGuid, channelId);
             return;
@@ -1080,6 +1083,7 @@ public class ChatHub : Hub
 
         if (reconnectingToSameChannel)
         {
+            Console.WriteLine($"[voice] Seamless reconnect for {UserId} ({DisplayName}) in channel {channelId} — new connectionId, preserving media state | hasRelay: {_voiceState.ChannelHasRelayUsers(channelGuid)}");
             // Seamless reconnect: WebRTC peer connections and LiveKit sessions survive
             // independently of SignalR, so we only need to update the connectionId and
             // re-add to SignalR groups. Screen share, camera, and all P2P media state
@@ -1163,6 +1167,8 @@ public class ChatHub : Hub
             }
         }
 
+        var channelUserCount = _voiceState.GetChannelUserIds(channelGuid).Count;
+        Console.WriteLine($"[voice] Fresh join for {UserId} ({DisplayName}) in channel {channelId} | existing users: {channelUserCount} | hasRelay: {_voiceState.ChannelHasRelayUsers(channelGuid)} | muted: {effectiveMuted} | deafened: {isDeafened}");
         _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
         if (!canSpeak)
         {
@@ -1233,9 +1239,11 @@ public class ChatHub : Hub
     {
         CancelPendingVoiceDisconnect(UserId);
         var currentChannel = _voiceState.GetUserChannel(UserId);
-        if (!currentChannel.HasValue) return;
+        if (!currentChannel.HasValue) { Console.WriteLine($"[voice] LeaveVoiceChannel for {UserId} ({DisplayName}) — not in any channel, ignoring"); return; }
         var channelGuid = currentChannel.Value;
         var resolvedChannelId = channelGuid.ToString();
+        var wasRelay = _voiceState.ChannelHasRelayUsers(channelGuid);
+        Console.WriteLine($"[voice] LeaveVoiceChannel for {UserId} ({DisplayName}) from channel {resolvedChannelId} | channelHasRelay: {wasRelay} | remainingUsers: {_voiceState.GetChannelUserIds(channelGuid).Count - 1}");
 
         // Atomically remove screen share / camera state (no TOCTOU)
         var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
@@ -1439,9 +1447,15 @@ public class ChatHub : Hub
     public async Task NotifyRelayMode(string channelId)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
-        if (!_voiceState.IsUserInChannel(channelGuid, UserId)) return;
+        if (!_voiceState.IsUserInChannel(channelGuid, UserId))
+        {
+            Console.WriteLine($"[relay] NotifyRelayMode rejected — user {UserId} ({DisplayName}) not in channel {channelId}");
+            return;
+        }
 
+        var hadRelayBefore = _voiceState.ChannelHasRelayUsers(channelGuid);
         _voiceState.AddRelayUser(channelGuid, UserId);
+        Console.WriteLine($"[relay] User {UserId} ({DisplayName}) entered relay mode in channel {channelId} | channelHadRelayBefore: {hadRelayBefore}");
         await Clients.OthersInGroup($"voice:{channelId}").SendAsync("ChannelRelayActive");
     }
 

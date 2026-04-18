@@ -42,6 +42,14 @@ if (envFile is not null)
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Sentry
+builder.WebHost.UseSentry(o =>
+{
+    o.Dsn = "https://1e21525169c8f6dab5d15cf56083381e@o4510970336051200.ingest.us.sentry.io/4511207796834304";
+    o.TracesSampleRate = 0.2;
+    o.SendDefaultPii = false;
+});
+
 // Database
 var pgHost = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
 var pgPort = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5433";

@@ -300,8 +300,16 @@ export function useSignalRListeners() {
         const voiceState = useVoiceStore.getState();
         const isSelf = currentUser?.id === userId;
         const timeSinceReconnect = Date.now() - lastSignalRReconnectTime;
-        const suppressSound = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
-        console.log(`[voice-sound] VoiceUserLeftChannel user=${userId} isSelf=${isSelf} suppress=${suppressSound} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
+        const suppressReconnect = isSelf && timeSinceReconnect < RECONNECT_SOUND_SUPPRESS_MS;
+        console.log(`[voice-sound] VoiceUserLeftChannel user=${userId} isSelf=${isSelf} suppress=${suppressReconnect} timeSinceReconnect=${timeSinceReconnect}ms deafened=${voiceState.isDeafened} inChannel=${voiceState.currentChannelId === channelId}`);
+
+        // During reconnection, suppress the self-leave entirely — we're just
+        // re-registering the voice session, not actually leaving. The sidebar
+        // state (serverStore.voiceChannelUsers) would otherwise flash empty
+        // until the subsequent VoiceUserJoinedChannel arrives.
+        if (suppressReconnect) {
+          return;
+        }
 
         // In SFU mode, if LiveKit still has this remote participant, suppress the
         // sidebar removal and leave sound — their media connection is still alive.
@@ -315,7 +323,7 @@ export function useSignalRListeners() {
         }
 
         useServerStore.getState().voiceUserLeft(channelId, userId);
-        if (currentUser && !suppressSound && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
+        if (currentUser && !voiceState.isDeafened && (isSelf || voiceState.currentChannelId === channelId)) {
           playVoiceSound(leaveSoundUrl, '/sounds/voice-leave.ogg');
         }
       });

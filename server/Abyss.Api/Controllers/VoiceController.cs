@@ -56,11 +56,17 @@ public class VoiceController : ControllerBase
         if (user == null)
             return NotFound("User not found");
 
+        // Mirror JoinVoiceChannel semantics: users without Speak can subscribe
+        // to others in the relay but cannot publish audio. Without this check,
+        // a muted-role user could request a token with canPublish=true and
+        // broadcast directly via LiveKit, bypassing the server-side mute state.
+        var canPublish = await _perms.HasChannelPermissionAsync(request.ChannelId, UserId, Permission.Speak);
+
         var token = _livekit.GenerateToken(
             UserId,
             user.DisplayName,
             request.ChannelId.ToString(),
-            canPublish: true
+            canPublish: canPublish
         );
 
         return Ok(new LiveKitTokenResponse

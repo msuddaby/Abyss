@@ -37,6 +37,8 @@ import {
   setSfuRecoveryCallback,
   cancelSfuRecovery,
   attemptSfuAudioUnlock,
+  getLiveKitHealth,
+  sfuTriggerRecovery,
 } from "@abyss/shared";
 import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
 // Lazy-imported to avoid crashing on platforms without AudioWorkletNode (e.g. iOS WebView)
@@ -108,12 +110,25 @@ const P2P_FAILURE_THRESHOLD = 3; // Fall back after multiple ICE failures
 
 function shouldFallbackToSFU(): boolean {
   const voiceState = useVoiceStore.getState();
-  if (voiceState.connectionMode === 'sfu' || voiceState.connectionMode === 'attempting-sfu') return false;
-  if (voiceState.forceSfuMode) return true;
+  if (voiceState.connectionMode === 'sfu' || voiceState.connectionMode === 'attempting-sfu') {
+    console.log(`[fallback-check] Already in SFU mode (${voiceState.connectionMode}), no fallback needed`);
+    return false;
+  }
+  if (voiceState.forceSfuMode) {
+    console.log('[fallback-check] → YES: user forced SFU mode');
+    return true;
+  }
   // Use cumulative failure count (not unique peer count) so a single peer
   // failing twice (e.g. after ICE restart) still triggers the fallback.
-  if (voiceState.p2pFailureCount >= P2P_FAILURE_THRESHOLD) return true;
-  if (voiceState.participants.size > 8) return true;
+  if (voiceState.p2pFailureCount >= P2P_FAILURE_THRESHOLD) {
+    console.log(`[fallback-check] → YES: p2pFailureCount=${voiceState.p2pFailureCount} >= threshold=${P2P_FAILURE_THRESHOLD} | failedPeers: [${Array.from(p2pFailedPeers).join(', ')}]`);
+    return true;
+  }
+  if (voiceState.participants.size > 8) {
+    console.log(`[fallback-check] → YES: participants=${voiceState.participants.size} > 8 (large room)`);
+    return true;
+  }
+  console.log(`[fallback-check] → NO: mode=${voiceState.connectionMode} forceSfu=${voiceState.forceSfuMode} failures=${voiceState.p2pFailureCount}/${P2P_FAILURE_THRESHOLD} participants=${voiceState.participants.size}`);
   return false;
 }
 
@@ -123,6 +138,7 @@ function shouldFallbackToSFU(): boolean {
 // When preserveLocalAudio is true, keep localStream/noiseSuppressor/peerStream
 // and the shared AudioContext alive so they can be reused for SFU publishing.
 function cleanupP2PConnections(preserveLocalAudio = false) {
+  console.log(`[p2p-cleanup] Tearing down P2P connections | preserveLocalAudio=${preserveLocalAudio} | peers=${peers.size} | audioElements=${audioElements.size} | screenAudioElements=${screenAudioElements.size} | hasLocalStream=${!!localStream} | hasNoiseSuppressor=${!!noiseSuppressor} | screenStream=${!!screenStream} | cameraStream=${!!cameraStream}`);
   voiceSessionId++;
   if (!preserveLocalAudio) {
     if (noiseSuppressor) {
@@ -199,9 +215,9 @@ function cleanupP2PConnections(preserveLocalAudio = false) {
 async function fallbackToSFU(reason: string): Promise<void> {
   const voiceState = useVoiceStore.getState();
   const channelId = voiceState.currentChannelId;
-  if (!channelId) return;
+  if (!channelId) { console.log(`[fallback] fallbackToSFU called but no channel — reason was: ${reason}`); return; }
 
-  console.warn(`[fallback] Switching to SFU mode: ${reason}`);
+  console.warn(`[fallback] Switching to SFU mode: ${reason} | channel: ${channelId} | currentMode: ${voiceState.connectionMode} | participants: ${voiceState.participants.size} | p2pFailures: ${voiceState.p2pFailureCount} | failedPeers: [${Array.from(p2pFailedPeers).join(', ')}] | activePeers: ${peers.size}`);
   Sentry.addBreadcrumb({ category: 'webrtc', message: `SFU fallback triggered: ${reason}`, level: 'warning' });
   Sentry.captureMessage(`P2P → SFU fallback: ${reason}`, {
     level: 'warning',
@@ -223,13 +239,16 @@ async function fallbackToSFU(reason: string): Promise<void> {
     // Tear down P2P connections but stay in the SignalR voice group.
     // This preserves the participant list and avoids leave/join sound
     // spam for other users in the channel.
-    cleanupP2PConnections();
+    console.log('[fallback] Step 1: Cleaning up P2P connections (preserving SignalR group + local audio chain)');
+    cleanupP2PConnections(true);
 
     // Connect via LiveKit SFU (sets mode to 'sfu' on success)
+    console.log('[fallback] Step 2: Connecting to LiveKit SFU');
     await connectToLiveKit(channelId);
 
     // Replace LiveKit's track with our RNNoise-processed output if suppressor is active
     const processedTrack = peerStream?.getAudioTracks()[0];
+    console.log(`[fallback] Step 3: RNNoise check — hasNoiseSuppressor=${!!noiseSuppressor} hasProcessedTrack=${!!processedTrack}`);
     if (noiseSuppressor && processedTrack) {
       try {
         await sfuReplaceAudioTrack(processedTrack);
@@ -240,10 +259,14 @@ async function fallbackToSFU(reason: string): Promise<void> {
     }
 
     // Notify other peers in the channel that relay is active
+    console.log('[fallback] Step 4: Notifying other peers of relay mode via SignalR');
     const conn = getConnection();
-    conn.invoke('NotifyRelayMode', channelId).catch(() => {});
+    conn.invoke('NotifyRelayMode', channelId).catch((err) => {
+      console.warn('[fallback] NotifyRelayMode invoke failed:', err);
+    });
 
     startAudioKeepAlive();
+    console.log(`[fallback] Complete — switched to SFU relay mode for channel ${channelId}`);
     useToastStore.getState().addToast('Switched to relay mode', 'info');
 
     p2pFailedPeers.clear();
@@ -257,6 +280,10 @@ async function fallbackToSFU(reason: string): Promise<void> {
     });
     voiceState.setConnectionState('disconnected');
     voiceState.setConnectionMode('p2p');
+    // Reset failure tracking so a transient LiveKit outage doesn't trap the
+    // user in an SFU→P2P→SFU retry loop on every subsequent peer join.
+    p2pFailedPeers.clear();
+    voiceState.resetP2PFailures();
     useToastStore.getState().addToast('Connection failed. Please try again.', 'error');
   }
 }
@@ -3127,6 +3154,66 @@ async function attemptVoiceRejoin(reason: string, options?: { silent?: boolean }
   }
 }
 
+let postReconnectHealthCheckInProgress = false;
+
+/**
+ * Verifies LiveKit room state after a SignalR reconnect. A network blip that
+ * killed the SignalR WebSocket can also silently break LiveKit's signalling
+ * socket without firing the Disconnected event — leaving the room in a zombie
+ * state where no ParticipantConnected events arrive. Clients in that state
+ * hear nothing from anyone who joined during or after the blip.
+ *
+ * This runs on a delay so LiveKit's own reconnect logic has a chance to
+ * recover. If the room is still disconnected, OR SignalR's authoritative
+ * participant list disagrees with LiveKit's remote participants, we trigger
+ * a full SFU recovery.
+ */
+async function performPostReconnectLiveKitHealthCheck(channelId: string): Promise<void> {
+  if (postReconnectHealthCheckInProgress) return;
+  postReconnectHealthCheckInProgress = true;
+  try {
+    const vs = useVoiceStore.getState();
+    if (vs.currentChannelId !== channelId) return;
+    if (vs.connectionMode !== 'sfu' && vs.connectionMode !== 'attempting-sfu') return;
+
+    const health = getLiveKitHealth();
+    const currentUser = useAuthStore.getState().user;
+    const signalrRemoteCount = Math.max(0, vs.participants.size - (currentUser && vs.participants.has(currentUser.id) ? 1 : 0));
+
+    let unhealthyReason: string | null = null;
+    if (!health) {
+      unhealthyReason = 'no-room';
+    } else if (health.state !== 'connected') {
+      unhealthyReason = `state=${health.state}`;
+    } else if (signalrRemoteCount > 0 && health.remoteParticipants === 0) {
+      unhealthyReason = `divergence: signalr=${signalrRemoteCount} livekit=0`;
+    }
+
+    if (!unhealthyReason) {
+      console.log(`[voice-health] LiveKit OK after SignalR reconnect | state=${health?.state} signalr=${signalrRemoteCount} livekit=${health?.remoteParticipants}`);
+      return;
+    }
+
+    console.warn(`[voice-health] LiveKit unhealthy after SignalR reconnect (${unhealthyReason}) — triggering SFU recovery for channel ${channelId}`);
+    Sentry.addBreadcrumb({
+      category: 'webrtc',
+      message: `Post-reconnect LiveKit health check failed: ${unhealthyReason}`,
+      level: 'warning',
+    });
+    try {
+      await sfuTriggerRecovery(channelId);
+    } catch (err) {
+      console.error('[voice-health] sfuTriggerRecovery threw:', err);
+      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), {
+        level: 'error',
+        tags: { 'diagnostic.category': 'webrtc', 'webrtc.phase': 'post-reconnect-health-check' },
+      });
+    }
+  } finally {
+    postReconnectHealthCheckInProgress = false;
+  }
+}
+
 function setupSignalRListeners() {
   const conn = getConnection();
   if (listenersRegisteredForConnection === conn) return;
@@ -3135,7 +3222,8 @@ function setupSignalRListeners() {
   // Register SFU recovery callback so livekitService can trigger a full
   // reconnect (including RNNoise re-application) when LiveKit unexpectedly drops.
   setSfuRecoveryCallback(async (channelId: string) => {
-    console.log(`[sfu-recovery] Reconnecting to LiveKit for channel ${channelId}`);
+    const recoveryVs = useVoiceStore.getState();
+    console.log(`[sfu-recovery] Reconnecting to LiveKit for channel ${channelId} | hasNoiseSuppression: ${recoveryVs.noiseSuppression} | hasLocalStream: ${!!localStream} | hasNoiseSuppressor: ${!!noiseSuppressor}`);
     await connectToLiveKit(channelId);
 
     // Re-apply RNNoise to the SFU track if noise suppression is active
@@ -3199,14 +3287,15 @@ function setupSignalRListeners() {
   });
 
   conn.on("UserLeftVoice", (userId: string) => {
-    console.log(`UserLeftVoice: ${userId}`);
+    const vs = useVoiceStore.getState();
+    console.log(`UserLeftVoice: ${userId} | mode: ${vs.connectionMode} | isInSfu: ${isInSfuMode()} | remaining participants: ${vs.participants.size - 1}`);
     bufferedUserJoinedVoiceEvents.delete(userId);
 
     // In SFU mode, check if LiveKit still has this participant connected.
     // If so, skip UI removal — let LiveKit's ParticipantDisconnected be authoritative.
     const room = getLiveKitRoom();
     if (room && room.remoteParticipants.has(userId)) {
-      console.log(`[sfu] Skipping removeParticipant for ${userId} — still in LiveKit room`);
+      console.log(`[sfu] Skipping removeParticipant for ${userId} — still in LiveKit room (${room.remoteParticipants.size} remote participants)`);
       return;
     }
 
@@ -3215,13 +3304,16 @@ function setupSignalRListeners() {
   });
 
   conn.on("ChannelRelayActive", () => {
-    console.log('[relay] Channel has relay users');
+    const vs = useVoiceStore.getState();
+    console.log(`[relay] ChannelRelayActive received | currentMode: ${vs.connectionMode} | channel: ${vs.currentChannelId} | channelRelayDetected was: ${channelRelayDetected} | peers: ${peers.size}`);
     channelRelayDetected = true;
 
     // If already fully connected in P2P, upgrade immediately (cascade)
-    const vs = useVoiceStore.getState();
     if (vs.connectionMode === 'p2p') {
+      console.log('[relay] Already in P2P mode — cascading to SFU to match channel peers');
       void fallbackToSFU('Channel peers are using relay');
+    } else {
+      console.log(`[relay] Not in P2P mode (${vs.connectionMode}) — flag set, will be checked on join completion`);
     }
   });
 
@@ -3459,6 +3551,21 @@ function setupSignalRListeners() {
   conn.on("VoiceChannelUsers", (users: Record<string, string>) => {
     const authoritative = new Map(Object.entries(users));
     useVoiceStore.getState().setParticipants(authoritative);
+
+    // Also refresh the sidebar's voice user list (serverStore) so it stays
+    // consistent with the authoritative participant list. VoiceChannelUsers
+    // only carries display names, so merge with existing state to preserve
+    // mute/deafen flags — missing users get defaults.
+    const channelId = useVoiceStore.getState().currentChannelId;
+    if (channelId) {
+      const ss = useServerStore.getState();
+      const existing = ss.voiceChannelUsers.get(channelId);
+      for (const [userId, displayName] of authoritative) {
+        if (!existing?.has(userId)) {
+          ss.voiceUserJoined(channelId, userId, { displayName, isMuted: false, isDeafened: false, isServerMuted: false, isServerDeafened: false });
+        }
+      }
+    }
 
     // Capture which users are pending in the buffer before replay clears them,
     // so reconciliation below doesn't double-trigger handleUserJoinedVoice.
@@ -4072,6 +4179,7 @@ export function useWebRTC() {
         channelRelayDetected = false;
         useVoiceStore.getState().resetP2PFailures();
         useVoiceStore.getState().setFallbackReason(null);
+        console.log(`[join] Starting voice join for channel: ${channelId} | forceSfu: ${useVoiceStore.getState().forceSfuMode} | previousChannel: ${currentChannelId ?? 'none'}`);
 
         // Check if user wants SFU mode
         if (useVoiceStore.getState().forceSfuMode) {
@@ -4259,7 +4367,7 @@ export function useWebRTC() {
 
         // If relay users exist in this channel, skip P2P and connect via SFU
         if (channelRelayDetected) {
-          console.log('[join] Channel has relay users, connecting via SFU');
+          console.log(`[join] Channel has relay users (channelRelayDetected=true), switching P2P → SFU | peers created so far: ${peers.size}`);
           cleanupP2PConnections();
           await connectToLiveKit(channelId);
           // applySuppressor already ran above — replace LiveKit's track with our RNNoise output
@@ -4284,6 +4392,7 @@ export function useWebRTC() {
 
         voiceState.setConnectionState("connected");
         voiceState.setConnectionMode("p2p");
+        console.log(`[join] P2P voice join complete for channel: ${channelId} | channelRelayDetected: ${channelRelayDetected} | participants: ${voiceState.participants.size}`);
         // Prevent the input device effect from re-obtaining a stream
         // — joinVoice already has the right stream
         lastVoiceJoinTime = Date.now();
@@ -4480,8 +4589,22 @@ export function useWebRTC() {
           } else {
             await attemptVoiceRejoin("signalr-reconnect-recovery");
           }
+          return;
         }
       }
+
+      // Health-check LiveKit after a successful re-register. If the network
+      // blip that killed SignalR also silently killed LiveKit's signalling
+      // socket, LiveKit can stay in a zombie "Connected" state where no
+      // ParticipantConnected events fire — the user hears silence until they
+      // manually rejoin. Detect that here and trigger a full SFU recovery.
+      const postVs = useVoiceStore.getState();
+      if (postVs.currentChannelId !== channelId) return;
+      const inSfu = isInSfuMode() || postVs.connectionMode === 'sfu' || postVs.connectionMode === 'attempting-sfu';
+      if (!inSfu) return;
+
+      // Give LiveKit its own reconnect window before we intervene.
+      setTimeout(() => { void performPostReconnectLiveKitHealthCheck(channelId); }, 5000);
     });
   }, []);
 

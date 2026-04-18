@@ -281,7 +281,9 @@ public class VoiceStateService
     public void AddRelayUser(Guid channelId, string userId)
     {
         var users = _relayUsers.GetOrAdd(channelId, _ => new ConcurrentDictionary<string, byte>());
-        users[userId] = 0;
+        var isNew = users.TryAdd(userId, 0);
+        if (isNew)
+            Console.WriteLine($"[VoiceState] AddRelayUser: {userId} in channel {channelId} | total relay users in channel: {users.Count}");
     }
 
     public bool RemoveRelayUser(Guid channelId, string userId)
@@ -289,6 +291,8 @@ public class VoiceStateService
         if (_relayUsers.TryGetValue(channelId, out var users))
         {
             var removed = users.TryRemove(userId, out _);
+            if (removed)
+                Console.WriteLine($"[VoiceState] RemoveRelayUser: {userId} from channel {channelId} | remaining relay users: {users.Count}");
             if (users.IsEmpty)
                 _relayUsers.TryRemove(channelId, out _);
             return removed;
