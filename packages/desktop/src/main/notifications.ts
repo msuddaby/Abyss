@@ -18,6 +18,34 @@ function getNotificationIcon(): Electron.NativeImage | undefined {
   return cachedIcon;
 }
 
+// Throttle + dedupe state. On Linux, notification.show() goes through libnotify
+// → D-Bus → the desktop notification daemon. A burst of notifications can stall
+// the main process if the daemon is slow. We drop native pops when:
+//   - any notification fired in the last GLOBAL_FLOOR_MS, or
+//   - the same channel fired one in the last PER_KEY_MS.
+// In-app toasts (renderer-side) are unaffected — they happen before the IPC.
+const GLOBAL_FLOOR_MS = 200;
+const PER_KEY_MS = 1000;
+const lastFiredByKey = new Map<string, number>();
+let lastFiredGlobal = 0;
+
+function shouldDrop(data?: { channelId?: string }): boolean {
+  const now = Date.now();
+  if (now - lastFiredGlobal < GLOBAL_FLOOR_MS) return true;
+  const key = data?.channelId ?? '__global__';
+  const last = lastFiredByKey.get(key) ?? 0;
+  if (now - last < PER_KEY_MS) return true;
+  lastFiredByKey.set(key, now);
+  lastFiredGlobal = now;
+  // Prevent the map from growing unbounded — drop entries older than PER_KEY_MS*4.
+  if (lastFiredByKey.size > 64) {
+    for (const [k, t] of lastFiredByKey) {
+      if (now - t > PER_KEY_MS * 4) lastFiredByKey.delete(k);
+    }
+  }
+  return false;
+}
+
 export function showNotification(
   window: BrowserWindow,
   title: string,
@@ -38,6 +66,11 @@ export function showNotification(
 
   if (!Notification.isSupported()) {
     console.warn('[Notifications] Notification.isSupported() returned false');
+    return;
+  }
+
+  if (shouldDrop(data)) {
+    console.log('[Notifications] Throttled (dedupe/floor) — skipping native pop');
     return;
   }
 
@@ -82,6 +115,27 @@ export function showNotification(
     console.log('[Notifications] Notification displayed successfully');
   });
 
-  console.log('[Notifications] Calling notification.show()');
-  notification.show();
+  // Defer the actual .show() call to the next tick. On Linux this is the
+  // critical fix: notification.show() synchronously dispatches a D-Bus call
+  // which can block the main-process event loop for hundreds of ms if the
+  // notification daemon is slow. By yielding via setImmediate, any queued
+  // IPC requests (e.g. ipcMain.handle('is-focused') from the renderer's
+  // SignalR handler) get serviced before we block on D-Bus.
+  console.log('[Notifications] Scheduling notification.show()');
+  const scheduledAt = performance.now();
+  setImmediate(() => {
+    const start = performance.now();
+    try {
+      notification.show();
+    } catch (err) {
+      console.error('[Notifications] notification.show() threw:', err);
+      cleanup();
+      return;
+    }
+    const elapsed = performance.now() - start;
+    if (elapsed > 500) {
+      const queueDelay = start - scheduledAt;
+      console.warn(`[Notifications] notification.show() blocked main loop for ${elapsed.toFixed(0)}ms (queue delay ${queueDelay.toFixed(0)}ms) — likely a slow notification daemon`);
+    }
+  });
 }

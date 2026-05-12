@@ -88,6 +88,8 @@ export default function UserSettingsModal({
   const setCameraDeviceId = useVoiceStore((s) => s.setCameraDeviceId);
   const voiceChatDesktopNotify = useVoiceStore((s) => s.voiceChatDesktopNotify);
   const setVoiceChatDesktopNotify = useVoiceStore((s) => s.setVoiceChatDesktopNotify);
+  const nativeDesktopNotificationsEnabled = useVoiceStore((s) => s.nativeDesktopNotificationsEnabled);
+  const setNativeDesktopNotificationsEnabled = useVoiceStore((s) => s.setNativeDesktopNotificationsEnabled);
   const keybindToggleMute = useVoiceStore((s) => s.keybindToggleMute);
   const keybindToggleDeafen = useVoiceStore((s) => s.keybindToggleDeafen);
   const keybindDisconnect = useVoiceStore((s) => s.keybindDisconnect);
@@ -1111,6 +1113,17 @@ export default function UserSettingsModal({
                 {isElectron() && (
                   <div className="us-card">
                     <div className="us-card-title">Notifications</div>
+                    <label className="settings-toggle">
+                      <input
+                        type="checkbox"
+                        checked={nativeDesktopNotificationsEnabled}
+                        onChange={(e) => setNativeDesktopNotificationsEnabled(e.target.checked)}
+                      />
+                      Show native OS notifications
+                    </label>
+                    <div className="settings-help">
+                      Disable if your system's notification daemon is causing the app to hang. In-app toast notifications will still appear.
+                    </div>
                     <label className="settings-toggle">
                       <input
                         type="checkbox"

@@ -3,6 +3,7 @@ import { useServerStore } from '../stores/serverStore.js';
 import { useDmStore } from '../stores/dmStore.js';
 import { useUnreadStore } from '../stores/unreadStore.js';
 import { useMessageStore } from '../stores/messageStore.js';
+import { useVoiceStore } from '../stores/voiceStore.js';
 import { getConnection } from './signalr.js';
 
 export interface NotificationData {
@@ -73,10 +74,16 @@ export function navigateToNotification(data: NotificationData) {
 }
 
 /**
- * Show a desktop notification (Electron only) and always show in-app toast
- * Desktop notification only shows when window is not focused
+ * Show a desktop notification (Electron only) and always show in-app toast.
+ * Desktop notification only fires when the window is not focused.
+ *
+ * Uses synchronous DOM focus APIs (document.hasFocus / document.hidden) to
+ * decide whether to dispatch the native pop — this avoids an `await`-on-IPC
+ * round-trip that previously could stall here when the Linux notification
+ * daemon was slow. The main process re-checks focus before showing as
+ * defense-in-depth (see packages/desktop/src/main/notifications.ts).
  */
-export const showDesktopNotification = async (
+export const showDesktopNotification = (
   title: string,
   body: string,
   data?: NotificationData
@@ -84,15 +91,17 @@ export const showDesktopNotification = async (
   const onAction = data ? () => navigateToNotification(data) : undefined;
   useToastStore.getState().addToast(body, 'info', 4000, onAction, title);
 
-  // If running in Electron, also show desktop notification
+  // If running in Electron, also fire the native notification when the window
+  // isn't currently focused/visible — unless the user has disabled native
+  // notifications (escape hatch for broken Linux notification daemons).
   if (typeof window !== 'undefined' && window.electron) {
     try {
-      const isFocused = await window.electron.isFocused();
-
-      // Only show desktop notification if window is not focused
-      if (!isFocused) {
-        window.electron.showNotification(title, body, data);
-      }
+      if (!useVoiceStore.getState().nativeDesktopNotificationsEnabled) return;
+      const isHidden = typeof document !== 'undefined'
+        ? (document.hidden || !document.hasFocus())
+        : false;
+      if (!isHidden) return;
+      window.electron.showNotification(title, body, data);
     } catch (error) {
       console.error('[ElectronNotifications] Failed to show notification:', error);
     }

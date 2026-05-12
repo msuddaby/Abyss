@@ -81,6 +81,11 @@ interface VoiceState {
   setVoiceChatOpen: (open: boolean) => void;
   voiceChatDesktopNotify: boolean;
   setVoiceChatDesktopNotify: (enabled: boolean) => void;
+  // Whether to dispatch native OS notifications (Electron). Disable as a
+  // workaround if the user's notification daemon is broken / causing hangs.
+  // In-app toasts always fire regardless.
+  nativeDesktopNotificationsEnabled: boolean;
+  setNativeDesktopNotificationsEnabled: (enabled: boolean) => void;
   userVolumes: Map<string, number>; // userId -> 0-300 volume percentage
   setUserVolume: (userId: string, volume: number) => void;
   cameraQuality: CameraQuality;
@@ -330,6 +335,11 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     getStorage().setItem('voiceChatDesktopNotify', String(enabled));
     set({ voiceChatDesktopNotify: enabled });
   },
+  nativeDesktopNotificationsEnabled: true,
+  setNativeDesktopNotificationsEnabled: (enabled) => {
+    getStorage().setItem('nativeDesktopNotificationsEnabled', String(enabled));
+    set({ nativeDesktopNotificationsEnabled: enabled });
+  },
   userVolumes: new Map<string, number>(),
   setUserVolume: (userId, volume) =>
     set((s) => {
@@ -417,6 +427,7 @@ export function hydrateVoiceStore() {
     autoGainControl: boolOr('autoGainControl', true),
     inputSensitivity: Number(s.getItem('inputSensitivity')) || 1,
     voiceChatDesktopNotify: boolOr('voiceChatDesktopNotify', false),
+    nativeDesktopNotificationsEnabled: boolOr('nativeDesktopNotificationsEnabled', true),
     cameraQuality: (s.getItem('cameraQuality') as CameraQuality) || 'medium',
     screenShareQuality: (s.getItem('screenShareQuality') as ScreenShareQuality) || 'balanced',
     keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',

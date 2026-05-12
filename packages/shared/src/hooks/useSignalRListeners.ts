@@ -523,8 +523,13 @@ export function useSignalRListeners() {
         const currentUser = useAuthStore.getState().user;
         const isDND = currentUser?.presenceStatus === 2; // 2 = DoNotDisturb
 
-        const isWindowHidden = isElectron()
-          ? !(await (window as any).electron.isFocused())
+        // Synchronous focus check via DOM APIs — avoids an IPC round-trip
+        // to the Electron main process. document.hasFocus() correctly
+        // returns false when the window is minimized, hidden, or behind
+        // another window in Chromium/Electron. On web, document.hidden
+        // catches tab-switch / minimize.
+        const isWindowHidden = typeof document !== 'undefined'
+          ? (document.hidden || (isElectron() && !document.hasFocus()))
           : false;
         if ((!isCurrentChannel || isWindowHidden) && !isDND) {
           playVoiceSound(null, '/sounds/new-message.ogg');
