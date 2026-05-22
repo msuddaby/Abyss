@@ -147,6 +147,15 @@ builder.Services.AddHttpClient<YouTubeMediaProvider>();
 builder.Services.AddSingleton<YtDlpService>();
 builder.Services.AddSingleton<YtDlpMediaProvider>();
 
+// RSS feeds
+builder.Services.AddHttpClient("rss", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Abyss-RSS-Reader/1.0");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5");
+});
+builder.Services.AddSingleton<RssFeedService>();
+
 // Rate Limiting
 builder.Services.AddRateLimiter(options =>
 {
@@ -201,6 +210,9 @@ builder.Services.AddHostedService<NotificationDispatchService>();
 
 // Server-side presence monitoring (auto-away on stale heartbeats)
 builder.Services.AddHostedService<PresenceMonitorService>();
+
+// Periodic RSS feed refresher
+builder.Services.AddHostedService<RssFeedRefresher>();
 
 // Firebase Cloud Messaging for push notifications
 var firebaseCredEnv = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH");

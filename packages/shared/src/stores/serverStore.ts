@@ -30,9 +30,9 @@ interface ServerState {
   setActiveChannel: (channel: Channel | null) => void;
   createServer: (name: string) => Promise<Server>;
   updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
-  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice', userLimit?: number | null) => Promise<Channel>;
-  renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean, userLimit?: number | null) => Promise<Channel>;
-  reorderChannels: (serverId: string, type: 'Text' | 'Voice', channelIds: string[]) => Promise<void>;
+  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice' | 'RssFeed', userLimit?: number | null, rssFeedUrl?: string | null, rssRefreshIntervalMinutes?: number | null) => Promise<Channel>;
+  renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean, userLimit?: number | null, rssFeedUrl?: string | null, rssRefreshIntervalMinutes?: number | null) => Promise<Channel>;
+  reorderChannels: (serverId: string, type: 'Text' | 'Voice' | 'RssFeed', channelIds: string[]) => Promise<void>;
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
   fetchRoles: (serverId: string) => Promise<void>;
@@ -194,15 +194,27 @@ export const useServerStore = create<ServerState>((set, get) => ({
     return server;
   },
 
-  createChannel: async (serverId, name, type, userLimit) => {
-    const res = await api.post(`/servers/${serverId}/channels`, { name, type, userLimit: userLimit || null });
+  createChannel: async (serverId, name, type, userLimit, rssFeedUrl, rssRefreshIntervalMinutes) => {
+    const res = await api.post(`/servers/${serverId}/channels`, {
+      name,
+      type,
+      userLimit: userLimit || null,
+      rssFeedUrl: rssFeedUrl || null,
+      rssRefreshIntervalMinutes: rssRefreshIntervalMinutes ?? null,
+    });
     const channel = res.data;
     set((s) => s.channels.some((c) => c.id === channel.id) ? s : { channels: [...s.channels, channel] });
     return channel;
   },
 
-  renameChannel: async (serverId, channelId, name, persistentChat, userLimit) => {
-    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, { name, persistentChat, userLimit: userLimit === undefined ? undefined : (userLimit || 0) });
+  renameChannel: async (serverId, channelId, name, persistentChat, userLimit, rssFeedUrl, rssRefreshIntervalMinutes) => {
+    const res = await api.patch(`/servers/${serverId}/channels/${channelId}`, {
+      name,
+      persistentChat,
+      userLimit: userLimit === undefined ? undefined : (userLimit || 0),
+      rssFeedUrl: rssFeedUrl === undefined ? undefined : rssFeedUrl,
+      rssRefreshIntervalMinutes: rssRefreshIntervalMinutes === undefined ? undefined : rssRefreshIntervalMinutes,
+    });
     const channel = res.data;
     set((s) => ({
       channels: s.channels.map((c) => (c.id === channelId ? channel : c)),

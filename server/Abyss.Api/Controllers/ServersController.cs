@@ -22,8 +22,9 @@ public class ServersController : ControllerBase
     private readonly ImageService _imageService;
     private readonly SystemMessageService _systemMessages;
     private readonly CosmeticService _cosmeticService;
+    private readonly RssFeedService _rss;
 
-    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService)
+    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService, RssFeedService rss)
     {
         _db = db;
         _perms = perms;
@@ -31,6 +32,7 @@ public class ServersController : ControllerBase
         _imageService = imageService;
         _systemMessages = systemMessages;
         _cosmeticService = cosmeticService;
+        _rss = rss;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -204,7 +206,9 @@ public class ServersController : ControllerBase
                 channel.Position,
                 perms & PermissionService.ChannelPermissionMask,
                 channel.PersistentChat,
-                channel.UserLimit));
+                channel.UserLimit,
+                channel.RssFeedUrl,
+                channel.RssRefreshIntervalMinutes));
         }
 
         return Ok(result);
@@ -217,6 +221,14 @@ public class ServersController : ControllerBase
 
         if (!Enum.TryParse<ChannelType>(req.Type, ignoreCase: true, out var channelType))
             return BadRequest("Invalid channel type");
+        if (channelType == ChannelType.DM)
+            return BadRequest("Cannot create DM channels via this endpoint.");
+
+        if (channelType == ChannelType.RssFeed)
+        {
+            if (string.IsNullOrWhiteSpace(req.RssFeedUrl) || !IsValidHttpUrl(req.RssFeedUrl))
+                return BadRequest("A valid http(s) RSS feed URL is required.");
+        }
 
         var maxPos = await _db.Channels
             .Where(c => c.ServerId == serverId && c.Type == channelType)
@@ -230,6 +242,8 @@ public class ServersController : ControllerBase
             ServerId = serverId,
             Position = maxPos + 1,
             UserLimit = channelType == ChannelType.Voice && req.UserLimit is > 0 ? req.UserLimit : null,
+            RssFeedUrl = channelType == ChannelType.RssFeed ? req.RssFeedUrl!.Trim() : null,
+            RssRefreshIntervalMinutes = channelType == ChannelType.RssFeed ? (req.RssRefreshIntervalMinutes ?? 30) : null,
         };
         _db.Channels.Add(channel);
         await _db.SaveChangesAsync();
@@ -237,9 +251,19 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
             targetName: $"#{channel.Name}", details: channelType.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelCreated", serverId.ToString(), dto);
+
+        if (channelType == ChannelType.RssFeed)
+            _ = _rss.RefreshAsync(channel);
+
         return Ok(dto);
+    }
+
+    private static bool IsValidHttpUrl(string url)
+    {
+        return Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 
     [HttpPatch("{serverId}/channels/{channelId}")]
@@ -255,13 +279,39 @@ public class ServersController : ControllerBase
             channel.PersistentChat = req.PersistentChat.Value;
         if (req.UserLimit.HasValue && channel.Type == ChannelType.Voice)
             channel.UserLimit = req.UserLimit.Value > 0 ? req.UserLimit.Value : null;
+
+        var rssUrlChanged = false;
+        if (channel.Type == ChannelType.RssFeed)
+        {
+            if (req.RssFeedUrl != null)
+            {
+                var trimmed = req.RssFeedUrl.Trim();
+                if (trimmed.Length == 0 || !IsValidHttpUrl(trimmed))
+                    return BadRequest("A valid http(s) RSS feed URL is required.");
+                if (!string.Equals(channel.RssFeedUrl, trimmed, StringComparison.Ordinal))
+                {
+                    channel.RssFeedUrl = trimmed;
+                    rssUrlChanged = true;
+                }
+            }
+            if (req.RssRefreshIntervalMinutes.HasValue)
+                channel.RssRefreshIntervalMinutes = req.RssRefreshIntervalMinutes.Value;
+        }
+
         await _db.SaveChangesAsync();
 
         await _perms.LogAsync(serverId, AuditAction.ChannelUpdated, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelUpdated", serverId.ToString(), dto);
+
+        if (rssUrlChanged)
+        {
+            _rss.Invalidate(channel.Id);
+            _ = _rss.RefreshAsync(channel);
+        }
+
         return Ok(dto);
     }
 
@@ -351,7 +401,7 @@ public class ServersController : ControllerBase
             .Where(c => c.ServerId == serverId)
             .OrderBy(c => c.Type)
             .ThenBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat, c.UserLimit))
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat, c.UserLimit, c.RssFeedUrl, c.RssRefreshIntervalMinutes))
             .ToListAsync();
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);
@@ -549,6 +599,9 @@ public class ServersController : ControllerBase
             _db.UserChannelNotificationSettings.Where(s => s.ChannelId == channelId));
         _db.Channels.Remove(channel);
         await _db.SaveChangesAsync();
+
+        if (channel.Type == ChannelType.RssFeed)
+            _rss.Invalidate(channelId);
 
         await _perms.LogAsync(serverId, AuditAction.ChannelDeleted, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());

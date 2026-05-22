@@ -3,10 +3,14 @@ import { createPortal } from 'react-dom';
 import { useServerStore, parseValidationErrors, getGeneralError } from '@abyss/shared';
 import FormField from './FormField';
 
+type ChannelTypeOption = 'Text' | 'Voice' | 'RssFeed';
+
 export default function CreateChannelModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [name, setName] = useState('');
-  const [type, setType] = useState<'Text' | 'Voice'>('Text');
+  const [type, setType] = useState<ChannelTypeOption>('Text');
   const [userLimit, setUserLimit] = useState('');
+  const [rssFeedUrl, setRssFeedUrl] = useState('');
+  const [rssInterval, setRssInterval] = useState('30');
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]> | null>(null);
   const createChannel = useServerStore((s) => s.createChannel);
@@ -17,7 +21,13 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
     setValidationErrors(null);
     try {
       const limit = type === 'Voice' && userLimit ? parseInt(userLimit, 10) : null;
-      await createChannel(serverId, name, type, limit);
+      const feedUrl = type === 'RssFeed' ? rssFeedUrl.trim() : null;
+      const interval = type === 'RssFeed' && rssInterval ? parseInt(rssInterval, 10) : null;
+      if (type === 'RssFeed' && !feedUrl) {
+        setError('Feed URL is required for RSS channels.');
+        return;
+      }
+      await createChannel(serverId, name, type, limit, feedUrl, interval);
       onClose();
     } catch (err: any) {
       const parsedErrors = parseValidationErrors(err);
@@ -56,6 +66,13 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
               >
                 🔊 Voice
               </button>
+              <button
+                type="button"
+                className={`type-option ${type === 'RssFeed' ? 'active' : ''}`}
+                onClick={() => setType('RssFeed')}
+              >
+                📰 RSS Feed
+              </button>
             </div>
           </label>
 
@@ -82,6 +99,32 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
               <div className="server-setting-hint">0 or empty for unlimited</div>
             </label>
           )}
+
+          {type === 'RssFeed' && (
+            <>
+              <FormField
+                label="Feed URL"
+                name="RssFeedUrl"
+                value={rssFeedUrl}
+                onChange={setRssFeedUrl}
+                required
+                placeholder="https://example.com/feed.rss"
+                errors={validationErrors}
+              />
+              <label>
+                Refresh Interval (minutes)
+                <input
+                  type="number"
+                  min="5"
+                  max="1440"
+                  value={rssInterval}
+                  onChange={(e) => setRssInterval(e.target.value)}
+                />
+                <div className="server-setting-hint">5–1440 minutes</div>
+              </label>
+            </>
+          )}
+
           <div className="modal-actions">
             <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
             <button type="submit">Create</button>

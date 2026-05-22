@@ -18,14 +18,20 @@ public record ServerDto(Guid Id, string Name, string? IconUrl, string OwnerId, b
 public record CreateChannelRequest(
     [Required, StringLength(32, MinimumLength = 1)] string Name,
     [Required] string Type,
-    [Range(0, 99)] int? UserLimit = null);
+    [Range(0, 99)] int? UserLimit = null,
+    [StringLength(2048)] string? RssFeedUrl = null,
+    [Range(5, 1440)] int? RssRefreshIntervalMinutes = null);
 
 public record UpdateChannelRequest(
     [Required, StringLength(32, MinimumLength = 1)] string Name,
     bool? PersistentChat = null,
-    [Range(0, 99)] int? UserLimit = null);
+    [Range(0, 99)] int? UserLimit = null,
+    [StringLength(2048)] string? RssFeedUrl = null,
+    [Range(5, 1440)] int? RssRefreshIntervalMinutes = null);
 public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
-public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null);
+public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null, string? RssFeedUrl = null, int? RssRefreshIntervalMinutes = null);
+public record RssFeedItemDto(string Guid, string Title, string Link, string? Author, DateTime? PubDate);
+public record RssFeedStateDto(List<RssFeedItemDto> Items, DateTime? LastFetched, string? LastError);
 public record ChannelPermissionOverrideDto(Guid RoleId, long Allow, long Deny);
 public record ChannelPermissionsDto(List<ChannelPermissionOverrideDto> Overrides);
 public record ServerMemberDto(Guid ServerId, string UserId, UserDto User, bool IsOwner, List<ServerRoleDto> Roles, DateTime JoinedAt);

@@ -4,6 +4,7 @@ import MessageList from '../components/MessageList';
 import MessageInput from '../components/MessageInput';
 
 import VoiceChannelView from '../components/VoiceChannelView';
+import RssFeedChannelView from '../components/RssFeedChannelView';
 import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
@@ -253,7 +254,7 @@ export default function MainLayout() {
                 />
               )}
             </>
-          ) : (
+          ) : activeChannel.type === 'Voice' ? (
             <div className="voice-channel-view">
               <div className="channel-header">
                 {hamburgerButton}
@@ -271,7 +272,25 @@ export default function MainLayout() {
               </div>
               <VoiceChannelView />
             </div>
-          )
+          ) : activeChannel.type === 'RssFeed' ? (
+            <>
+              <div className="channel-header">
+                {hamburgerButton}
+                <span className="channel-rss-icon" aria-hidden="true">📰</span>
+                <span className="channel-name">{activeChannel.name}</span>
+                <div className="channel-header-actions">
+                  <button
+                    className={`member-list-toggle-btn${memberListVisible && !isMobile() ? ' active' : ''}`}
+                    onClick={toggleMemberList}
+                    title="Toggle member list"
+                  >
+                    👥
+                  </button>
+                </div>
+              </div>
+              <RssFeedChannelView />
+            </>
+          ) : null
         ) : (
           <div className="no-channel">
             {hamburgerButton}

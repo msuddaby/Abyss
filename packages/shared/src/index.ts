@@ -40,6 +40,7 @@ export { useWatchPartyStore } from './stores/watchPartyStore.js';
 export { useSoundboardStore } from './stores/soundboardStore.js';
 export { useServerConfigStore } from './stores/serverConfigStore.js';
 export { useRateLimitStore } from './stores/rateLimitStore.js';
+export { useRssFeedStore } from './stores/rssFeedStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

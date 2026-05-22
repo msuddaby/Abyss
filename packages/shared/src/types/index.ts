@@ -161,12 +161,28 @@ export interface UserPreferences {
 export interface Channel {
   id: string;
   name: string;
-  type: "Text" | "Voice";
+  type: "Text" | "Voice" | "RssFeed";
   serverId: string;
   position: number;
   permissions?: number;
   persistentChat?: boolean;
   userLimit?: number | null;
+  rssFeedUrl?: string | null;
+  rssRefreshIntervalMinutes?: number | null;
+}
+
+export interface RssFeedItem {
+  guid: string;
+  title: string;
+  link: string;
+  author?: string | null;
+  pubDate?: string | null;
+}
+
+export interface RssFeedState {
+  items: RssFeedItem[];
+  lastFetched: string | null;
+  lastError: string | null;
 }
 
 export interface ServerRole {

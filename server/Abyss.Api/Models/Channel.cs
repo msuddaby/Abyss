@@ -6,7 +6,8 @@ public enum ChannelType
 {
     Text,
     Voice,
-    DM
+    DM,
+    RssFeed
 }
 
 public class Channel
@@ -28,4 +29,9 @@ public class Channel
     public string? DmUser2Id { get; set; }
     public AppUser? DmUser2 { get; set; }
     public DateTime? LastMessageAt { get; set; }
+
+    // RSS feed-specific fields
+    [MaxLength(2048)]
+    public string? RssFeedUrl { get; set; }
+    public int? RssRefreshIntervalMinutes { get; set; }
 }

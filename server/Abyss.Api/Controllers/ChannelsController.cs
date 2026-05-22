@@ -18,13 +18,15 @@ public class ChannelsController : ControllerBase
     private readonly PermissionService _perms;
     private readonly CosmeticService _cosmetics;
     private readonly ImageService _imageService;
+    private readonly RssFeedService _rss;
 
-    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics, ImageService imageService)
+    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics, ImageService imageService, RssFeedService rss)
     {
         _db = db;
         _perms = perms;
         _cosmetics = cosmetics;
         _imageService = imageService;
+        _rss = rss;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -246,5 +248,36 @@ public class ChannelsController : ControllerBase
             .ToListAsync();
 
         return Ok(_imageService.EnrichAttachmentDimensions(pins));
+    }
+
+    [HttpGet("{channelId}/rss")]
+    public async Task<ActionResult<RssFeedStateDto>> GetRssFeed(Guid channelId)
+    {
+        var channel = await _db.Channels.FindAsync(channelId);
+        if (channel == null) return NotFound();
+        if (channel.Type != ChannelType.RssFeed) return BadRequest("Not an RSS feed channel.");
+        if (!await _perms.HasChannelPermissionAsync(channelId, UserId, Permission.ViewChannel)) return Forbid();
+
+        var cached = _rss.GetCached(channelId);
+        // First-time access kicks off a fetch in the background if nothing cached yet
+        if (cached.LastFetched is null && !string.IsNullOrWhiteSpace(channel.RssFeedUrl))
+        {
+            _ = _rss.RefreshAsync(channel);
+        }
+        return Ok(RssFeedService.ToStateDto(cached));
+    }
+
+    [HttpPost("{channelId}/rss/refresh")]
+    public async Task<ActionResult<RssFeedStateDto>> RefreshRssFeed(Guid channelId)
+    {
+        var channel = await _db.Channels.FindAsync(channelId);
+        if (channel == null) return NotFound();
+        if (channel.Type != ChannelType.RssFeed) return BadRequest("Not an RSS feed channel.");
+        if (channel.ServerId is null) return BadRequest("Channel has no server.");
+        if (!await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels)) return Forbid();
+        if (string.IsNullOrWhiteSpace(channel.RssFeedUrl)) return BadRequest("Channel has no feed URL.");
+
+        await _rss.RefreshAsync(channel);
+        return Ok(RssFeedService.ToStateDto(_rss.GetCached(channelId)));
     }
 }

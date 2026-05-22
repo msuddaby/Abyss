@@ -51,7 +51,7 @@ export default function ChannelSidebar() {
   const serverDropdownRef = useRef<HTMLDivElement>(null);
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
   const [dragOverChannelId, setDragOverChannelId] = useState<string | null>(null);
-  const [dragType, setDragType] = useState<'Text' | 'Voice' | null>(null);
+  const [dragType, setDragType] = useState<'Text' | 'Voice' | 'RssFeed' | null>(null);
   const dmSearchTimeout = useRef<ReturnType<typeof setTimeout>>(undefined);
   const dmSearchInputRef = useRef<HTMLInputElement>(null);
   const openContextMenu = useContextMenuStore((s) => s.open);
@@ -307,6 +307,7 @@ export default function ChannelSidebar() {
   const visibleChannels = channels.filter((c) => canViewChannel(c));
   const textChannels = visibleChannels.filter((c) => c.type === 'Text');
   const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
+  const rssChannels = visibleChannels.filter((c) => c.type === 'RssFeed');
 
   const handleChannelClick = (channel: Channel) => {
     if (isMobile()) useMobileStore.getState().closeLeftDrawer();
@@ -321,7 +322,7 @@ export default function ChannelSidebar() {
     await leaveVoice();
   };
 
-  const handleDragStart = (channel: Channel, type: 'Text' | 'Voice') => (e: React.DragEvent) => {
+  const handleDragStart = (channel: Channel, type: 'Text' | 'Voice' | 'RssFeed') => (e: React.DragEvent) => {
     if (!canManageChannels) return;
     setDraggingChannelId(channel.id);
     setDragType(type);
@@ -329,13 +330,13 @@ export default function ChannelSidebar() {
     e.dataTransfer.setData('text/plain', channel.id);
   };
 
-  const handleDragOver = (channel: Channel, type: 'Text' | 'Voice') => (e: React.DragEvent) => {
+  const handleDragOver = (channel: Channel, type: 'Text' | 'Voice' | 'RssFeed') => (e: React.DragEvent) => {
     if (!canManageChannels || dragType !== type) return;
     e.preventDefault();
     setDragOverChannelId(channel.id);
   };
 
-  const handleDrop = (channel: Channel, type: 'Text' | 'Voice') => async (e: React.DragEvent) => {
+  const handleDrop = (channel: Channel, type: 'Text' | 'Voice' | 'RssFeed') => async (e: React.DragEvent) => {
     if (!canManageChannels || dragType !== type) return;
     e.preventDefault();
 
@@ -347,7 +348,7 @@ export default function ChannelSidebar() {
       return;
     }
 
-    const list = type === 'Text' ? textChannels : voiceChannels;
+    const list = type === 'Text' ? textChannels : type === 'Voice' ? voiceChannels : rssChannels;
     const fromIndex = list.findIndex((c) => c.id === draggedId);
     const toIndex = list.findIndex((c) => c.id === channel.id);
     if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
@@ -500,6 +501,34 @@ export default function ChannelSidebar() {
             ))}
           </div>
         )}
+        {rssChannels.length > 0 && (
+          <div className="channel-category">
+            <span className="category-label">Feeds</span>
+            {rssChannels.map((channel) => (
+              <div
+                key={channel.id}
+                className={`channel-item-wrapper${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+                draggable={canManageChannels && !isMobile()}
+                onDragStart={handleDragStart(channel, 'RssFeed')}
+                onDragOver={handleDragOver(channel, 'RssFeed')}
+                onDrop={handleDrop(channel, 'RssFeed')}
+                onDragEnd={handleDragEnd}
+                onContextMenu={handleChannelContextMenu(channel)}
+                onTouchStart={(e) => { longPressChannelRef.current = channel; channelLongPress.onTouchStart(e); }}
+                onTouchMove={channelLongPress.onTouchMove}
+                onTouchEnd={channelLongPress.onTouchEnd}
+              >
+                <button
+                  className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}`}
+                  onClick={() => handleChannelClick(channel)}
+                >
+                  <span className="channel-rss-icon" aria-hidden="true">📰</span>
+                  {channel.name}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {showCreateChannel && <CreateChannelModal serverId={activeServer.id} onClose={() => setShowCreateChannel(false)} />}
       {showInvite && <InviteModal serverId={activeServer.id} onClose={() => setShowInvite(false)} />}
@@ -525,7 +554,11 @@ export default function ChannelSidebar() {
           channelType={channelToEdit.type}
           initialPersistentChat={channelToEdit.persistentChat}
           initialUserLimit={channelToEdit.userLimit}
-          onSave={async (name, persistentChat, userLimit) => { await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat, userLimit); }}
+          initialRssFeedUrl={channelToEdit.rssFeedUrl}
+          initialRssRefreshIntervalMinutes={channelToEdit.rssRefreshIntervalMinutes}
+          onSave={async (name, persistentChat, userLimit, rssFeedUrl, rssRefreshIntervalMinutes) => {
+            await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat, userLimit, rssFeedUrl, rssRefreshIntervalMinutes);
+          }}
           onClose={() => setChannelToEdit(null)}
         />
       )}

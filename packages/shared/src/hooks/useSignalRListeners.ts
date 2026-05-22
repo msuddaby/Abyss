@@ -18,6 +18,8 @@ import { useWatchPartyStore } from '../stores/watchPartyStore.js';
 import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
 import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { useRateLimitStore } from '../stores/rateLimitStore.js';
+import { useRssFeedStore } from '../stores/rssFeedStore.js';
+import type { RssFeedState } from '../types/index.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
 import { getLiveKitRoom } from '../services/livekitService.js';
@@ -450,6 +452,10 @@ export function useSignalRListeners() {
 
       conn.on('ChannelPermissionsUpdated', (serverId: string) => {
         refreshChannels(serverId).catch(console.error);
+      });
+
+      conn.on('RssFeedUpdated', (channelId: string, state: RssFeedState) => {
+        useRssFeedStore.getState().applyUpdate(channelId, state);
       });
 
       conn.on('ServerDeleted', (serverId: string) => {
