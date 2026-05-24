@@ -114,6 +114,12 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
       { perm: Permission.UseYtDlp, label: 'Use Direct Links (yt-dlp)', description: 'Start watch parties from arbitrary URLs via yt-dlp' },
     ],
   },
+  {
+    section: 'Forum Bridge',
+    perms: [
+      { perm: Permission.CreateForumTopic, label: 'Create Forum Topic', description: 'Post a digest of channel messages as a thread on the linked XenForo forum' },
+    ],
+  },
 ];
 
 const ROLE_COLOR_PRESETS = [

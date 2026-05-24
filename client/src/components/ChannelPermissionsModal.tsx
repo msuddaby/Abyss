@@ -40,6 +40,12 @@ const CHANNEL_PERM_SECTIONS = [
       { key: 'UseYtDlp', label: 'Use Direct Links (yt-dlp)', desc: 'Start watch parties from arbitrary URLs via yt-dlp', value: Permission.UseYtDlp },
     ],
   },
+  {
+    section: 'Forum Bridge',
+    perms: [
+      { key: 'CreateForumTopic', label: 'Create Forum Topic', desc: 'Post a digest of channel messages as a XenForo thread', value: Permission.CreateForumTopic },
+    ],
+  },
 ];
 
 export default function ChannelPermissionsModal({

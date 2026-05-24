@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<phrases>
+  <phrase title="option_group.abyssBridge" version_id="1000010" version_string="1.0.0"><![CDATA[Abyss Bridge]]></phrase>
+  <phrase title="option_group_description.abyssBridge" version_id="1000010" version_string="1.0.0"><![CDATA[Settings for the Abyss chat bridge.]]></phrase>
+  <phrase title="option.abyssBridgeSharedSecret" version_id="1000010" version_string="1.0.0"><![CDATA[Shared secret]]></phrase>
+  <phrase title="option_explain.abyssBridgeSharedSecret" version_id="1000010" version_string="1.0.0"><![CDATA[Must match XENFORO_SHARED_SECRET on the Abyss server. Used to sign the account-link JWT.]]></phrase>
+  <phrase title="option.abyssBridgeAbyssBaseUrl" version_id="1000010" version_string="1.0.0"><![CDATA[Abyss API base URL]]></phrase>
+  <phrase title="option_explain.abyssBridgeAbyssBaseUrl" version_id="1000010" version_string="1.0.0"><![CDATA[Full origin of the Abyss API, e.g. https://abyss.example.com. Only return_urls on this host are accepted in the link flow.]]></phrase>
+  <phrase title="option.abyssBridgeGhostUserId" version_id="1000010" version_string="1.0.0"><![CDATA[Ghost user ID]]></phrase>
+  <phrase title="option_explain.abyssBridgeGhostUserId" version_id="1000010" version_string="1.0.0"><![CDATA[XF user ID that authors posts on behalf of unlinked Abyss users. The original Abyss name and avatar are shown inline in the post body.]]></phrase>
+</phrases>

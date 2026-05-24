@@ -473,6 +473,32 @@ export interface YtDlpResolveResult {
   durationMs?: number;
 }
 
+// XenForo bridge types
+export interface XenForoConnection {
+  xfUsername: string;
+  xfUserId: number;
+  linkedAt: string;
+}
+
+export interface XenForoNode {
+  nodeId: number;
+  title: string;
+  nodeType: string;
+  parentNodeId?: number | null;
+}
+
+export interface CreateForumTopicRequest {
+  startMessageId: string;
+  endMessageId: string;
+  nodeId: number;
+  title: string;
+}
+
+export interface CreateForumTopicResponse {
+  threadId: number;
+  url: string;
+}
+
 export interface SoundboardClip {
   id: string;
   serverId: string;
@@ -509,6 +535,7 @@ export const Permission = {
   AddToWatchTogether: 1 << 21,
   ModerateWatchTogether: 1 << 22,
   UseYtDlp: 1 << 23,
+  CreateForumTopic: 1 << 24,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {

@@ -102,7 +102,9 @@ builder.Services.AddAuthentication(opt =>
         {
             var accessToken = context.Request.Query["access_token"];
             var path = context.HttpContext.Request.Path;
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+            if (!string.IsNullOrEmpty(accessToken)
+                && (path.StartsWithSegments("/hubs")
+                    || path.StartsWithSegments("/api/xenforo/link/start")))
             {
                 context.Token = accessToken;
             }
@@ -144,6 +146,7 @@ builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached thumbnails
 builder.Services.AddHttpClient<PlexMediaProvider>();
 builder.Services.AddHttpClient<YouTubeMediaProvider>();
+builder.Services.AddHttpClient<XenForoBridgeService>();
 builder.Services.AddSingleton<YtDlpService>();
 builder.Services.AddSingleton<YtDlpMediaProvider>();
 

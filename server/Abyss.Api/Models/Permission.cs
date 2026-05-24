@@ -27,4 +27,5 @@ public enum Permission : long
     AddToWatchTogether = 1 << 21,
     ModerateWatchTogether = 1 << 22,
     UseYtDlp = 1L << 23,
+    CreateForumTopic = 1L << 24,
 }

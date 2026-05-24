@@ -10720,3 +10720,79 @@ label.has-error select:focus {
 .invite-guest-toggle input[type="checkbox"] {
   cursor: pointer;
 }
+
+/* Modal selects/textareas — mirror .modal input styling so dropdowns match
+   the rest of the form (XF was unstyled because only .modal input existed). */
+.modal select,
+.modal textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid #040405;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.modal select:focus,
+.modal textarea:focus {
+  border-color: var(--brand-color);
+  outline: none;
+}
+
+/* XenForo connection panel (User Settings → Connections) */
+.xf-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  gap: 12px;
+}
+
+.xf-connection-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.xf-connection-status {
+  color: var(--brand-color, #5865f2);
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.xf-connection-name {
+  color: var(--header-primary);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.xf-connection-meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.xf-link-btn {
+  padding: 8px 16px;
+  background: var(--bg-accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.xf-link-btn:hover {
+  background: var(--bg-accent-hover);
+}

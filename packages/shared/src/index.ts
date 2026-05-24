@@ -41,6 +41,7 @@ export { useSoundboardStore } from './stores/soundboardStore.js';
 export { useServerConfigStore } from './stores/serverConfigStore.js';
 export { useRateLimitStore } from './stores/rateLimitStore.js';
 export { useRssFeedStore } from './stores/rssFeedStore.js';
+export { useXenForoStore } from './stores/xenForoStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

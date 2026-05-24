@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<options>
+  <option option_id="abyssBridgeSharedSecret" edit_format="textbox" data_type="string" advanced="0">
+    <default_value></default_value>
+    <edit_format_params></edit_format_params>
+    <relation group_id="abyssBridge" display_order="10"/>
+  </option>
+  <option option_id="abyssBridgeAbyssBaseUrl" edit_format="textbox" data_type="string" advanced="0">
+    <default_value></default_value>
+    <edit_format_params></edit_format_params>
+    <relation group_id="abyssBridge" display_order="20"/>
+  </option>
+  <option option_id="abyssBridgeGhostUserId" edit_format="spinbox" data_type="positive_integer" advanced="0">
+    <default_value>0</default_value>
+    <edit_format_params>min=0</edit_format_params>
+    <relation group_id="abyssBridge" display_order="30"/>
+  </option>
+</options>

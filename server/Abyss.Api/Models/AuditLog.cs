@@ -27,7 +27,8 @@ public enum AuditAction
     WatchPartyStarted,
     WatchPartyStopped,
     SoundboardClipUploaded,
-    SoundboardClipDeleted
+    SoundboardClipDeleted,
+    ForumTopicCreated
 }
 
 public class AuditLog

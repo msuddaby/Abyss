@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, parseValidationErrors, getFieldError } from "@abyss/shared";
+import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, useXenForoStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, parseValidationErrors, getFieldError } from "@abyss/shared";
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { Capacitor } from "@capacitor/core";
 import axios from "axios";
@@ -10,7 +10,7 @@ import SettingsModal from "./SettingsModal";
 import { isMobile } from "../stores/mobileStore";
 import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
 
-type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "app" | "server" | "account";
+type ActiveTab = "profile" | "voice" | "video" | "keybinds" | "cosmetics" | "connections" | "app" | "server" | "account";
 
 export default function UserSettingsModal({
   onClose,
@@ -37,7 +37,8 @@ export default function UserSettingsModal({
     { id: "video", label: "Video" },
     { id: "keybinds", label: "Keybinds" },
     { id: "cosmetics", label: "Cosmetics" },
-    { id: "app", label: "App Settings", visible: isElectron(), separatorBefore: true },
+    { id: "connections", label: "Connections", separatorBefore: true },
+    { id: "app", label: "App Settings", visible: isElectron() },
     { id: "server", label: "Instance", visible: !isProductionWeb, separatorBefore: !isElectron() },
     { id: "account", label: "Account" },
   ];
@@ -124,6 +125,14 @@ export default function UserSettingsModal({
   const [cosmeticsLoaded, setCosmeticsLoaded] = useState(false);
   const [cosmeticError, setCosmeticError] = useState<string | null>(null);
   const [cosmeticTypeFilter, setCosmeticTypeFilter] = useState<number>(-1);
+
+  // XenForo connection state
+  const xfConnection = useXenForoStore((s) => s.connection);
+  const xfConnectionLoaded = useXenForoStore((s) => s.connectionLoaded);
+  const fetchXfConnection = useXenForoStore((s) => s.fetchConnection);
+  const unlinkXf = useXenForoStore((s) => s.unlink);
+  const [xfBusy, setXfBusy] = useState(false);
+  const [xfError, setXfError] = useState<string | null>(null);
 
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
@@ -685,6 +694,44 @@ export default function UserSettingsModal({
       loadMyCosmetics();
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'connections' && !xfConnectionLoaded) {
+      fetchXfConnection();
+    }
+  }, [activeTab, xfConnectionLoaded, fetchXfConnection]);
+
+  const handleLinkXenForo = () => {
+    const token = getStorage().getItem('token');
+    if (!token) {
+      setXfError('You must be logged in to link an account.');
+      return;
+    }
+    const returnUrl = `${window.location.origin}${window.location.pathname}`;
+    const url = `${getApiBase()}/api/xenforo/link/start`
+      + `?return=${encodeURIComponent(returnUrl)}`
+      + `&access_token=${encodeURIComponent(token)}`;
+    window.location.href = url;
+  };
+
+  const handleUnlinkXenForo = async () => {
+    setXfError(null);
+    setXfBusy(true);
+    try {
+      await unlinkXf();
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: unknown } })?.response?.data;
+      let msg: string | undefined;
+      if (typeof data === 'string') msg = data;
+      else if (data && typeof data === 'object') {
+        const o = data as { detail?: string; title?: string };
+        msg = o.detail || o.title;
+      }
+      setXfError(msg || 'Failed to unlink XenForo account.');
+    } finally {
+      setXfBusy(false);
+    }
+  };
 
   const handleEquip = async (cosmeticItemId: string) => {
     setCosmeticError(null);
@@ -1301,6 +1348,46 @@ export default function UserSettingsModal({
                   </>
                 )}
               </>
+            )}
+
+            {activeTab === "connections" && (
+              <div className="us-card">
+                <div className="us-card-title">XenForo Forum</div>
+                <p className="settings-help" style={{ marginTop: 0, marginBottom: 12 }}>
+                  Link your XenForo account so messages you create forum topics from
+                  are posted as you on the forum.
+                </p>
+                {xfError && <div className="auth-error">{xfError}</div>}
+                {!xfConnectionLoaded ? (
+                  <div className="settings-help">Loading…</div>
+                ) : xfConnection ? (
+                  <div className="xf-connection-row">
+                    <div className="xf-connection-info">
+                      <span className="xf-connection-status">Linked</span>
+                      <span className="xf-connection-name">{xfConnection.xfUsername}</span>
+                      <span className="xf-connection-meta">
+                        since {new Date(xfConnection.linkedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      disabled={xfBusy}
+                      onClick={handleUnlinkXenForo}
+                    >
+                      {xfBusy ? 'Unlinking…' : 'Unlink'}
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="xf-link-btn"
+                    onClick={handleLinkXenForo}
+                  >
+                    Link XenForo Account
+                  </button>
+                )}
+              </div>
             )}
 
             {activeTab === "app" && (

@@ -1,4 +1,5 @@
 import { useMessageStore, hasPermission, hasChannelPermission, Permission } from '@abyss/shared';
+import { useForumTopicStore } from '../../../stores/forumTopicStore';
 import type { MenuItem, ProviderContext } from '../types';
 
 export function messageProvider(ctx: ProviderContext): MenuItem[] {
@@ -65,6 +66,52 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
       danger: true,
       action: () => useMessageStore.getState().deleteMessage(message.id),
     });
+  }
+
+  // Forum topic creation (server channels only, permission-gated)
+  const canCreateForumTopic = !isDmMode
+    && currentMember
+    && hasChannelPermission(activeChannel?.permissions, Permission.CreateForumTopic);
+  if (canCreateForumTopic) {
+    const ftState = useForumTopicStore.getState();
+    const start = ftState.startMessage;
+    const sameChannel = start && start.channelId === message.channelId;
+
+    if (!start) {
+      items.push({
+        id: 'message-forum-start',
+        label: 'Start Forum Topic Here',
+        group: 'message',
+        order: 5,
+        action: () => useForumTopicStore.getState().setStart(message),
+      });
+    } else if (sameChannel && start.id !== message.id) {
+      const [first, second] = new Date(start.createdAt) <= new Date(message.createdAt)
+        ? [start, message]
+        : [message, start];
+      items.push({
+        id: 'message-forum-end',
+        label: 'Create Forum Topic to Here…',
+        group: 'message',
+        order: 5,
+        action: () => useForumTopicStore.getState().openModal(first, second),
+      });
+      items.push({
+        id: 'message-forum-cancel',
+        label: 'Cancel Forum Topic Selection',
+        group: 'message',
+        order: 6,
+        action: () => useForumTopicStore.getState().clearStart(),
+      });
+    } else if (sameChannel && start.id === message.id) {
+      items.push({
+        id: 'message-forum-cancel',
+        label: 'Cancel Forum Topic Selection',
+        group: 'message',
+        order: 5,
+        action: () => useForumTopicStore.getState().clearStart(),
+      });
+    }
   }
 
   return items;

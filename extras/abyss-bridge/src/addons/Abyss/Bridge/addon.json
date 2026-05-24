@@ -1,0 +1,14 @@
+{
+    "title": "Abyss Bridge",
+    "description": "Bridges Abyss chat to XenForo: account linking + posting thread digests of chat ranges.",
+    "version_id": 1000010,
+    "version_string": "1.0.0",
+    "dev": "Abyss",
+    "icon": "fa-link",
+    "require": {
+        "XF": [2020010, "XenForo 2.2.0+"],
+        "php": ["7.4.0", "PHP 7.4.0+"]
+    },
+    "require_soft": {},
+    "legacy_addon_id": ""
+}

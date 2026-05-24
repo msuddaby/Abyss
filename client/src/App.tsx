@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
-import { useAuthStore, onBeforeLogout } from '@abyss/shared';
+import { useAuthStore, useToastStore, useXenForoStore, onBeforeLogout } from '@abyss/shared';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
@@ -112,6 +112,21 @@ function App() {
       document.body.classList.add('window-hidden');
     }
   }, [isWindowVisible]);
+
+  // Handle XenForo link callback (?linked=1 from /api/xenforo/link/callback)
+  useEffect(() => {
+    if (!initialized || !isAuthenticated) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('linked') !== '1') return;
+
+    useToastStore.getState().addToast('XenForo account linked successfully', 'success');
+    useXenForoStore.getState().fetchConnection();
+
+    params.delete('linked');
+    const qs = params.toString();
+    const newUrl = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
+    window.history.replaceState({}, '', newUrl);
+  }, [initialized, isAuthenticated]);
 
   const Router = window.electron ? HashRouter : BrowserRouter;
 

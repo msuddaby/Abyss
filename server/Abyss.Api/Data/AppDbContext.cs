@@ -31,6 +31,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<UserChannelNotificationSetting> UserChannelNotificationSettings => Set<UserChannelNotificationSetting>();
     public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
     public DbSet<MediaProviderConnection> MediaProviderConnections => Set<MediaProviderConnection>();
+    public DbSet<XenForoConnection> XenForoConnections => Set<XenForoConnection>();
     public DbSet<WatchParty> WatchParties => Set<WatchParty>();
     public DbSet<Friendship> Friendships => Set<Friendship>();
     public DbSet<SoundboardClip> SoundboardClips => Set<SoundboardClip>();
@@ -377,6 +378,19 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<MediaProviderConnection>()
             .HasIndex(mpc => new { mpc.ServerId, mpc.ProviderType });
+
+        // XenForoConnection (one per user)
+        builder.Entity<XenForoConnection>()
+            .HasKey(x => x.OwnerId);
+
+        builder.Entity<XenForoConnection>()
+            .HasOne(x => x.Owner)
+            .WithMany()
+            .HasForeignKey(x => x.OwnerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<XenForoConnection>()
+            .HasIndex(x => x.XfUserId);
 
         // WatchParty
         builder.Entity<WatchParty>()
