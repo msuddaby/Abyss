@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -292,7 +293,24 @@ else
 
 
 
+// Trust X-Forwarded-* headers from Caddy reverse proxy so Request.Scheme/Host
+// reflect the public URL (otherwise Kestrel sees plain http and breaks any
+// absolute URL we hand to external services — e.g. the XenForo bridge callback).
+builder.Services.Configure<ForwardedHeadersOptions>(opt =>
+{
+    opt.ForwardedHeaders = ForwardedHeaders.XForwardedFor
+        | ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost;
+    // Caddy is the only thing in front of Kestrel; the Kestrel port isn't
+    // reachable from the internet, so trust any proxy.
+    opt.KnownIPNetworks.Clear();
+    opt.KnownProxies.Clear();
+});
+
 var app = builder.Build();
+
+// Must run before anything that reads Request.Scheme/Host (auth, controllers, …).
+app.UseForwardedHeaders();
 
 // Auto-migrate database and seed data
 using (var scope = app.Services.CreateScope())
