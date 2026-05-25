@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
-import type { XenForoConnection, XenForoNode, CreateForumTopicRequest, CreateForumTopicResponse } from '../types/index.js';
+import type { Channel, XenForoConnection, XenForoNode, CreateForumTopicRequest, CreateForumTopicResponse } from '../types/index.js';
 
 interface XenForoState {
   connection: XenForoConnection | null;
@@ -13,6 +13,8 @@ interface XenForoState {
   unlink: () => Promise<void>;
   fetchNodes: (force?: boolean) => Promise<void>;
   createTopic: (channelId: string, req: CreateForumTopicRequest) => Promise<CreateForumTopicResponse>;
+  subscribeMirror: (channelId: string, nodeId: number, title?: string) => Promise<Channel>;
+  unsubscribeMirror: (channelId: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -58,6 +60,15 @@ export const useXenForoStore = create<XenForoState>((set, get) => ({
   createTopic: async (channelId, req) => {
     const res = await api.post(`/channels/${channelId}/forum-topic`, req);
     return res.data as CreateForumTopicResponse;
+  },
+
+  subscribeMirror: async (channelId, nodeId, title) => {
+    const res = await api.post(`/channels/${channelId}/xenforo-mirror`, { nodeId, title: title ?? null });
+    return res.data as Channel;
+  },
+
+  unsubscribeMirror: async (channelId) => {
+    await api.delete(`/channels/${channelId}/xenforo-mirror`);
   },
 
   reset: () => set({ connection: null, connectionLoaded: false, nodes: [], nodesLoaded: false }),

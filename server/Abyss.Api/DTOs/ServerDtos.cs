@@ -29,7 +29,7 @@ public record UpdateChannelRequest(
     [StringLength(2048)] string? RssFeedUrl = null,
     [Range(5, 1440)] int? RssRefreshIntervalMinutes = null);
 public record ReorderChannelsRequest(string Type, List<Guid> ChannelIds);
-public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null, string? RssFeedUrl = null, int? RssRefreshIntervalMinutes = null);
+public record ChannelDto(Guid Id, string? Name, string Type, Guid? ServerId, int Position, long? Permissions = null, bool PersistentChat = false, int? UserLimit = null, string? RssFeedUrl = null, int? RssRefreshIntervalMinutes = null, int? XenForoNodeId = null, string? XenForoNodeTitle = null);
 public record RssFeedItemDto(string Guid, string Title, string Link, string? Author, DateTime? PubDate);
 public record RssFeedStateDto(List<RssFeedItemDto> Items, DateTime? LastFetched, string? LastError);
 public record ChannelPermissionOverrideDto(Guid RoleId, long Allow, long Deny);
@@ -40,7 +40,7 @@ public record InviteDto(Guid Id, string Code, Guid? ServerId, string? CreatorId,
 public record CreateServerInviteRequest(DateTime? ExpiresAt, int? MaxUses, bool AllowGuests = false);
 public record InviteInfoDto(string ServerName, string? ServerIconUrl, int MemberCount, bool AllowGuests);
 public record ReplyReferenceDto(Guid Id, string Content, string AuthorId, UserDto Author, bool IsDeleted);
-public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo);
+public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo, string? GhostAuthorName = null, string? GhostAuthorAvatarUrl = null, string? XfPostUrl = null);
 public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto PinnedBy);
 public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji);
 public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string? PosterPath, string ContentType, long Size, int? Width, int? Height);

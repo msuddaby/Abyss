@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useServerStore, parseValidationErrors, getGeneralError } from '@abyss/shared';
+import { useServerStore, useXenForoStore, parseValidationErrors, getGeneralError } from '@abyss/shared';
 import FormField from './FormField';
 
-type ChannelTypeOption = 'Text' | 'Voice' | 'RssFeed';
+type ChannelTypeOption = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror';
 
 export default function CreateChannelModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [name, setName] = useState('');
@@ -11,9 +11,25 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
   const [userLimit, setUserLimit] = useState('');
   const [rssFeedUrl, setRssFeedUrl] = useState('');
   const [rssInterval, setRssInterval] = useState('30');
+  const [xfNodeId, setXfNodeId] = useState<number | ''>('');
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<Record<string, string[]> | null>(null);
   const createChannel = useServerStore((s) => s.createChannel);
+  const updateChannelLocal = useServerStore((s) => s.updateChannelLocal);
+  const xfNodes = useXenForoStore((s) => s.nodes);
+  const fetchXfNodes = useXenForoStore((s) => s.fetchNodes);
+  const subscribeMirror = useXenForoStore((s) => s.subscribeMirror);
+
+  useEffect(() => {
+    if (type === 'XenForoMirror') {
+      void fetchXfNodes().catch(() => undefined);
+    }
+  }, [type, fetchXfNodes]);
+
+  const selectedNode = useMemo(
+    () => xfNodes.find((n) => n.nodeId === xfNodeId) ?? null,
+    [xfNodes, xfNodeId],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,7 +43,19 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
         setError('Feed URL is required for RSS channels.');
         return;
       }
-      await createChannel(serverId, name, type, limit, feedUrl, interval);
+      if (type === 'XenForoMirror' && (xfNodeId === '' || xfNodeId <= 0)) {
+        setError('Pick a forum to mirror.');
+        return;
+      }
+
+      // Mirror channels are created as Text first, then converted via the
+      // subscribe endpoint — the create endpoint doesn't know about XF.
+      const createType = type === 'XenForoMirror' ? 'Text' : type;
+      const channel = await createChannel(serverId, name, createType, limit, feedUrl, interval);
+      if (type === 'XenForoMirror' && channel) {
+        const updated = await subscribeMirror(channel.id, xfNodeId as number, selectedNode?.title ?? undefined);
+        updateChannelLocal(updated);
+      }
       onClose();
     } catch (err: any) {
       const parsedErrors = parseValidationErrors(err);
@@ -72,6 +100,13 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
                 onClick={() => setType('RssFeed')}
               >
                 📰 RSS Feed
+              </button>
+              <button
+                type="button"
+                className={`type-option ${type === 'XenForoMirror' ? 'active' : ''}`}
+                onClick={() => setType('XenForoMirror')}
+              >
+                💬 Forum Mirror
               </button>
             </div>
           </label>
@@ -123,6 +158,27 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
                 <div className="server-setting-hint">5–1440 minutes</div>
               </label>
             </>
+          )}
+
+          {type === 'XenForoMirror' && (
+            <label>
+              Forum to mirror
+              <select
+                value={xfNodeId}
+                onChange={(e) => setXfNodeId(e.target.value ? parseInt(e.target.value, 10) : '')}
+                required
+              >
+                <option value="">Choose a forum…</option>
+                {xfNodes.map((node) => (
+                  <option key={node.nodeId} value={node.nodeId}>
+                    {node.title}
+                  </option>
+                ))}
+              </select>
+              <div className="server-setting-hint">
+                New threads and replies on this forum will appear in the channel.
+              </div>
+            </label>
           )}
 
           <div className="modal-actions">

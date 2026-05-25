@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -34,6 +35,7 @@ public class XenForoBridgeService
     private readonly ILogger<XenForoBridgeService> _logger;
     private readonly string _baseUrl;
     private readonly string _adminApiKey;
+    private readonly string _adminUserId;
     private readonly byte[] _sharedSecret;
 
     public bool IsConfigured => !string.IsNullOrEmpty(_baseUrl)
@@ -48,9 +50,19 @@ public class XenForoBridgeService
         _logger = logger;
         _baseUrl = (Environment.GetEnvironmentVariable("XENFORO_BASE_URL") ?? string.Empty).TrimEnd('/');
         _adminApiKey = Environment.GetEnvironmentVariable("XENFORO_ADMIN_API_KEY") ?? string.Empty;
+        // Super-user API keys act as Guest unless XF-Api-User is set, which means
+        // forums hidden from unregistered users are filtered out of /api/nodes etc.
+        // Default to user_id 1 (the install's original admin).
+        _adminUserId = Environment.GetEnvironmentVariable("XENFORO_ADMIN_USER_ID") ?? "1";
         var secret = Environment.GetEnvironmentVariable("XENFORO_SHARED_SECRET") ?? string.Empty;
         _sharedSecret = Encoding.UTF8.GetBytes(secret);
         _http.Timeout = TimeSpan.FromSeconds(15);
+    }
+
+    private void AddApiAuthHeaders(HttpRequestMessage req)
+    {
+        req.Headers.Add("XF-Api-Key", _adminApiKey);
+        req.Headers.Add("XF-Api-User", _adminUserId);
     }
 
     // ─── XF API calls ─────────────────────────────────────────────────────
@@ -59,10 +71,7 @@ public class XenForoBridgeService
     {
         EnsureConfigured();
         using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/nodes");
-        req.Headers.Add("XF-Api-Key", _adminApiKey);
-        // Super-user API requests run as Guest by default; bypass permissions so
-        // forums hidden from unregistered users are still listed for the bridge.
-        req.Headers.Add("XF-Api-Bypass-Permissions", "1");
+        AddApiAuthHeaders(req);
 
         using var res = await _http.SendAsync(req, ct);
         res.EnsureSuccessStatusCode();
@@ -103,7 +112,7 @@ public class XenForoBridgeService
         {
             Content = JsonContent.Create(payload)
         };
-        req.Headers.Add("XF-Api-Key", _adminApiKey);
+        AddApiAuthHeaders(req);
 
         using var res = await _http.SendAsync(req, ct);
         if (!res.IsSuccessStatusCode)
@@ -302,5 +311,128 @@ public class XenForoBridgeService
     {
         if (!IsConfigured)
             throw new InvalidOperationException("XenForo bridge not configured. Set XENFORO_BASE_URL, XENFORO_ADMIN_API_KEY, XENFORO_SHARED_SECRET.");
+    }
+
+    // ─── Inbound webhook verification ─────────────────────────────────────
+
+    /// <summary>
+    /// Verifies an HMAC-SHA256 signature over the raw webhook body using the
+    /// shared secret. Expected header format: "sha256=&lt;hex&gt;".
+    /// </summary>
+    public bool VerifyWebhookSignature(string rawBody, string? signatureHeader)
+    {
+        if (_sharedSecret.Length == 0 || string.IsNullOrEmpty(signatureHeader)) return false;
+        const string prefix = "sha256=";
+        if (!signatureHeader.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+        var providedHex = signatureHeader.AsSpan(prefix.Length).Trim();
+        if (providedHex.Length != 64) return false;
+
+        Span<byte> provided = stackalloc byte[32];
+        for (var i = 0; i < 32; i++)
+        {
+            if (!byte.TryParse(providedHex.Slice(i * 2, 2), System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out var b))
+                return false;
+            provided[i] = b;
+        }
+
+        Span<byte> expected = stackalloc byte[32];
+        var bodyBytes = Encoding.UTF8.GetBytes(rawBody);
+        using var hmac = new HMACSHA256(_sharedSecret);
+        hmac.TryComputeHash(bodyBytes, expected, out _);
+        return CryptographicOperations.FixedTimeEquals(expected, provided);
+    }
+
+    // ─── BBCode → Markdown ────────────────────────────────────────────────
+
+    private static readonly Regex BbCode = new(@"\[CODE(?:=[^\]]*)?\](.*?)\[/CODE\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbICode = new(@"\[ICODE\](.*?)\[/ICODE\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbBold = new(@"\[B\](.+?)\[/B\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbItalic = new(@"\[I\](.+?)\[/I\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbUnderline = new(@"\[U\](.+?)\[/U\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbStrike = new(@"\[S\](.+?)\[/S\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbUrlWithTarget = new(@"\[URL=([^\]]+)\](.*?)\[/URL\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbUrlPlain = new(@"\[URL\](.*?)\[/URL\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbImg = new(@"\[IMG\](.*?)\[/IMG\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbQuoteWithAttrib = new(@"\[QUOTE=""?([^\]""]+?)""?(?:,[^\]]*)?\](.*?)\[/QUOTE\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbQuotePlain = new(@"\[QUOTE\](.*?)\[/QUOTE\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbUser = new(@"\[USER=\d+\]@?([^\[]+?)\[/USER\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbSize = new(@"\[SIZE=[^\]]+\](.*?)\[/SIZE\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbColor = new(@"\[COLOR=[^\]]+\](.*?)\[/COLOR\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbAttach = new(@"\[ATTACH(?:=[^\]]*)?\](\d+)\[/ATTACH\]", RegexOptions.Singleline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex BbUnknownTag = new(@"\[/?[A-Z][A-Z0-9]*(?:=[^\]]*)?\]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Converts XenForo BBCode to Markdown that the Abyss client understands.
+    /// Strips unknown tags. Code blocks are preserved verbatim and protected
+    /// from inline conversions.
+    /// </summary>
+    public static string BbcodeToMarkdown(string? bbcode)
+    {
+        if (string.IsNullOrEmpty(bbcode)) return string.Empty;
+        var s = bbcode;
+
+        // Pull out [CODE] blocks first so their contents aren't mangled by other rules.
+        var codeBlocks = new List<string>();
+        s = BbCode.Replace(s, m =>
+        {
+            codeBlocks.Add(m.Groups[1].Value.Trim('\r', '\n'));
+            return $"\x00CODE{codeBlocks.Count - 1}\x00";
+        });
+
+        // Drop pure-formatting wrappers (size/color) by unwrapping to inner text.
+        s = BbSize.Replace(s, "$1");
+        s = BbColor.Replace(s, "$1");
+
+        s = BbBold.Replace(s, "**$1**");
+        s = BbItalic.Replace(s, "*$1*");
+        s = BbUnderline.Replace(s, "__$1__");
+        s = BbStrike.Replace(s, "~~$1~~");
+        s = BbICode.Replace(s, "`$1`");
+        s = BbUrlWithTarget.Replace(s, m =>
+        {
+            var url = m.Groups[1].Value.Trim();
+            var label = m.Groups[2].Value.Trim();
+            if (string.IsNullOrEmpty(label) || label == url) return url;
+            return $"[{label}]({url})";
+        });
+        s = BbUrlPlain.Replace(s, "$1");
+        s = BbImg.Replace(s, "![]($1)");
+        s = BbUser.Replace(s, "@$1");
+        s = BbAttach.Replace(s, string.Empty);
+
+        // Quotes — prefix each line with "> " for markdown blockquote style.
+        s = BbQuoteWithAttrib.Replace(s, m =>
+        {
+            var author = m.Groups[1].Value.Trim();
+            var inner = m.Groups[2].Value.Trim('\r', '\n');
+            return $"> **{author} said:**\n" + PrefixLines(inner, "> ");
+        });
+        s = BbQuotePlain.Replace(s, m =>
+        {
+            var inner = m.Groups[1].Value.Trim('\r', '\n');
+            return PrefixLines(inner, "> ");
+        });
+
+        // Strip remaining unknown tags rather than leaving raw [TAG] text.
+        s = BbUnknownTag.Replace(s, string.Empty);
+
+        // Re-insert preserved code blocks as fenced markdown.
+        for (var i = 0; i < codeBlocks.Count; i++)
+        {
+            s = s.Replace($"\x00CODE{i}\x00", $"```\n{codeBlocks[i]}\n```");
+        }
+
+        return s.Trim();
+    }
+
+    private static string PrefixLines(string text, string prefix)
+    {
+        var lines = text.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            lines[i] = prefix + lines[i].TrimEnd('\r');
+        }
+        return string.Join('\n', lines);
     }
 }

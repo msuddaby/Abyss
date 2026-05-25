@@ -208,7 +208,9 @@ public class ServersController : ControllerBase
                 channel.PersistentChat,
                 channel.UserLimit,
                 channel.RssFeedUrl,
-                channel.RssRefreshIntervalMinutes));
+                channel.RssRefreshIntervalMinutes,
+                channel.XenForoNodeId,
+                channel.XenForoNodeTitle));
         }
 
         return Ok(result);
@@ -251,7 +253,7 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
             targetName: $"#{channel.Name}", details: channelType.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes, channel.XenForoNodeId, channel.XenForoNodeTitle);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelCreated", serverId.ToString(), dto);
 
         if (channelType == ChannelType.RssFeed)
@@ -303,7 +305,7 @@ public class ServersController : ControllerBase
         await _perms.LogAsync(serverId, AuditAction.ChannelUpdated, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());
 
-        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes);
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position, null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes, channel.XenForoNodeId, channel.XenForoNodeTitle);
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelUpdated", serverId.ToString(), dto);
 
         if (rssUrlChanged)
@@ -401,7 +403,7 @@ public class ServersController : ControllerBase
             .Where(c => c.ServerId == serverId)
             .OrderBy(c => c.Type)
             .ThenBy(c => c.Position)
-            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat, c.UserLimit, c.RssFeedUrl, c.RssRefreshIntervalMinutes))
+            .Select(c => new ChannelDto(c.Id, c.Name, c.Type.ToString(), c.ServerId, c.Position, null, c.PersistentChat, c.UserLimit, c.RssFeedUrl, c.RssRefreshIntervalMinutes, c.XenForoNodeId, c.XenForoNodeTitle))
             .ToListAsync();
 
         await _hub.Clients.Group($"server:{serverId}").SendAsync("ChannelsReordered", serverId.ToString(), allChannels);

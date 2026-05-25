@@ -305,7 +305,9 @@ export default function ChannelSidebar() {
   }
 
   const visibleChannels = channels.filter((c) => canViewChannel(c));
-  const textChannels = visibleChannels.filter((c) => c.type === 'Text');
+  // XenForoMirror channels render alongside text channels — same read UX, just
+  // read-only on the server side.
+  const textChannels = visibleChannels.filter((c) => c.type === 'Text' || c.type === 'XenForoMirror');
   const voiceChannels = visibleChannels.filter((c) => c.type === 'Voice');
   const rssChannels = visibleChannels.filter((c) => c.type === 'RssFeed');
 
@@ -550,12 +552,15 @@ export default function ChannelSidebar() {
       )}
       {channelToEdit && activeServer && (
         <EditChannelModal
+          channelId={channelToEdit.id}
           initialName={channelToEdit.name}
           channelType={channelToEdit.type}
           initialPersistentChat={channelToEdit.persistentChat}
           initialUserLimit={channelToEdit.userLimit}
           initialRssFeedUrl={channelToEdit.rssFeedUrl}
           initialRssRefreshIntervalMinutes={channelToEdit.rssRefreshIntervalMinutes}
+          initialXenForoNodeId={channelToEdit.xenForoNodeId}
+          initialXenForoNodeTitle={channelToEdit.xenForoNodeTitle}
           onSave={async (name, persistentChat, userLimit, rssFeedUrl, rssRefreshIntervalMinutes) => {
             await renameChannel(activeServer.id, channelToEdit.id, name, persistentChat, userLimit, rssFeedUrl, rssRefreshIntervalMinutes);
           }}

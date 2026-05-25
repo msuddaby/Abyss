@@ -1,24 +1,31 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useServerStore, useXenForoStore } from '@abyss/shared';
 
-type ChannelTypeValue = 'Text' | 'Voice' | 'RssFeed';
+type ChannelTypeValue = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror';
 
 export default function EditChannelModal({
+  channelId,
   initialName,
   channelType,
   initialPersistentChat,
   initialUserLimit,
   initialRssFeedUrl,
   initialRssRefreshIntervalMinutes,
+  initialXenForoNodeId,
+  initialXenForoNodeTitle,
   onSave,
   onClose,
 }: {
+  channelId: string;
   initialName: string;
   channelType: ChannelTypeValue;
   initialPersistentChat?: boolean;
   initialUserLimit?: number | null;
   initialRssFeedUrl?: string | null;
   initialRssRefreshIntervalMinutes?: number | null;
+  initialXenForoNodeId?: number | null;
+  initialXenForoNodeTitle?: string | null;
   onSave: (
     name: string,
     persistentChat?: boolean,
@@ -33,28 +40,33 @@ export default function EditChannelModal({
   const [userLimit, setUserLimit] = useState(initialUserLimit ? String(initialUserLimit) : '');
   const [rssFeedUrl, setRssFeedUrl] = useState(initialRssFeedUrl ?? '');
   const [rssInterval, setRssInterval] = useState(initialRssRefreshIntervalMinutes ? String(initialRssRefreshIntervalMinutes) : '30');
+  const [xfNodeId, setXfNodeId] = useState<number | ''>(initialXenForoNodeId ?? '');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    setName(initialName);
-  }, [initialName]);
+  const xfNodes = useXenForoStore((s) => s.nodes);
+  const fetchXfNodes = useXenForoStore((s) => s.fetchNodes);
+  const subscribeMirror = useXenForoStore((s) => s.subscribeMirror);
+  const unsubscribeMirror = useXenForoStore((s) => s.unsubscribeMirror);
+  const updateChannelLocal = useServerStore((s) => s.updateChannelLocal);
+
+  useEffect(() => { setName(initialName); }, [initialName]);
+  useEffect(() => { setPersistentChat(initialPersistentChat ?? false); }, [initialPersistentChat]);
+  useEffect(() => { setUserLimit(initialUserLimit ? String(initialUserLimit) : ''); }, [initialUserLimit]);
+  useEffect(() => { setRssFeedUrl(initialRssFeedUrl ?? ''); }, [initialRssFeedUrl]);
+  useEffect(() => { setRssInterval(initialRssRefreshIntervalMinutes ? String(initialRssRefreshIntervalMinutes) : '30'); }, [initialRssRefreshIntervalMinutes]);
+  useEffect(() => { setXfNodeId(initialXenForoNodeId ?? ''); }, [initialXenForoNodeId]);
 
   useEffect(() => {
-    setPersistentChat(initialPersistentChat ?? false);
-  }, [initialPersistentChat]);
+    if (channelType === 'XenForoMirror') {
+      void fetchXfNodes().catch(() => undefined);
+    }
+  }, [channelType, fetchXfNodes]);
 
-  useEffect(() => {
-    setUserLimit(initialUserLimit ? String(initialUserLimit) : '');
-  }, [initialUserLimit]);
-
-  useEffect(() => {
-    setRssFeedUrl(initialRssFeedUrl ?? '');
-  }, [initialRssFeedUrl]);
-
-  useEffect(() => {
-    setRssInterval(initialRssRefreshIntervalMinutes ? String(initialRssRefreshIntervalMinutes) : '30');
-  }, [initialRssRefreshIntervalMinutes]);
+  const selectedNode = useMemo(
+    () => xfNodes.find((n) => n.nodeId === xfNodeId) ?? null,
+    [xfNodes, xfNodeId],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,6 +76,10 @@ export default function EditChannelModal({
     }
     if (channelType === 'RssFeed' && !rssFeedUrl.trim()) {
       setError('Feed URL is required.');
+      return;
+    }
+    if (channelType === 'XenForoMirror' && (xfNodeId === '' || xfNodeId <= 0)) {
+      setError('Pick a forum to mirror.');
       return;
     }
     setError('');
@@ -79,6 +95,10 @@ export default function EditChannelModal({
         feedUrl,
         interval,
       );
+      if (channelType === 'XenForoMirror' && xfNodeId !== initialXenForoNodeId) {
+        const updated = await subscribeMirror(channelId, xfNodeId as number, selectedNode?.title ?? undefined);
+        updateChannelLocal(updated);
+      }
       onClose();
     } catch (err: any) {
       setError(err.response?.data || 'Failed to update channel');
@@ -87,7 +107,32 @@ export default function EditChannelModal({
     }
   };
 
-  const typeLabel = channelType === 'RssFeed' ? 'RSS Feed' : channelType;
+  const handleStopMirroring = async () => {
+    if (!confirm('Stop mirroring this forum? The channel will revert to a normal text channel.')) return;
+    setSaving(true);
+    try {
+      await unsubscribeMirror(channelId);
+      updateChannelLocal({
+        id: channelId,
+        name: name.trim() || initialName,
+        type: 'Text',
+        serverId: '',
+        position: 0,
+        xenForoNodeId: null,
+        xenForoNodeTitle: null,
+      } as any);
+      onClose();
+    } catch (err: any) {
+      setError(err.response?.data || 'Failed to stop mirroring');
+      setSaving(false);
+    }
+  };
+
+  const typeLabel = channelType === 'RssFeed'
+    ? 'RSS Feed'
+    : channelType === 'XenForoMirror'
+      ? 'Forum Mirror'
+      : channelType;
 
   return createPortal(
     <div className="modal-overlay" onClick={onClose}>
@@ -147,6 +192,33 @@ export default function EditChannelModal({
                 />
                 <div className="server-setting-hint">5–1440 minutes</div>
               </label>
+            </>
+          )}
+          {channelType === 'XenForoMirror' && (
+            <>
+              <label>
+                Forum to mirror
+                <select
+                  value={xfNodeId}
+                  onChange={(e) => setXfNodeId(e.target.value ? parseInt(e.target.value, 10) : '')}
+                  required
+                >
+                  <option value="">Choose a forum…</option>
+                  {xfNodes.map((node) => (
+                    <option key={node.nodeId} value={node.nodeId}>
+                      {node.title}
+                    </option>
+                  ))}
+                </select>
+                <div className="server-setting-hint">
+                  {initialXenForoNodeTitle
+                    ? `Currently mirroring "${initialXenForoNodeTitle}".`
+                    : 'Pick a forum to mirror.'}
+                </div>
+              </label>
+              <button type="button" className="btn-secondary" onClick={handleStopMirroring} disabled={saving}>
+                Stop mirroring
+              </button>
             </>
           )}
           <div className="modal-actions">

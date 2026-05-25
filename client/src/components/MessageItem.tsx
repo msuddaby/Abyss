@@ -169,11 +169,16 @@ export default function MessageItem({
     return count >= 1 && count <= 3;
   }, [message.content, emojisByName]);
 
-  // Use live member data when available, fall back to stale message snapshot
-  const authorDisplayName =
-    authorMember?.user.displayName ?? message.author.displayName;
-  const authorAvatarUrl =
-    authorMember?.user.avatarUrl ?? message.author.avatarUrl;
+  // Use live member data when available, fall back to stale message snapshot.
+  // Ghost authors (mirrored XF posts by unlinked users) override both — they
+  // ride on the shared Forum bot account and carry per-message identity fields.
+  const isGhost = Boolean(message.ghostAuthorName);
+  const authorDisplayName = isGhost
+    ? (message.ghostAuthorName ?? message.author.displayName)
+    : (authorMember?.user.displayName ?? message.author.displayName);
+  const authorAvatarUrl = isGhost
+    ? (message.ghostAuthorAvatarUrl ?? message.author.avatarUrl)
+    : (authorMember?.user.avatarUrl ?? message.author.avatarUrl);
 
   useEffect(() => {
     if (editing && editInputRef.current) {
@@ -371,6 +376,17 @@ export default function MessageItem({
             </span>
             {message.editedAt && (
               <span className="message-edited-label">(edited)</span>
+            )}
+            {message.xfPostUrl && (
+              <a
+                className="message-xf-badge"
+                href={message.xfPostUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View original forum post"
+              >
+                via forum
+              </a>
             )}
           </div>
         )}

@@ -148,6 +148,7 @@ builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached th
 builder.Services.AddHttpClient<PlexMediaProvider>();
 builder.Services.AddHttpClient<YouTubeMediaProvider>();
 builder.Services.AddHttpClient<XenForoBridgeService>();
+builder.Services.AddScoped<XenForoMirrorService>();
 builder.Services.AddSingleton<YtDlpService>();
 builder.Services.AddSingleton<YtDlpMediaProvider>();
 
@@ -318,6 +319,9 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
     await CosmeticSeeder.SeedAsync(db);
+
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+    await XenForoBotSeeder.SeedAsync(db, userManager);
 }
 
 // Exception handler for production (prevents stack trace leaking)

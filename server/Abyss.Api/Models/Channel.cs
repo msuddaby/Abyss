@@ -7,7 +7,8 @@ public enum ChannelType
     Text,
     Voice,
     DM,
-    RssFeed
+    RssFeed,
+    XenForoMirror
 }
 
 public class Channel
@@ -34,4 +35,9 @@ public class Channel
     [MaxLength(2048)]
     public string? RssFeedUrl { get; set; }
     public int? RssRefreshIntervalMinutes { get; set; }
+
+    // XenForo mirror-specific fields
+    public int? XenForoNodeId { get; set; }
+    [MaxLength(120)]
+    public string? XenForoNodeTitle { get; set; }
 }

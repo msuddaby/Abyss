@@ -35,6 +35,12 @@ class Setup extends AbstractSetup
         // Reserved for future schema changes.
     }
 
+    public function upgrade1000020Step1(): void
+    {
+        // 1.1.0 adds code_event_listeners (live thread mirror webhooks).
+        // No schema changes; XF imports the new listeners from _data/.
+    }
+
     public function uninstallStep1(): void
     {
         // Options/groups/phrases owned by this addon (addon_id='Abyss/Bridge')

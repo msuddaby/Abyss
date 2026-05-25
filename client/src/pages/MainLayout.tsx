@@ -207,12 +207,19 @@ export default function MainLayout() {
             )}
           </>
         ) : activeChannel ? (
-          activeChannel.type === 'Text' ? (
+          activeChannel.type === 'Text' || activeChannel.type === 'XenForoMirror' ? (
             <>
               <div className="channel-header">
                 {hamburgerButton}
-                <span className="channel-hash">#</span>
+                <span className="channel-hash">
+                  {activeChannel.type === 'XenForoMirror' ? '💬' : '#'}
+                </span>
                 <span className="channel-name">{activeChannel.name}</span>
+                {activeChannel.type === 'XenForoMirror' && activeChannel.xenForoNodeTitle && (
+                  <span className="channel-mirror-label" title="Mirroring a XenForo forum">
+                    mirroring {activeChannel.xenForoNodeTitle}
+                  </span>
+                )}
                 <div className="channel-header-actions">
                   <button
                     className={`search-header-btn${searchIsOpen ? ' active' : ''}`}
@@ -247,7 +254,13 @@ export default function MainLayout() {
               </div>
               <MessageList />
               <TypingIndicator />
-              <MessageInput />
+              {activeChannel.type === 'XenForoMirror' ? (
+                <div className="channel-readonly-notice">
+                  Read-only — posts come from the forum.
+                </div>
+              ) : (
+                <MessageInput />
+              )}
               {showPins && (
                 <PinnedMessagesModal
                   channelId={activeChannel.id}

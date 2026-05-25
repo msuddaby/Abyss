@@ -161,7 +161,7 @@ export interface UserPreferences {
 export interface Channel {
   id: string;
   name: string;
-  type: "Text" | "Voice" | "RssFeed";
+  type: "Text" | "Voice" | "RssFeed" | "XenForoMirror";
   serverId: string;
   position: number;
   permissions?: number;
@@ -169,6 +169,8 @@ export interface Channel {
   userLimit?: number | null;
   rssFeedUrl?: string | null;
   rssRefreshIntervalMinutes?: number | null;
+  xenForoNodeId?: number | null;
+  xenForoNodeTitle?: string | null;
 }
 
 export interface RssFeedItem {
@@ -244,6 +246,12 @@ export interface Message {
   reactions: Reaction[];
   replyToMessageId?: string;
   replyTo?: ReplyReference;
+  // When set, the message originated from a mirrored XF post by an unlinked
+  // forum user — the client renders these in place of the author's identity.
+  ghostAuthorName?: string | null;
+  ghostAuthorAvatarUrl?: string | null;
+  // Permalink to the source XF post; shown as a "via forum" badge.
+  xfPostUrl?: string | null;
 }
 
 export interface PinnedMessage {

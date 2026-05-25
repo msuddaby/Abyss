@@ -32,6 +32,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<UserPreferences> UserPreferences => Set<UserPreferences>();
     public DbSet<MediaProviderConnection> MediaProviderConnections => Set<MediaProviderConnection>();
     public DbSet<XenForoConnection> XenForoConnections => Set<XenForoConnection>();
+    public DbSet<XenForoPostMessage> XenForoPostMessages => Set<XenForoPostMessage>();
     public DbSet<WatchParty> WatchParties => Set<WatchParty>();
     public DbSet<Friendship> Friendships => Set<Friendship>();
     public DbSet<SoundboardClip> SoundboardClips => Set<SoundboardClip>();
@@ -391,6 +392,29 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<XenForoConnection>()
             .HasIndex(x => x.XfUserId);
+
+        // XenForoPostMessage (XF post -> Abyss message mapping for live thread mirror)
+        builder.Entity<XenForoPostMessage>()
+            .HasKey(x => x.XfPostId);
+
+        builder.Entity<XenForoPostMessage>()
+            .Property(x => x.XfPostId)
+            .ValueGeneratedNever();
+
+        builder.Entity<XenForoPostMessage>()
+            .HasOne(x => x.Message)
+            .WithMany()
+            .HasForeignKey(x => x.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<XenForoPostMessage>()
+            .HasOne(x => x.Channel)
+            .WithMany()
+            .HasForeignKey(x => x.ChannelId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<XenForoPostMessage>()
+            .HasIndex(x => new { x.ChannelId, x.XfPostId });
 
         // WatchParty
         builder.Entity<WatchParty>()

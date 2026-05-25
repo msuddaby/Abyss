@@ -562,6 +562,11 @@ public class ChatHub : Hub
         var channel = await _db.Channels.FindAsync(channelGuid);
         if (channel == null) return;
         if (!await CanAccessChannel(channel)) return;
+        if (channel.Type == ChannelType.RssFeed || channel.Type == ChannelType.XenForoMirror)
+        {
+            await Clients.Caller.SendAsync("Error", "This channel is read-only.");
+            return;
+        }
         if (channel.Type != ChannelType.DM)
         {
             if (!await _perms.HasChannelPermissionAsync(channelGuid, UserId, Permission.SendMessages))

@@ -83,7 +83,10 @@ public class ChannelsController : ControllerBase
                         m.ReplyToMessage.AuthorId,
                         new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                         m.ReplyToMessage.IsDeleted
-                    )
+                    ),
+                    m.GhostAuthorName,
+                    m.GhostAuthorAvatarUrl,
+                    m.XfPostUrl
                 ))
                 .ToListAsync();
 
@@ -120,7 +123,10 @@ public class ChannelsController : ControllerBase
                     m.ReplyToMessage.AuthorId,
                     new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                     m.ReplyToMessage.IsDeleted
-                )
+                ),
+                m.GhostAuthorName,
+                m.GhostAuthorAvatarUrl,
+                m.XfPostUrl
             ))
             .ToListAsync();
 
@@ -188,7 +194,10 @@ public class ChannelsController : ControllerBase
                     m.ReplyToMessage.AuthorId,
                     new UserDto(m.ReplyToMessage.Author.Id, m.ReplyToMessage.Author.UserName!, m.ReplyToMessage.Author.DisplayName, m.ReplyToMessage.Author.AvatarUrl, m.ReplyToMessage.Author.Status, m.ReplyToMessage.Author.Bio, m.ReplyToMessage.Author.PresenceStatus),
                     m.ReplyToMessage.IsDeleted
-                )
+                ),
+                m.GhostAuthorName,
+                m.GhostAuthorAvatarUrl,
+                m.XfPostUrl
             ))
             .ToListAsync();
 

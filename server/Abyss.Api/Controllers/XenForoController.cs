@@ -1,11 +1,15 @@
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.IdentityModel.Tokens;
 using Abyss.Api.Data;
+using Abyss.Api.DTOs;
+using Abyss.Api.Hubs;
 using Abyss.Api.Models;
 using Abyss.Api.Services;
 
@@ -14,6 +18,8 @@ namespace Abyss.Api.Controllers;
 public record XenForoConnectionDto(string XfUsername, int XfUserId, DateTime LinkedAt);
 public record CreateForumTopicRequest(Guid StartMessageId, Guid EndMessageId, int NodeId, string Title);
 public record CreateForumTopicResponse(int ThreadId, string Url);
+public record SubscribeMirrorRequest(int NodeId, string? Title);
+public record WebhookEnvelope(string Event, string EventId, XfPostEvent Data);
 
 [ApiController]
 [Route("api/xenforo")]
@@ -27,20 +33,26 @@ public class XenForoController : ControllerBase
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
     private readonly XenForoBridgeService _bridge;
+    private readonly XenForoMirrorService _mirror;
     private readonly IMemoryCache _cache;
+    private readonly IHubContext<ChatHub> _hub;
     private readonly ILogger<XenForoController> _logger;
 
     public XenForoController(
         AppDbContext db,
         PermissionService perms,
         XenForoBridgeService bridge,
+        XenForoMirrorService mirror,
         IMemoryCache cache,
+        IHubContext<ChatHub> hub,
         ILogger<XenForoController> logger)
     {
         _db = db;
         _perms = perms;
         _bridge = bridge;
+        _mirror = mirror;
         _cache = cache;
+        _hub = hub;
         _logger = logger;
     }
 
@@ -206,9 +218,6 @@ public class XenForoController : ControllerBase
     {
         if (!_bridge.IsConfigured) return Problem("XenForo bridge not configured.", statusCode: 503);
 
-        var linked = await _db.XenForoConnections.AsNoTracking().AnyAsync(c => c.OwnerId == UserId, ct);
-        if (!linked) return Forbid();
-
         if (_cache.TryGetValue<IReadOnlyList<XenForoNodeDto>>(NodesCacheKey, out var cached) && cached != null)
             return Ok(cached);
 
@@ -314,6 +323,138 @@ public class XenForoController : ControllerBase
             targetName: req.Title, details: details);
 
         return Ok(new CreateForumTopicResponse(result.ThreadId, result.Url));
+    }
+
+    // ─── Live-mirror subscriptions (per channel) ──────────────────────────
+
+    [Authorize]
+    [HttpPost("/api/channels/{channelId:guid}/xenforo-mirror")]
+    public async Task<ActionResult<ChannelDto>> SetMirror(Guid channelId, SubscribeMirrorRequest req, CancellationToken ct)
+    {
+        if (!_bridge.IsConfigured) return Problem("XenForo bridge not configured.", statusCode: 503);
+        if (req.NodeId <= 0) return BadRequest("nodeId is required");
+
+        var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId, ct);
+        if (channel == null) return NotFound("Channel not found");
+        if (channel.ServerId == null) return BadRequest("Only server channels can mirror a XenForo node");
+        if (!await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels)) return Forbid();
+
+        channel.Type = ChannelType.XenForoMirror;
+        channel.XenForoNodeId = req.NodeId;
+        channel.XenForoNodeTitle = string.IsNullOrWhiteSpace(req.Title) ? null : req.Title!.Trim();
+        await _db.SaveChangesAsync(ct);
+
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position,
+            null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes,
+            channel.XenForoNodeId, channel.XenForoNodeTitle);
+        // Triggers a channel refetch on every connected client so the new type
+        // + per-user permissions are picked up (sidebar filters on permissions).
+        await _hub.Clients.Group($"server:{channel.ServerId}").SendAsync(
+            "ChannelUpdated", channel.ServerId.ToString(), dto, ct);
+        return Ok(dto);
+    }
+
+    [Authorize]
+    [HttpDelete("/api/channels/{channelId:guid}/xenforo-mirror")]
+    public async Task<IActionResult> RemoveMirror(Guid channelId, CancellationToken ct)
+    {
+        var channel = await _db.Channels.FirstOrDefaultAsync(c => c.Id == channelId, ct);
+        if (channel == null) return NotFound();
+        if (channel.ServerId == null) return BadRequest();
+        if (!await _perms.HasPermissionAsync(channel.ServerId.Value, UserId, Permission.ManageChannels)) return Forbid();
+        if (channel.Type != ChannelType.XenForoMirror) return NoContent();
+
+        channel.Type = ChannelType.Text;
+        channel.XenForoNodeId = null;
+        channel.XenForoNodeTitle = null;
+        await _db.SaveChangesAsync(ct);
+
+        var dto = new ChannelDto(channel.Id, channel.Name, channel.Type.ToString(), channel.ServerId, channel.Position,
+            null, channel.PersistentChat, channel.UserLimit, channel.RssFeedUrl, channel.RssRefreshIntervalMinutes,
+            null, null);
+        await _hub.Clients.Group($"server:{channel.ServerId}").SendAsync(
+            "ChannelUpdated", channel.ServerId.ToString(), dto, ct);
+        return NoContent();
+    }
+
+    // ─── Webhook (from the XF addon) ──────────────────────────────────────
+
+    [AllowAnonymous]
+    [HttpPost("webhook")]
+    public async Task<IActionResult> Webhook(CancellationToken ct)
+    {
+        if (!_bridge.IsConfigured) return Problem("XenForo bridge not configured.", statusCode: 503);
+
+        Request.EnableBuffering();
+        Request.Body.Position = 0;
+        string raw;
+        using (var reader = new StreamReader(Request.Body, Encoding.UTF8, leaveOpen: true))
+        {
+            raw = await reader.ReadToEndAsync(ct);
+        }
+        Request.Body.Position = 0;
+
+        var sigHeader = Request.Headers["X-Abyss-Signature"].FirstOrDefault();
+        if (!_bridge.VerifyWebhookSignature(raw, sigHeader))
+        {
+            _logger.LogWarning("Rejected XF webhook: invalid HMAC signature");
+            return Unauthorized();
+        }
+
+        WebhookEnvelope? envelope;
+        try
+        {
+            envelope = JsonSerializer.Deserialize<WebhookEnvelope>(raw, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            });
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "XF webhook body could not be parsed");
+            return BadRequest("Invalid JSON");
+        }
+        if (envelope == null) return BadRequest("Empty envelope");
+
+        // Idempotency: drop replays of the same event_id within 5 minutes.
+        var eventId = string.IsNullOrWhiteSpace(envelope.EventId)
+            ? $"{envelope.Event}:{envelope.Data?.XfPostId}"
+            : envelope.EventId;
+        var cacheKey = $"xenforo:webhook-event:{eventId}";
+        if (_cache.TryGetValue(cacheKey, out _)) return Ok();
+        _cache.Set(cacheKey, true, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+            Size = 1,
+        });
+
+        try
+        {
+            if (envelope.Data == null) return BadRequest("Missing data");
+
+            switch (envelope.Event)
+            {
+                case "post.created":
+                    await _mirror.HandlePostCreatedAsync(envelope.Data, ct);
+                    break;
+                case "post.updated":
+                    await _mirror.HandlePostUpdatedAsync(envelope.Data, ct);
+                    break;
+                case "post.deleted":
+                    await _mirror.HandlePostDeletedAsync(envelope.Data.XfPostId, ct);
+                    break;
+                default:
+                    _logger.LogInformation("Unhandled XF webhook event: {Event}", envelope.Event);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "XF webhook handler failed for event {Event}", envelope.Event);
+            return Problem("Webhook handler failed", statusCode: 500);
+        }
+
+        return Ok();
     }
 
     private record LinkNoncePayload(string AbyssUserId, string ClientReturnUrl);
