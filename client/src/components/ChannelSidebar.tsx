@@ -68,7 +68,7 @@ export default function ChannelSidebar() {
 
   // When activeChannel changes (including restore from localStorage), join + fetch messages
   useEffect(() => {
-    if (activeChannel && activeChannel.type === 'Text') {
+    if (activeChannel && (activeChannel.type === 'Text' || activeChannel.type === 'XenForoMirror')) {
       if (currentChannelId !== activeChannel.id) {
         const switchChannel = async () => {
           // Leave/join SignalR groups best-effort — don't let failures block message fetch.

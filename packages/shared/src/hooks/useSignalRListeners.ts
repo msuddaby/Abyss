@@ -194,7 +194,9 @@ export function refreshSignalRState(conn: SignalRConnection) {
 export async function rejoinActiveChannel(conn: SignalRConnection) {
   const { isDmMode, activeDmChannel } = useDmStore.getState();
   const { activeChannel } = useServerStore.getState();
-  const channelId = isDmMode ? activeDmChannel?.id : (activeChannel?.type === 'Text' ? activeChannel.id : null);
+  const channelId = isDmMode
+    ? activeDmChannel?.id
+    : (activeChannel?.type === 'Text' || activeChannel?.type === 'XenForoMirror' ? activeChannel.id : null);
   if (!channelId) return;
   try {
     console.log(`[SignalR] rejoinActiveChannel — channelId=${channelId}`);
@@ -493,7 +495,9 @@ export function useSignalRListeners() {
           useDmStore.getState().moveDmToTop(channelId);
         } else {
           const activeChannel = useServerStore.getState().activeChannel;
-          if (activeChannel?.id === channelId && activeChannel.type === 'Text') {
+          const isViewing = activeChannel?.id === channelId
+            && (activeChannel.type === 'Text' || activeChannel.type === 'XenForoMirror');
+          if (isViewing) {
             conn.invoke('MarkChannelRead', channelId).catch(console.error);
           } else {
             useUnreadStore.getState().handleNewUnreadMessage(channelId, serverId);
@@ -502,8 +506,10 @@ export function useSignalRListeners() {
       });
 
       conn.on('MentionReceived', async (notification: { id: string; messageId: string; channelId: string; serverId: string | null; type: string; createdAt: string }) => {
+        const activeChannelForNotif = useServerStore.getState().activeChannel;
         const isCurrentChannel = notification.serverId
-          ? (useServerStore.getState().activeChannel?.id === notification.channelId && useServerStore.getState().activeChannel?.type === 'Text')
+          ? (activeChannelForNotif?.id === notification.channelId
+              && (activeChannelForNotif.type === 'Text' || activeChannelForNotif.type === 'XenForoMirror'))
           : (useDmStore.getState().activeDmChannel?.id === notification.channelId);
         const isMention = notification.type !== 'ServerMessage';
 
@@ -516,7 +522,9 @@ export function useSignalRListeners() {
           }
         } else {
           const activeChannel = useServerStore.getState().activeChannel;
-          if (activeChannel?.id === notification.channelId && activeChannel.type === 'Text') {
+          const isViewing = activeChannel?.id === notification.channelId
+            && (activeChannel.type === 'Text' || activeChannel.type === 'XenForoMirror');
+          if (isViewing) {
             conn.invoke('MarkChannelRead', notification.channelId).catch(console.error);
           } else if (isMention) {
             useUnreadStore.getState().incrementMention(notification.channelId, notification.serverId);
@@ -858,9 +866,9 @@ export function useSignalRListeners() {
     }
   }, [activeChannel, isDmMode, activeDmChannel]);
 
-  // Auto-mark channel as read when switching to a text channel
+  // Auto-mark channel as read when switching to a text-like channel
   useEffect(() => {
-    if (activeChannel?.type === 'Text' && activeServer) {
+    if ((activeChannel?.type === 'Text' || activeChannel?.type === 'XenForoMirror') && activeServer) {
       const conn = getConnection();
       if (conn.state === 'Connected') {
         conn.invoke('MarkChannelRead', activeChannel.id).catch(console.error);

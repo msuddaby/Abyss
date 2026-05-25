@@ -112,7 +112,12 @@ class Listener
     private static function config(): array
     {
         $options = \XF::app()->options();
-        $abyssBase = trim((string)$options->abyssBridgeAbyssBaseUrl, '/');
+        $abyssBase = rtrim((string)$options->abyssBridgeAbyssBaseUrl, '/');
+        // The "Abyss API base URL" label leads people to add the /api suffix.
+        // Tolerate that — the route paths in this addon always start with /api.
+        if (substr($abyssBase, -4) === '/api') {
+            $abyssBase = substr($abyssBase, 0, -4);
+        }
         $secret = (string)$options->abyssBridgeSharedSecret;
         return [$abyssBase, $secret];
     }
