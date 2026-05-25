@@ -707,7 +707,12 @@ export default function UserSettingsModal({
       setXfError('You must be logged in to link an account.');
       return;
     }
-    const returnUrl = `${window.location.origin}${window.location.pathname}`;
+    // Desktop's window.location.origin (file:// or app://) isn't navigable from
+    // an external browser, so route those users to a hosted success page instead.
+    const apiBase = getApiBase() || window.location.origin;
+    const returnUrl = window.electron
+      ? `${apiBase}/api/xenforo/link/done`
+      : `${window.location.origin}${window.location.pathname}`;
     const url = `${getApiBase()}/api/xenforo/link/start`
       + `?return=${encodeURIComponent(returnUrl)}`
       + `&access_token=${encodeURIComponent(token)}`;

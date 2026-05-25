@@ -128,6 +128,16 @@ function App() {
     window.history.replaceState({}, '', newUrl);
   }, [initialized, isAuthenticated]);
 
+  // Desktop: the XF link flow happens in an external browser, so we never get
+  // a ?linked=1 redirect back. Refresh the connection whenever the Electron
+  // window regains focus, which is when the user returns to the app.
+  useEffect(() => {
+    if (!window.electron || !initialized || !isAuthenticated) return;
+    const onFocus = () => useXenForoStore.getState().fetchConnection();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [initialized, isAuthenticated]);
+
   const Router = window.electron ? HashRouter : BrowserRouter;
 
   return (

@@ -153,6 +153,31 @@ public class XenForoController : ControllerBase
         return Redirect($"{clientReturn}{sep}linked=1");
     }
 
+    // Lightweight HTML success page used as the link-flow return target for
+    // desktop clients. The Electron window's window.location.origin isn't a
+    // scheme an external browser can navigate to, so we land here instead and
+    // tell the user to return to the app — the app refetches on focus.
+    [AllowAnonymous]
+    [HttpGet("link/done")]
+    public ContentResult LinkDone()
+    {
+        const string html = """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>Linked</title>
+            <style>
+              html,body{height:100%;margin:0;background:#1e1f22;color:#e3e5e8;font-family:system-ui,sans-serif}
+              .wrap{height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:.5rem;padding:1rem;text-align:center}
+              h1{margin:0;font-size:1.25rem;font-weight:600}
+              p{margin:0;color:#b5bac1}
+            </style></head>
+            <body><div class="wrap">
+              <h1>XenForo account linked</h1>
+              <p>You can close this tab and return to Abyss.</p>
+            </div></body></html>
+            """;
+        return new ContentResult { Content = html, ContentType = "text/html; charset=utf-8", StatusCode = 200 };
+    }
+
     // ─── Claim flow (Abyss issues a signed JWT for the XF addon to verify) ─
 
     [Authorize]
