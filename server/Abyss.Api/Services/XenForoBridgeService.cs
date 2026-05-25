@@ -60,6 +60,9 @@ public class XenForoBridgeService
         EnsureConfigured();
         using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/nodes");
         req.Headers.Add("XF-Api-Key", _adminApiKey);
+        // Super-user API requests run as Guest by default; bypass permissions so
+        // forums hidden from unregistered users are still listed for the bridge.
+        req.Headers.Add("XF-Api-Bypass-Permissions", "1");
 
         using var res = await _http.SendAsync(req, ct);
         res.EnsureSuccessStatusCode();
