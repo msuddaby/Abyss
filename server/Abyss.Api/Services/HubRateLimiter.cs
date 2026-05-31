@@ -44,9 +44,6 @@ public class HubRateLimiter
         ["ModerateVoiceState"]       = Category.VoiceState,
         ["NotifyScreenShare"]        = Category.Streaming,
         ["NotifyCamera"]             = Category.Streaming,
-        ["NotifyRelayMode"]          = Category.Streaming,
-        ["RequestWatchStream"]       = Category.Streaming,
-        ["StopWatchingStream"]       = Category.Streaming,
         ["NotifyPlaybackCommand"]    = Category.WatchParty,
         ["RequestSync"]              = Category.WatchParty,
         ["TransferWatchPartyHost"]   = Category.WatchParty,
@@ -70,7 +67,7 @@ public class HubRateLimiter
     // Exempt methods that should never be rate-limited
     private static readonly HashSet<string> Exempt = new()
     {
-        "Ping", "SendSignal", "VoiceHeartbeat", "ReportPlaybackPosition",
+        "Ping", "VoiceHeartbeat", "ReportPlaybackPosition",
         "OnConnectedAsync", "OnDisconnectedAsync"
     };
 

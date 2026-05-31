@@ -122,7 +122,6 @@ builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<NotificationService>();
 builder.Services.AddScoped<SystemMessageService>();
 builder.Services.AddSingleton<VoiceStateService>();
-builder.Services.AddSingleton<TurnCredentialService>();
 builder.Services.AddSingleton<LiveKitService>();
 builder.Services.AddSingleton<ImageService>();
 builder.Services.AddSingleton<VideoPosterService>();

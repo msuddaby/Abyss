@@ -133,13 +133,6 @@ public class ChatHub : Hub
             await Clients.Caller.SendAsync("ActiveCameras", currentCameras);
         }
 
-        var hasRelayUsers = _voiceState.ChannelHasRelayUsers(channelGuid);
-        if (hasRelayUsers)
-        {
-            Console.WriteLine($"[relay] Sending ChannelRelayActive to joining user {UserId} ({DisplayName}) — channel {channelId} has existing relay users");
-            await Clients.Caller.SendAsync("ChannelRelayActive");
-        }
-
         var watchParty = _watchPartyService.GetParty(channelGuid);
         if (watchParty != null)
         {
@@ -1088,11 +1081,11 @@ public class ChatHub : Hub
 
         if (reconnectingToSameChannel)
         {
-            Console.WriteLine($"[voice] Seamless reconnect for {UserId} ({DisplayName}) in channel {channelId} — new connectionId, preserving media state | hasRelay: {_voiceState.ChannelHasRelayUsers(channelGuid)}");
-            // Seamless reconnect: WebRTC peer connections and LiveKit sessions survive
-            // independently of SignalR, so we only need to update the connectionId and
-            // re-add to SignalR groups. Screen share, camera, and all P2P media state
-            // are still valid — don't clear them or broadcast stop signals.
+            Console.WriteLine($"[voice] Seamless reconnect for {UserId} ({DisplayName}) in channel {channelId} — new connectionId, preserving media state");
+            // Seamless reconnect: the LiveKit session survives independently of SignalR,
+            // so we only need to update the connectionId and re-add to SignalR groups.
+            // Screen share and camera presence state are still valid — don't clear them
+            // or broadcast stop signals.
             _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
             if (!canSpeak)
             {
@@ -1173,7 +1166,7 @@ public class ChatHub : Hub
         }
 
         var channelUserCount = _voiceState.GetChannelUserIds(channelGuid).Count;
-        Console.WriteLine($"[voice] Fresh join for {UserId} ({DisplayName}) in channel {channelId} | existing users: {channelUserCount} | hasRelay: {_voiceState.ChannelHasRelayUsers(channelGuid)} | muted: {effectiveMuted} | deafened: {isDeafened}");
+        Console.WriteLine($"[voice] Fresh join for {UserId} ({DisplayName}) in channel {channelId} | existing users: {channelUserCount} | muted: {effectiveMuted} | deafened: {isDeafened}");
         _voiceState.JoinChannel(channelGuid, UserId, DisplayName, effectiveMuted, isDeafened, Context.ConnectionId);
         if (!canSpeak)
         {
@@ -1247,8 +1240,7 @@ public class ChatHub : Hub
         if (!currentChannel.HasValue) { Console.WriteLine($"[voice] LeaveVoiceChannel for {UserId} ({DisplayName}) — not in any channel, ignoring"); return; }
         var channelGuid = currentChannel.Value;
         var resolvedChannelId = channelGuid.ToString();
-        var wasRelay = _voiceState.ChannelHasRelayUsers(channelGuid);
-        Console.WriteLine($"[voice] LeaveVoiceChannel for {UserId} ({DisplayName}) from channel {resolvedChannelId} | channelHasRelay: {wasRelay} | remainingUsers: {_voiceState.GetChannelUserIds(channelGuid).Count - 1}");
+        Console.WriteLine($"[voice] LeaveVoiceChannel for {UserId} ({DisplayName}) from channel {resolvedChannelId} | remainingUsers: {_voiceState.GetChannelUserIds(channelGuid).Count - 1}");
 
         // Atomically remove screen share / camera state (no TOCTOU)
         var wasSharing = _voiceState.RemoveScreenSharer(channelGuid, UserId);
@@ -1333,62 +1325,6 @@ public class ChatHub : Hub
         }
     }
 
-    // Viewer requests to watch a sharer's stream
-    public async Task RequestWatchStream(string sharerUserId)
-    {
-        // Verify both users are in the same voice channel
-        var viewerChannel = _voiceState.GetUserChannel(UserId);
-        var sharerChannel = _voiceState.GetUserChannel(sharerUserId);
-        if (!viewerChannel.HasValue || !sharerChannel.HasValue || viewerChannel.Value != sharerChannel.Value) return;
-
-        // Verify the target is actually sharing
-        if (!_voiceState.IsScreenSharing(sharerChannel.Value, sharerUserId)) return;
-
-        // Relay watch request to the sharer's connections
-        var sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
-
-        foreach (var connId in sharerConnections)
-        {
-            await Clients.Client(connId).SendAsync("WatchStreamRequested", UserId);
-        }
-    }
-
-    // Viewer stops watching a sharer's stream
-    public async Task StopWatchingStream(string sharerUserId)
-    {
-        // Relay stop request to the sharer's connections
-        var sharerConnections = _connections.Where(c => c.Value == sharerUserId).Select(c => c.Key).ToList();
-
-        foreach (var connId in sharerConnections)
-        {
-            await Clients.Client(connId).SendAsync("StopWatchingRequested", UserId);
-        }
-    }
-
-    public async Task SendSignal(string targetUserId, string signal)
-    {
-        if (string.IsNullOrWhiteSpace(signal) || signal.Length > 100_000) return;
-
-        // Verify sender is in a voice channel (membership was checked at join time)
-        var senderChannel = _voiceState.GetUserChannel(UserId);
-        if (!senderChannel.HasValue) return;
-
-        // Refresh voice activity timestamp
-        _voiceState.TouchUser(UserId);
-
-        // Verify target is in the same voice channel
-        var targetChannel = _voiceState.GetUserChannel(targetUserId);
-        if (!targetChannel.HasValue || targetChannel.Value != senderChannel.Value) return;
-
-        // Route only to the target user's voice connection — not all their connections.
-        // If signals are sent to non-voice connections (e.g. a browser tab), those
-        // connections create broken peer connections that interfere with the real session.
-        var voiceConnId = _voiceState.GetVoiceConnectionId(targetUserId);
-        if (voiceConnId == null || !_connections.ContainsKey(voiceConnId)) return;
-
-        await Clients.Client(voiceConnId).SendAsync("ReceiveSignal", UserId, signal);
-    }
-
     public void VoiceHeartbeat()
     {
         _voiceState.TouchUser(UserId);
@@ -1446,22 +1382,6 @@ public class ChatHub : Hub
                 await Clients.Group($"user:{userId}").SendAsync("CameraStoppedInChannel", channelId, UserId);
             }
         }
-    }
-
-    // Relay mode notification
-    public async Task NotifyRelayMode(string channelId)
-    {
-        if (!Guid.TryParse(channelId, out var channelGuid)) return;
-        if (!_voiceState.IsUserInChannel(channelGuid, UserId))
-        {
-            Console.WriteLine($"[relay] NotifyRelayMode rejected — user {UserId} ({DisplayName}) not in channel {channelId}");
-            return;
-        }
-
-        var hadRelayBefore = _voiceState.ChannelHasRelayUsers(channelGuid);
-        _voiceState.AddRelayUser(channelGuid, UserId);
-        Console.WriteLine($"[relay] User {UserId} ({DisplayName}) entered relay mode in channel {channelId} | channelHadRelayBefore: {hadRelayBefore}");
-        await Clients.OthersInGroup($"voice:{channelId}").SendAsync("ChannelRelayActive");
     }
 
     // Get camera users for all voice channels in a server (for sidebar indicators)
