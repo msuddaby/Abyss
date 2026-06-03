@@ -82,6 +82,7 @@ public class ImageService
             using var image = new MagickImage();
             await image.ReadAsync(input);
 
+            image.AutoOrient();
             image.Strip();
             image.Quality = 85;
             width = (int)image.Width;
@@ -159,6 +160,7 @@ public class ImageService
             using var image = new MagickImage();
             await image.ReadAsync(input);
 
+            image.AutoOrient();
             image.Resize(new MagickGeometry(128, 128) { IgnoreAspectRatio = false, FillArea = true });
             image.Crop(128, 128, Gravity.Center);
             image.ResetPage();
@@ -204,6 +206,7 @@ public class ImageService
             using var image = new MagickImage();
             await image.ReadAsync(input);
 
+            image.AutoOrient();
             image.Resize(new MagickGeometry(256, 256) { IgnoreAspectRatio = false, FillArea = true });
             image.Crop(256, 256, Gravity.Center);
             image.ResetPage();
