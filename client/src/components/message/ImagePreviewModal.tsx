@@ -28,6 +28,14 @@ export default function ImagePreviewModal({
   const translateStart = useRef({ x: 0, y: 0 });
   const mouseDownTarget = useRef<EventTarget | null>(null);
 
+  // Touch gesture state
+  const pinchStartDist = useRef(0);
+  const pinchStartScale = useRef(1);
+  const touchPanStart = useRef({ x: 0, y: 0 });
+  const touchTranslateStart = useRef({ x: 0, y: 0 });
+  const touchMoved = useRef(false);
+  const touchStartTarget = useRef<EventTarget | null>(null);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -94,6 +102,70 @@ export default function ImagePreviewModal({
     }
   }, [scale]);
 
+  const touchDist = (touches: React.TouchList) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  };
+
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      touchMoved.current = false;
+      if (e.touches.length === 2) {
+        pinchStartDist.current = touchDist(e.touches);
+        pinchStartScale.current = scale;
+      } else if (e.touches.length === 1) {
+        touchStartTarget.current = e.target;
+        touchPanStart.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY,
+        };
+        touchTranslateStart.current = { ...translate };
+      }
+    },
+    [scale, translate],
+  );
+
+  const handleTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length === 2 && pinchStartDist.current > 0) {
+        touchMoved.current = true;
+        const ratio = touchDist(e.touches) / pinchStartDist.current;
+        setScale(() => {
+          const next = pinchStartScale.current * ratio;
+          if (next <= 1) {
+            setTranslate({ x: 0, y: 0 });
+            return 1;
+          }
+          return Math.min(next, 10);
+        });
+      } else if (e.touches.length === 1 && scale > 1) {
+        const dx = e.touches[0].clientX - touchPanStart.current.x;
+        const dy = e.touches[0].clientY - touchPanStart.current.y;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) touchMoved.current = true;
+        setTranslate({
+          x: touchTranslateStart.current.x + dx,
+          y: touchTranslateStart.current.y + dy,
+        });
+      }
+    },
+    [scale],
+  );
+
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length > 0) return;
+      pinchStartDist.current = 0;
+      // Tap (no movement) on the backdrop closes the modal
+      if (!touchMoved.current && touchStartTarget.current) {
+        const tag = (touchStartTarget.current as HTMLElement).tagName;
+        if (tag !== "IMG") onClose();
+      }
+      touchStartTarget.current = null;
+    },
+    [onClose],
+  );
+
   const isZoomed = scale > 1;
 
   return createPortal(
@@ -105,7 +177,10 @@ export default function ImagePreviewModal({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onDoubleClick={handleDoubleClick}
-      style={{ cursor: isZoomed ? "grab" : "default" }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      style={{ cursor: isZoomed ? "grab" : "default", touchAction: "none" }}
     >
       <div className="image-preview-toolbar" onMouseDown={(e) => e.stopPropagation()}>
         <button

@@ -2693,8 +2693,8 @@ label.has-error select:focus {
 
 .image-preview-toolbar {
   position: fixed;
-  top: 16px;
-  right: 16px;
+  top: calc(16px + env(safe-area-inset-top));
+  right: calc(16px + env(safe-area-inset-right));
   display: flex;
   gap: 8px;
   z-index: 1101;

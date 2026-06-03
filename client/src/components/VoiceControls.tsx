@@ -136,11 +136,8 @@ export default function VoiceControls() {
           <span className="voice-connected-label">
             <span className={`voice-quality-dot ${qualityLevel}`} title={qualityTitle} />
             Voice Connected
-            {connectionMode === 'sfu' && (
-              <span className="connection-mode-badge sfu" title="Connected via relay server (E2EE)">Relay</span>
-            )}
-            {connectionMode === 'attempting-sfu' && (
-              <span className="connection-mode-badge sfu attempting" title="Switching to relay server...">Switching to Relay...</span>
+            {connectionMode === 'connecting' && (
+              <span className="connection-mode-badge sfu attempting" title="Connecting to voice server...">Connecting...</span>
             )}
           </span>
           {channel && <span className="voice-channel-name">{channel.name}</span>}

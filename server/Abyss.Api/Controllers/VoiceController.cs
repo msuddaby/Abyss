@@ -13,31 +13,21 @@ namespace Abyss.Api.Controllers;
 [Authorize]
 public class VoiceController : ControllerBase
 {
-    private readonly TurnCredentialService _turn;
     private readonly LiveKitService _livekit;
     private readonly PermissionService _perms;
     private readonly AppDbContext _db;
 
     public VoiceController(
-        TurnCredentialService turn,
         LiveKitService livekit,
         PermissionService perms,
         AppDbContext db)
     {
-        _turn = turn;
         _livekit = livekit;
         _perms = perms;
         _db = db;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-
-    [HttpGet("turn")]
-    public ActionResult<TurnCredentialResult> GetTurnCredentials()
-    {
-        var creds = _turn.Issue(UserId);
-        return Ok(creds);
-    }
 
     [HttpPost("livekit-token")]
     public async Task<IActionResult> GetLivekitToken([FromBody] LiveKitTokenRequest request)

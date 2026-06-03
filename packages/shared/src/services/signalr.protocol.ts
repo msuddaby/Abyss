@@ -46,12 +46,11 @@ export const ALL_SIGNALR_EVENTS = [
   // Soundboard
   'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated',
   'SoundboardClipRemoved',
-  // WebRTC voice (useWebRTC)
-  'UserJoinedVoice', 'UserLeftVoice', 'ChannelRelayActive',
-  'ReceiveSignal', 'VoiceChannelUsers',
+  // Voice (useWebRTC — LiveKit SFU presence/state events)
+  'UserJoinedVoice', 'UserLeftVoice', 'VoiceChannelUsers',
   'ScreenShareStarted', 'ScreenShareStopped', 'ActiveSharers',
   'CameraStarted', 'CameraStopped', 'ActiveCameras',
-  'WatchStreamRequested', 'StopWatchingRequested', 'VoiceSessionReplaced',
+  'VoiceSessionReplaced',
 ] as const;
 
 export type SignalREventName = (typeof ALL_SIGNALR_EVENTS)[number];

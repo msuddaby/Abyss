@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { resetConnection } from '../services/signalr.js';
-import { clearTurnCredentials } from '../services/turn.js';
 import { getStorage } from '../storage.js';
 import type { User, Server } from '../types/index.js';
 
@@ -174,7 +173,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     s.removeItem('refreshToken');
     s.removeItem('user');
     resetConnection();
-    clearTurnCredentials();
     set({ token: null, refreshToken: null, user: null, isAuthenticated: false, isSysadmin: false, isGuest: false, initialized: true });
   },
 
