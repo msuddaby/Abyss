@@ -518,9 +518,14 @@ public class ChatHub : Hub
     // Explicit presence heartbeat — clients call this when the user is actively
     // interacting (mouse, keyboard, touch). Keeps the user's heartbeat fresh so
     // PresenceMonitorService doesn't mark them as Away.
-    public async void ActivityHeartbeat()
+    public async Task ActivityHeartbeat()
     {
         _lastHeartbeats[UserId] = DateTime.UtcNow;
+
+        // Only guests need their LastActiveAt persisted (GuestCleanupService);
+        // skip the DB round-trip entirely for regular users.
+        if (Context.User?.FindFirstValue("isGuest") != "true")
+            return;
 
         // Throttled guest activity update (max once per hour)
         if (_guestActivityWrites.TryGetValue(UserId, out var lastWrite) &&

@@ -66,10 +66,8 @@ class Listener
         $user = $post->User;
 
         $router = \XF::app()->router('public');
-        $avatar = '';
-        if ($user) {
-            $avatar = $router->buildLink('canonical:full:avatar', $user, ['s' => 'l']);
-        }
+        // XF's user entity builds avatar URLs directly; `true` returns the canonical (absolute) form.
+        $avatar = $user ? (string)$user->getAvatarUrl('l', null, true) : '';
 
         $isOp = ((int)$post->post_id === (int)$thread->first_post_id);
         $editStamp = (int)($post->last_edit_date ?: $post->post_date);
@@ -87,7 +85,7 @@ class Listener
                 'first_post_id' => (int)$thread->first_post_id,
                 'bbcode'        => (string)$post->message,
                 'title'         => $isOp ? (string)$thread->title : null,
-                'url'           => $router->buildLink('canonical:full:posts', $post),
+                'url'           => $router->buildLink('canonical:posts', $post),
                 'created_at'    => (int)$post->post_date,
             ],
         ];
