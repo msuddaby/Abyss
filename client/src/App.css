@@ -4573,6 +4573,13 @@ label.has-error select:focus {
   margin-bottom: 0;
 }
 
+.us-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 .us-card-actions {
   display: flex;
   justify-content: flex-end;

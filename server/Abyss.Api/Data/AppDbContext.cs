@@ -391,7 +391,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .OnDelete(DeleteBehavior.Cascade);
 
         builder.Entity<XenForoConnection>()
-            .HasIndex(x => x.XfUserId);
+            .HasIndex(x => x.XfUserId)
+            .IsUnique();
 
         // XenForoPostMessage (XF post -> Abyss message mapping for live thread mirror)
         builder.Entity<XenForoPostMessage>()

@@ -152,11 +152,60 @@ SFU audio:
 
 Screen sharing and camera:
 
-- P2P mode: explicit signaling + track-info handling
-- SFU mode: publish/unpublish through LiveKit APIs
+- publish/unpublish through LiveKit APIs (`sfuPublishScreenShare` / `sfuPublishCamera`)
 - quality controls:
   - camera presets up to 1080p
-  - screen-share presets from quality to high-motion
+  - screen-share tiers: 720p30 (3 Mbps), 1080p30 (5 Mbps, default),
+    1080p60 (8 Mbps), 1440p30 (8 Mbps) — set in `SCREEN_SHARE_QUALITY_CONSTRAINTS`
+    (`client/src/hooks/useWebRTC.ts`), selectable from the quality popover or
+    Settings → Video
+- each tier carries an explicit capture resolution. Without one, livekit-client
+  pins capture to 1080p30 and the 60fps tier becomes unreachable.
+- screen-share encodings must be passed as `screenShareEncoding`, never
+  `videoEncoding` — `computeVideoEncodings()` discards the latter for
+  `Track.Source.ScreenShare` and silently falls back to 1080p15 @ 2.5 Mbps.
+
+Rendering (adaptiveStream):
+
+- remote video **must** be rendered with `track.attach(el)` / `track.detach(el)`,
+  not by assigning a `MediaStream` to `srcObject`. `attach()` is the only thing
+  that registers the element with adaptiveStream; without it the SDK sees no
+  attached elements, reports the video as hidden/0x0, and the SFU pauses the
+  track or drops it to the lowest layer.
+- the same mechanism is what makes unwatched screen shares free: the track stays
+  subscribed but paused until someone actually tunes in.
+
+Watching a screen share is opt-in:
+
+- a share starting does **not** auto-tune anyone in — `ScreenShareView` shows a
+  "Watch Stream" picker, and only `requestWatch()` subscribes the share's audio
+- screen-share audio is gated in two places: `TrackPublished` (for shares that
+  start while you are in the channel) and `TrackSubscribed` (for shares already
+  running when you join, which `TrackPublished` never fires for)
+
+### Screen-share audio: platform support and known limitation
+
+Shared system audio works on **Windows only**. Electron's
+`setDisplayMediaRequestHandler` accepts `audio: 'loopback'`, which its own docs
+describe as system audio and "currently only supported on Windows". macOS gets
+no shared audio, and on Linux the handler is not registered at all (it crashes
+PipeWire on many setups) — the Linux capture path in `sfuPublishScreenShare`
+requests `audio: false`.
+
+**Known limitation:** `'loopback'` captures the entire default-output mix, which
+includes Abyss's own voice playback. Viewers therefore hear the other call
+participants echoed back through the sharer, slightly delayed. This cannot be
+fixed at the capture layer: Electron exposes only `'loopback'` /
+`'loopbackWithMute'` (the latter mutes local playback while capturing the same
+mix, so it does not help), and neither Electron nor Chromium exposes per-process
+or per-window audio capture for desktop sources. Discord avoids this by shipping
+a native audio driver that hooks the shared process's audio session; matching it
+would require a native module (WASAPI process-loopback on Windows 10 2004+).
+
+Note that headphones do not help — loopback captures the digital output mix, not
+the acoustic path. The only workaround today is to set Abyss's output device
+(Settings → Voice) to a device that is *not* the system default, so Abyss's
+playback stays out of the captured mix.
 
 ## 7. Mute, Deafen, VAD, and Push-to-Talk
 
@@ -244,6 +293,22 @@ Confirm clients are on current build with `NotifyRelayMode` + `ChannelRelayActiv
 ### No remote audio in SFU mode
 
 Inspect LiveKit track subscription logs and local device output selection. Verify deafen is off and per-user volume is not set to `0`.
+
+### Viewers hear Abyss voices echoed inside a screen share
+
+Expected on Windows. `audio: 'loopback'` captures the whole default-output mix,
+which includes Abyss's own playback. Not fixable at the capture layer — see
+"Screen-share audio: platform support and known limitation" in section 6. The
+sharer can work around it by selecting a non-default output device in
+Settings → Voice.
+
+### Screen share looks soft or low-framerate
+
+Check the tier in Settings → Video (default is 1080p30). If the selected tier is
+not taking effect, confirm the publish path passes `screenShareEncoding` rather
+than `videoEncoding`, and verify in `chrome://webrtc-internals` that the
+*receiver's* inbound-rtp `frameWidth` matches the sender — a receiver stuck at
+half resolution means video is not being rendered via `track.attach()`.
 
 ### P2P repeatedly fails then reconnects
 

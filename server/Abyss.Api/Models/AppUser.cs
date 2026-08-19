@@ -15,6 +15,11 @@ public class AppUser : IdentityUser
     public int PresenceStatus { get; set; } = 0; // 0=Online, 1=Away, 2=DoNotDisturb, 3=Invisible
     public bool IsAutoAway { get; set; } = false;
     public bool IsGuest { get; set; } = false;
+    // Forum-backed users are provisioned via the XenForo shoutbox SSO flow and
+    // are keyed to a XenForo user id. They are also IsGuest=true (no email/password
+    // of their own) but must be exempt from guest cleanup and restricted to the
+    // shoutbox server — see TokenService (forumBacked claim) and GuestCleanupService.
+    public bool IsForumBacked { get; set; } = false;
     public DateTime? LastActiveAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

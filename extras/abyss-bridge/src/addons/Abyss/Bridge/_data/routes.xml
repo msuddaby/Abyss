@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <routes>
   <route route_type="public" route_prefix="abyss-link" controller="Abyss\Bridge:Link"/>
+  <route route_type="public" route_prefix="abyss-shoutbox" controller="Abyss\Bridge:Shoutbox"/>
   <route route_type="api" route_prefix="abyss-threads" controller="Abyss\Bridge:Threads"/>
 </routes>

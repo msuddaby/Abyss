@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useVoiceStore, useAuthStore } from '@abyss/shared';
-import { getScreenVideoStream, getLocalScreenStream, requestWatch, stopWatching, setScreenAudioVolume } from '../hooks/useWebRTC';
+import { getScreenVideoTrack, getLocalScreenTrack, requestWatch, stopWatching, setScreenAudioVolume } from '../hooks/useWebRTC';
 
 export default function ScreenShareView() {
   const activeSharers = useVoiceStore((s) => s.activeSharers);
@@ -66,27 +66,32 @@ export default function ScreenShareView() {
     const video = videoRef.current;
     if (!video || !watchingUserId) return;
 
-    const stream = isWatchingSelf
-      ? getLocalScreenStream()
-      : getScreenVideoStream(watchingUserId);
+    const track = isWatchingSelf
+      ? getLocalScreenTrack()
+      : getScreenVideoTrack(watchingUserId);
 
-    if (!stream) {
+    if (!track) {
       video.srcObject = null;
       return;
     }
 
-    video.srcObject = stream;
+    // attach() (rather than assigning srcObject) is what registers the element
+    // with adaptiveStream. Without it the SDK sees no attached elements, reports
+    // the video as hidden/0x0 and the SFU drops us to the lowest layer.
+    track.attach(video);
 
-    // Apply volume (unmute after autoplay succeeds)
+    // Screen-share audio arrives as a separate ScreenShareAudio track on its own
+    // audio element, so this <video> is video-only. Leave it muted (attach() sets
+    // that, and it is what keeps autoplay from being blocked) and route volume to
+    // the audio element instead.
     if (!isWatchingSelf) {
-      video.volume = volume;
-      video.muted = volume === 0;
       setScreenAudioVolume(watchingUserId, volume);
     }
 
+    const videoTrack = track.mediaStreamTrack;
+
     const tryPlay = () => {
-      // Check if stream and tracks are still active before playing
-      const videoTrack = stream.getVideoTracks()[0];
+      // Check if the track is still active before playing
       if (!videoTrack || videoTrack.readyState === 'ended') {
         console.log('Screen share track ended, skipping play');
         return;
@@ -115,7 +120,6 @@ export default function ScreenShareView() {
     video.addEventListener('loadedmetadata', tryPlay);
 
     // Handle track unmute — tracks may start muted during renegotiation
-    const videoTrack = stream.getVideoTracks()[0];
     const onUnmute = () => tryPlay();
     if (videoTrack) {
       videoTrack.addEventListener('unmute', onUnmute);
@@ -126,6 +130,7 @@ export default function ScreenShareView() {
       if (videoTrack) {
         videoTrack.removeEventListener('unmute', onUnmute);
       }
+      track.detach(video);
     };
   }, [watchingUserId, isWatchingSelf, screenStreamVersion]);
 
@@ -209,7 +214,7 @@ export default function ScreenShareView() {
             className="screen-share-video"
             autoPlay
             playsInline
-            muted={isWatchingSelf || volume === 0}
+            muted
           />
         </div>
         {otherSharers.length > 0 && (

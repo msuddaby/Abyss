@@ -23,11 +23,11 @@ import {
   sfuUnpublishScreenShare,
   sfuPublishCamera,
   sfuUnpublishCamera,
-  getSfuScreenStream,
-  getSfuCameraStream,
-  getSfuLocalCameraStream,
-  getSfuLocalScreenStream,
   getSfuLocalMicStream,
+  getSfuScreenTrack,
+  getSfuCameraTrack,
+  getSfuLocalScreenTrack,
+  getSfuLocalCameraTrack,
   sfuUpdateScreenShareQuality,
   sfuUpdateCameraQuality,
   sfuSetScreenShareAudioSubscribed,
@@ -39,7 +39,7 @@ import {
   getLiveKitHealth,
   sfuTriggerRecovery,
 } from "@abyss/shared";
-import type { CameraQuality, ScreenShareQuality } from "@abyss/shared";
+import type { CameraQuality, ScreenShareQuality, ScreenSharePreset } from "@abyss/shared";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // SFU-only voice orchestrator.
@@ -106,11 +106,15 @@ const CAMERA_QUALITY_CONSTRAINTS: Record<CameraQuality, { width: number; height:
   'very-high': { width: 1920, height: 1080, frameRate: 30, maxBitrate: 3_000_000 },
 };
 
-const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, { frameRate: number; maxBitrate: number }> = {
-  'quality':     { frameRate: 5,  maxBitrate: 1_500_000 },
-  'balanced':    { frameRate: 15, maxBitrate: 2_500_000 },
-  'motion':      { frameRate: 30, maxBitrate: 4_000_000 },
-  'high-motion': { frameRate: 60, maxBitrate: 6_000_000 },
+// Screen-share tiers carry resolution as well as framerate: without an explicit
+// capture resolution livekit-client pins capture to 1080p30, which makes the
+// 60fps tier unreachable. contentHint/degradationPreference tell the encoder
+// whether to protect motion (gameplay) or detail (text).
+const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, ScreenSharePreset> = {
+  '720p30':  { width: 1280, height: 720,  frameRate: 30, maxBitrate: 3_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
+  '1080p30': { width: 1920, height: 1080, frameRate: 30, maxBitrate: 5_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
+  '1080p60': { width: 1920, height: 1080, frameRate: 60, maxBitrate: 8_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
+  '1440p30': { width: 2560, height: 1440, frameRate: 30, maxBitrate: 8_000_000, contentHint: 'detail', degradationPreference: 'maintain-resolution' },
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -462,20 +466,23 @@ export function setScreenAudioVolume(userId: string, volume: number): void {
   sfuSetScreenAudioVolume(userId, volume);
 }
 
-export function getScreenVideoStream(userId: string): MediaStream | undefined {
-  return getSfuScreenStream(userId);
+// Views render by attaching the LiveKit track itself rather than assigning a
+// MediaStream to srcObject — that is what lets adaptiveStream see the element's
+// size and visibility, and without it the SFU drops the sender to its lowest layer.
+export function getScreenVideoTrack(userId: string) {
+  return getSfuScreenTrack(userId);
 }
 
-export function getLocalScreenStream(): MediaStream | null {
-  return getSfuLocalScreenStream();
+export function getLocalScreenTrack() {
+  return getSfuLocalScreenTrack();
 }
 
-export function getCameraVideoStream(userId: string): MediaStream | undefined {
-  return getSfuCameraStream(userId);
+export function getCameraVideoTrack(userId: string) {
+  return getSfuCameraTrack(userId);
 }
 
-export function getLocalCameraStream(): MediaStream | null {
-  return getSfuLocalCameraStream();
+export function getLocalCameraTrack() {
+  return getSfuLocalCameraTrack();
 }
 
 export function applyUserVolume(peerId: string, volume: number) {
@@ -509,10 +516,7 @@ async function startScreenShareInternal() {
     // getUserMedia+chromeMediaSource internally because desktopCapturer.getSources
     // crashes PipeWire on many setups.
     const screenPreset = SCREEN_SHARE_QUALITY_CONSTRAINTS[voiceState.screenShareQuality];
-    await sfuPublishScreenShare({
-      maxFramerate: screenPreset.frameRate,
-      maxBitrate: screenPreset.maxBitrate,
-    });
+    await sfuPublishScreenShare(screenPreset);
     voiceState.setScreenSharing(true);
     voiceState.bumpScreenStreamVersion();
     const conn = getConnection();
@@ -617,8 +621,11 @@ export async function requestWatch(sharerUserId: string) {
   if (oldWatching && oldWatching !== sharerUserId) {
     sfuSetScreenShareAudioSubscribed(oldWatching, false);
   }
-  sfuSetScreenShareAudioSubscribed(sharerUserId, true);
+  // Set the watch target before subscribing: the TrackSubscribed handler drops
+  // screen audio from anyone we aren't watching, and setSubscribed resolves
+  // asynchronously.
   useVoiceStore.getState().setWatching(sharerUserId);
+  sfuSetScreenShareAudioSubscribed(sharerUserId, true);
   useVoiceStore.getState().bumpScreenStreamVersion();
 }
 
@@ -991,11 +998,8 @@ export function useWebRTC() {
       const preset = SCREEN_SHARE_QUALITY_CONSTRAINTS[state.screenShareQuality];
       (async () => {
         try {
-          await sfuUpdateScreenShareQuality({
-            maxFramerate: preset.frameRate,
-            maxBitrate: preset.maxBitrate,
-          });
-          console.log(`[screenShareQuality] Switched to ${state.screenShareQuality} (${preset.frameRate}fps, ${preset.maxBitrate / 1000}kbps)`);
+          await sfuUpdateScreenShareQuality(preset);
+          console.log(`[screenShareQuality] Switched to ${state.screenShareQuality} (${preset.width}x${preset.height}@${preset.frameRate}fps, ${preset.maxBitrate / 1000}kbps)`);
         } catch (err) {
           console.error("[screenShareQuality] Failed to change screen share quality:", err);
         }

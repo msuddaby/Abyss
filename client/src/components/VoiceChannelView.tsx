@@ -2,7 +2,7 @@ import { Component, useRef, useEffect, useState, useCallback } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
 import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, resilientInvoke } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
-import { useWebRTC, getCameraVideoStream, getLocalCameraStream, requestWatch } from '../hooks/useWebRTC';
+import { useWebRTC, getCameraVideoTrack, getLocalCameraTrack, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { isMobile } from '../stores/mobileStore';
 import QualityPopover from './QualityPopover';
@@ -33,21 +33,21 @@ function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: bool
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
-    const stream = isLocal ? getLocalCameraStream() : getCameraVideoStream(userId);
-    if (stream) {
-      if (video.srcObject !== stream) {
-        video.srcObject = stream;
-      }
-      // Clear srcObject when the last video track ends (e.g. camera stopped remotely)
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        const onEnded = () => { video.srcObject = null; };
-        videoTrack.addEventListener('ended', onEnded);
-        return () => videoTrack.removeEventListener('ended', onEnded);
-      }
-    } else {
+    const track = isLocal ? getLocalCameraTrack() : getCameraVideoTrack(userId);
+    if (!track) {
       video.srcObject = null;
+      return;
     }
+    // attach() keeps adaptiveStream informed of this tile's size and visibility.
+    track.attach(video);
+    // Clear srcObject when the track ends (e.g. camera stopped remotely)
+    const videoTrack = track.mediaStreamTrack;
+    const onEnded = () => { video.srcObject = null; };
+    videoTrack?.addEventListener('ended', onEnded);
+    return () => {
+      videoTrack?.removeEventListener('ended', onEnded);
+      track.detach(video);
+    };
   }, [userId, isLocal, version]);
 
   return (
@@ -56,7 +56,9 @@ function VideoTile({ userId, isLocal, version }: { userId: string; isLocal: bool
       className="vcv-video"
       autoPlay
       playsInline
-      muted={isLocal}
+      // Camera tracks never carry audio (mic is a separate track), so keep the
+      // element muted — attach() relies on that to avoid autoplay blocks.
+      muted
     />
   );
 }

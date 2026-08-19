@@ -6,8 +6,10 @@ import {
   ExternalE2EEKeyProvider,
   LocalVideoTrack,
   type RemoteTrack,
+  type RemoteVideoTrack,
   type RemoteParticipant,
   type RemoteTrackPublication,
+  type VideoCodec,
 } from 'livekit-client';
 import { useVoiceStore } from '../stores/voiceStore.js';
 import { useServerStore } from '../stores/serverStore.js';
@@ -54,6 +56,24 @@ const sfuGainNodes = new Map<string, SfuGainEntry>();
 const sfuScreenStreams = new Map<string, MediaStream>();
 const sfuCameraStreams = new Map<string, MediaStream>();
 
+// The underlying LiveKit tracks behind the streams above. adaptiveStream only
+// learns an element's size and visibility through `track.attach()`, so views
+// must attach the track itself rather than assigning `srcObject` from the
+// MediaStream — otherwise `elementInfos` stays empty, the SDK reports the video
+// as hidden/0x0 and the SFU drops us to the lowest layer (or pauses the track).
+const sfuScreenTracks = new Map<string, RemoteVideoTrack>();
+const sfuCameraTracks = new Map<string, RemoteVideoTrack>();
+
+/** Capture + encode settings for one screen-share quality tier. */
+export interface ScreenSharePreset {
+  width: number;
+  height: number;
+  frameRate: number;
+  maxBitrate: number;
+  contentHint: 'motion' | 'detail';
+  degradationPreference: RTCDegradationPreference;
+}
+
 export async function connectToLiveKit(channelId: string): Promise<void> {
   const t0 = performance.now();
   const voiceState = useVoiceStore.getState();
@@ -90,8 +110,16 @@ export async function connectToLiveKit(channelId: string): Promise<void> {
 
     // Create room (with E2EE if available)
     const roomOptions: ConstructorParameters<typeof Room>[0] = {
-      adaptiveStream: true,
+      // `pixelDensity: 'screen'` makes a HiDPI viewer ask for the full-resolution
+      // layer instead of a half-scale one for the same CSS-pixel element size.
+      adaptiveStream: { pixelDensity: 'screen' },
       dynacast: true,
+      publishDefaults: {
+        // Build-time override (VITE_* vars are inlined by Vite, so switching
+        // codecs needs a rebuild, not a code change). VP8 is the safe default:
+        // widest hardware support and no SVC interaction with the E2EE worker.
+        videoCodec: ((import.meta as any).env?.VITE_LK_VIDEO_CODEC as VideoCodec) ?? 'vp8',
+      },
       audioCaptureDefaults: {
         autoGainControl: voiceState.autoGainControl,
         echoCancellation: voiceState.echoCancellation,
@@ -200,6 +228,14 @@ function setupRoomListeners(room: Room): void {
   ) => {
     if (track.kind === Track.Kind.Audio) {
       const isScreenAudio = publication.source === Track.Source.ScreenShareAudio;
+      if (isScreenAudio && useVoiceStore.getState().watchingUserId !== participant.identity) {
+        // Not watching this participant, so their screen audio must not play.
+        // TrackPublished only fires for tracks published after we joined, so a
+        // share that was already running when we joined lands here instead.
+        console.log('[livekit] Dropping unwatched screen audio from:', participant.identity);
+        publication.setSubscribed(false);
+        return;
+      }
       const audioElement = track.attach();
       document.body.appendChild(audioElement);
       const voiceState = useVoiceStore.getState();
@@ -245,17 +281,16 @@ function setupRoomListeners(room: Room): void {
       if (source === Track.Source.ScreenShare) {
         console.log('[livekit] Screen share track subscribed from:', participant.identity);
         sfuScreenStreams.set(participant.identity, mediaStream);
-        const voiceState = useVoiceStore.getState();
-        // Auto-watch if we don't have a current watch target
-        if (!voiceState.watchingUserId) {
-          voiceState.setWatching(participant.identity);
-          // Subscribe to this participant's screen share audio now that we're watching
-          sfuSetScreenShareAudioSubscribed(participant.identity, true);
-        }
-        voiceState.bumpScreenStreamVersion();
+        sfuScreenTracks.set(participant.identity, track as RemoteVideoTrack);
+        // Deliberately no auto-watch: ScreenShareView shows a "Watch Stream"
+        // picker instead, and tuning in is what subscribes the share's audio.
+        // adaptiveStream keeps the unwatched video track paused, so leaving it
+        // subscribed costs no bandwidth.
+        useVoiceStore.getState().bumpScreenStreamVersion();
       } else if (source === Track.Source.Camera) {
         console.log('[livekit] Camera track subscribed from:', participant.identity);
         sfuCameraStreams.set(participant.identity, mediaStream);
+        sfuCameraTracks.set(participant.identity, track as RemoteVideoTrack);
         useVoiceStore.getState().bumpCameraStreamVersion();
       }
     }
@@ -287,6 +322,7 @@ function setupRoomListeners(room: Room): void {
       if (source === Track.Source.ScreenShare) {
         console.log('[livekit] Screen share track unsubscribed from:', participant.identity);
         sfuScreenStreams.delete(participant.identity);
+        sfuScreenTracks.delete(participant.identity);
         const voiceState = useVoiceStore.getState();
         if (voiceState.watchingUserId === participant.identity) {
           voiceState.setWatching(null);
@@ -295,6 +331,7 @@ function setupRoomListeners(room: Room): void {
       } else if (source === Track.Source.Camera) {
         console.log('[livekit] Camera track unsubscribed from:', participant.identity);
         sfuCameraStreams.delete(participant.identity);
+        sfuCameraTracks.delete(participant.identity);
         useVoiceStore.getState().bumpCameraStreamVersion();
       }
     }
@@ -508,12 +545,11 @@ export async function sfuSetOutputDevice(deviceId: string): Promise<void> {
   for (const audio of sfuScreenAudioElements.values()) await apply(audio);
 }
 
-export async function sfuPublishScreenShare(opts?: {
-  maxFramerate?: number;
-  maxBitrate?: number;
-}): Promise<void> {
+export async function sfuPublishScreenShare(opts: ScreenSharePreset): Promise<void> {
   if (!currentRoom) return;
   console.log('[livekit] Publishing screen share', opts);
+
+  const encoding = { maxBitrate: opts.maxBitrate, maxFramerate: opts.frameRate };
 
   // On Linux Electron, desktopCapturer.getSources crashes PipeWire, so getDisplayMedia
   // (used internally by setScreenShareEnabled) is unavailable. Capture via
@@ -524,12 +560,18 @@ export async function sfuPublishScreenShare(opts?: {
       video: {
         mandatory: {
           chromeMediaSource: 'desktop',
-          maxFrameRate: opts?.maxFramerate ?? 30,
+          // Without these the desktop is captured at full native resolution and
+          // then squeezed into the bitrate ceiling, which looks like mush on
+          // anything above 1080p.
+          maxWidth: opts.width,
+          maxHeight: opts.height,
+          maxFrameRate: opts.frameRate,
         },
       } as any,
       audio: false,
     });
     const mediaTrack = stream.getVideoTracks()[0];
+    mediaTrack.contentHint = opts.contentHint;
     linuxScreenShareStream = stream;
     linuxScreenShareTrack = new LocalVideoTrack(mediaTrack, undefined, true);
     mediaTrack.onended = () => {
@@ -537,27 +579,42 @@ export async function sfuPublishScreenShare(opts?: {
     };
     await currentRoom.localParticipant.publishTrack(linuxScreenShareTrack, {
       source: Track.Source.ScreenShare,
-      videoEncoding: opts?.maxBitrate ? {
-        maxBitrate: opts.maxBitrate,
-        maxFramerate: opts.maxFramerate,
-      } : undefined,
+      // Must be screenShareEncoding, not videoEncoding: computeVideoEncodings()
+      // reads screenShareEncoding for ScreenShare sources and discards
+      // videoEncoding entirely, silently falling back to the library default
+      // of 1080p15 @ 2.5 Mbps.
+      screenShareEncoding: encoding,
+      degradationPreference: opts.degradationPreference,
     });
     return;
   }
 
+  // Without an explicit `resolution` livekit-client pins capture to
+  // ScreenSharePresets.h1080fps30, which caps the *capture* framerate at 30 and
+  // makes the 60fps tier unreachable.
+  const captureOpts = {
+    resolution: { width: opts.width, height: opts.height, frameRate: opts.frameRate },
+    contentHint: opts.contentHint,
+  };
   const publishOpts = {
-    screenShareEncoding: opts?.maxBitrate ? {
-      maxBitrate: opts.maxBitrate,
-      maxFramerate: opts.maxFramerate,
-    } : undefined,
+    screenShareEncoding: encoding,
+    degradationPreference: opts.degradationPreference,
   };
   try {
-    await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: true }, publishOpts);
+    await currentRoom.localParticipant.setScreenShareEnabled(
+      true,
+      { ...captureOpts, audio: true },
+      publishOpts,
+    );
   } catch (err: any) {
     if (err?.name === 'NotSupportedError') {
       // Audio capture via getDisplayMedia is not supported on this platform
       console.warn('[livekit] Screen share audio not supported, retrying without audio');
-      await currentRoom.localParticipant.setScreenShareEnabled(true, { audio: false }, publishOpts);
+      await currentRoom.localParticipant.setScreenShareEnabled(
+        true,
+        { ...captureOpts, audio: false },
+        publishOpts,
+      );
     } else {
       throw err;
     }
@@ -616,6 +673,29 @@ export function getSfuCameraStream(userId: string): MediaStream | undefined {
   return sfuCameraStreams.get(userId);
 }
 
+// Track accessors for adaptiveStream-correct rendering. Views should call
+// `track.attach(videoEl)` / `track.detach(videoEl)` instead of assigning
+// srcObject, so the SDK can report the element's real size and visibility.
+export function getSfuScreenTrack(userId: string): RemoteVideoTrack | undefined {
+  return sfuScreenTracks.get(userId);
+}
+
+export function getSfuCameraTrack(userId: string): RemoteVideoTrack | undefined {
+  return sfuCameraTracks.get(userId);
+}
+
+export function getSfuLocalScreenTrack(): LocalVideoTrack | null {
+  if (!currentRoom) return null;
+  const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+  return (pub?.track as LocalVideoTrack | undefined) ?? null;
+}
+
+export function getSfuLocalCameraTrack(): LocalVideoTrack | null {
+  if (!currentRoom) return null;
+  const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.Camera);
+  return (pub?.track as LocalVideoTrack | undefined) ?? null;
+}
+
 // Cached local streams — avoids creating new MediaStream objects each call
 // which would cause constant video element re-assignment
 let cachedLocalCameraStream: MediaStream | null = null;
@@ -660,25 +740,45 @@ export function getSfuLocalMicStream(): MediaStream | null {
   return new MediaStream([track]);
 }
 
-export async function sfuUpdateScreenShareQuality(opts: {
-  maxFramerate: number;
-  maxBitrate: number;
-}): Promise<void> {
+export async function sfuUpdateScreenShareQuality(opts: ScreenSharePreset): Promise<void> {
   if (!currentRoom) return;
   const pub = currentRoom.localParticipant.getTrackPublication(Track.Source.ScreenShare);
-  if (!pub) return;
-  console.log('[livekit] Updating screen share quality — re-publishing', opts);
-  // LiveKit doesn't expose a direct encoding update API on LocalTrackPublication,
-  // so we re-publish the screen share with the new encoding settings.
-  await currentRoom.localParticipant.setScreenShareEnabled(false);
-  await currentRoom.localParticipant.setScreenShareEnabled(true, {
-    audio: true,
-  }, {
-    screenShareEncoding: {
-      maxBitrate: opts.maxBitrate,
-      maxFramerate: opts.maxFramerate,
-    },
-  });
+  const track = pub?.track as LocalVideoTrack | undefined;
+  if (!track) return;
+  console.log('[livekit] Updating screen share quality in place', opts);
+
+  // Reconfigure the live track rather than re-publishing. Re-publishing re-opens
+  // the OS picker on every quality change, and on Linux it would route through
+  // setScreenShareEnabled — the exact API the Linux capture branch exists to
+  // avoid — leaving linuxScreenShareTrack dangling.
+  try {
+    await track.mediaStreamTrack.applyConstraints({
+      width: { ideal: opts.width },
+      height: { ideal: opts.height },
+      frameRate: { ideal: opts.frameRate },
+    });
+    track.mediaStreamTrack.contentHint = opts.contentHint;
+    await track.setDegradationPreference(opts.degradationPreference);
+
+    const sender = track.sender;
+    if (sender) {
+      const params = sender.getParameters();
+      for (const enc of params.encodings ?? []) {
+        // Simulcast publishes several encodings; give each its share of the
+        // budget based on how far down it is scaled.
+        const down = enc.scaleResolutionDownBy ?? 1;
+        enc.maxBitrate = Math.floor(opts.maxBitrate / (down * down));
+        enc.maxFramerate = opts.frameRate;
+      }
+      await sender.setParameters(params);
+    }
+  } catch (err) {
+    console.warn('[livekit] In-place quality update failed, re-publishing', err);
+    await sfuUnpublishScreenShare();
+    await sfuPublishScreenShare(opts);
+    // Re-publishing swaps in a new track object, so views must re-attach.
+    useVoiceStore.getState().bumpScreenStreamVersion();
+  }
 }
 
 export async function sfuUpdateCameraQuality(opts: {
@@ -768,6 +868,8 @@ function cleanup(): void {
   sfuScreenAudioElements.clear();
   sfuScreenStreams.clear();
   sfuCameraStreams.clear();
+  sfuScreenTracks.clear();
+  sfuCameraTracks.clear();
   linuxScreenShareStream?.getTracks().forEach((t) => t.stop());
   linuxScreenShareTrack = null;
   linuxScreenShareStream = null;

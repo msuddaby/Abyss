@@ -1,0 +1,57 @@
+/* Embed-specific layout overrides for the shoutbox widget. The widget reuses
+   the global App.css component styles (message rows, composer, etc.) but must
+   fill the iframe viewport instead of the full Discord-style app shell. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.shoutbox-widget {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+/* MessageList (.message-list) must grow and own the scroll area. */
+.shoutbox-widget .message-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.shoutbox-header {
+  flex: 0 0 auto;
+}
+
+.shoutbox-status {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 1rem;
+  text-align: center;
+  color: var(--text-muted, #b5bac1);
+}
+
+.shoutbox-placeholder-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.shoutbox-placeholder-text {
+  font-size: 0.9rem;
+}

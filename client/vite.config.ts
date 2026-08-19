@@ -21,6 +21,13 @@ export default defineConfig({
   ],
   build: {
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        // Embeddable single-channel shoutbox widget (XenForo iframe target).
+        widget: path.resolve(__dirname, 'widget.html'),
+      },
+    },
   },
   envDir: path.resolve(__dirname, '..'),
   base: isNative ? './' : '/',

@@ -2,7 +2,9 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -20,6 +22,8 @@ public record CreateForumTopicRequest(Guid StartMessageId, Guid EndMessageId, in
 public record CreateForumTopicResponse(int ThreadId, string Url);
 public record SubscribeMirrorRequest(int NodeId, string? Title);
 public record WebhookEnvelope(string Event, string EventId, XfPostEvent Data);
+public record ShoutboxSessionRequest(string Token);
+public record ShoutboxSessionResponse(string Token, string RefreshToken, Guid ServerId, Guid ChannelId, UserDto User);
 
 [ApiController]
 [Route("api/xenforo")]
@@ -29,6 +33,8 @@ public class XenForoController : ControllerBase
     private static readonly TimeSpan LinkNonceTtl = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NodesCacheTtl = TimeSpan.FromMinutes(5);
     private const string NodesCacheKey = "xenforo:nodes";
+    private const string ShoutboxServerIdKey = "ShoutboxServerId";
+    private const string ShoutboxChannelIdKey = "ShoutboxChannelId";
 
     private readonly AppDbContext _db;
     private readonly PermissionService _perms;
@@ -36,6 +42,8 @@ public class XenForoController : ControllerBase
     private readonly XenForoMirrorService _mirror;
     private readonly IMemoryCache _cache;
     private readonly IHubContext<ChatHub> _hub;
+    private readonly UserManager<AppUser> _userManager;
+    private readonly TokenService _tokenService;
     private readonly ILogger<XenForoController> _logger;
 
     public XenForoController(
@@ -45,6 +53,8 @@ public class XenForoController : ControllerBase
         XenForoMirrorService mirror,
         IMemoryCache cache,
         IHubContext<ChatHub> hub,
+        UserManager<AppUser> userManager,
+        TokenService tokenService,
         ILogger<XenForoController> logger)
     {
         _db = db;
@@ -53,6 +63,8 @@ public class XenForoController : ControllerBase
         _mirror = mirror;
         _cache = cache;
         _hub = hub;
+        _userManager = userManager;
+        _tokenService = tokenService;
         _logger = logger;
     }
 
@@ -189,6 +201,146 @@ public class XenForoController : ControllerBase
             """;
         return new ContentResult { Content = html, ContentType = "text/html; charset=utf-8", StatusCode = 200 };
     }
+
+    // ─── Shoutbox session (forum SSO → single-channel embed) ─────────────
+    //
+    // The AbyssBridge XF addon mints a short-lived JWT (token_use=shoutbox) for
+    // the logged-in forum user. We verify it, find-or-create a persistent
+    // forum-backed Abyss user keyed to the XF user id, ensure membership in the
+    // locked-down shoutbox server, and issue a normal Abyss session.
+
+    [AllowAnonymous]
+    [EnableRateLimiting("auth")]
+    [HttpPost("shoutbox/session")]
+    public async Task<ActionResult<ShoutboxSessionResponse>> ShoutboxSession(ShoutboxSessionRequest req)
+    {
+        if (!_bridge.IsConfigured) return Problem("XenForo bridge not configured.", statusCode: 503);
+
+        var serverId = await ReadConfigGuidAsync(ShoutboxServerIdKey);
+        var channelId = await ReadConfigGuidAsync(ShoutboxChannelIdKey);
+        if (serverId == null || channelId == null)
+            return Problem("Shoutbox is not configured.", statusCode: 503);
+
+        ShoutboxIdentity identity;
+        try
+        {
+            identity = _bridge.VerifyShoutboxJwt(req.Token);
+        }
+        catch (SecurityTokenException ex)
+        {
+            _logger.LogWarning("Shoutbox JWT validation failed: {Message}", ex.Message);
+            return BadRequest("Invalid token");
+        }
+
+        if (identity.IsBanned)
+            return StatusCode(StatusCodes.Status403Forbidden, "Your forum account is banned.");
+
+        var displayName = string.IsNullOrWhiteSpace(identity.DisplayName) ? identity.XfUsername : identity.DisplayName!;
+        if (displayName.Length > 32) displayName = displayName[..32];
+
+        // Find-or-create the forum-backed user, keyed to the XF user id.
+        var conn = await _db.XenForoConnections.FirstOrDefaultAsync(c => c.XfUserId == identity.XfUserId);
+        AppUser? user = conn != null ? await _userManager.FindByIdAsync(conn.OwnerId) : null;
+
+        if (user == null)
+        {
+            user = new AppUser
+            {
+                // Namespaced username — never collides with human-chosen names.
+                // The human-readable forum name lives in DisplayName.
+                UserName = $"xf_{identity.XfUserId}",
+                DisplayName = displayName,
+                AvatarUrl = identity.AvatarUrl,
+                IsGuest = true,
+                IsForumBacked = true,
+                LastActiveAt = DateTime.UtcNow,
+            };
+            var createResult = await _userManager.CreateAsync(user, TokenService.GenerateRefreshToken());
+            if (!createResult.Succeeded)
+            {
+                // Lost a concurrent first-login race (unique username/XfUserId index). Re-resolve.
+                conn = await _db.XenForoConnections.FirstOrDefaultAsync(c => c.XfUserId == identity.XfUserId);
+                user = conn != null ? await _userManager.FindByIdAsync(conn.OwnerId) : null;
+                if (user == null)
+                {
+                    _logger.LogWarning("Failed to provision shoutbox user for xf {XfUserId}: {Errors}",
+                        identity.XfUserId, string.Join("; ", createResult.Errors.Select(e => e.Description)));
+                    return Problem("Could not provision shoutbox user.", statusCode: 500);
+                }
+            }
+            else
+            {
+                conn = new XenForoConnection
+                {
+                    OwnerId = user.Id,
+                    XfUserId = identity.XfUserId,
+                    XfUsername = identity.XfUsername,
+                    LinkedAt = DateTime.UtcNow,
+                };
+                _db.XenForoConnections.Add(conn);
+                try
+                {
+                    await _db.SaveChangesAsync();
+                }
+                catch (DbUpdateException)
+                {
+                    // Lost the race after CreateAsync succeeded; drop the orphan user and reuse the winner.
+                    await _userManager.DeleteAsync(user);
+                    conn = await _db.XenForoConnections.FirstOrDefaultAsync(c => c.XfUserId == identity.XfUserId);
+                    user = conn != null ? await _userManager.FindByIdAsync(conn.OwnerId) : null;
+                    if (user == null) return Problem("Could not provision shoutbox user.", statusCode: 500);
+                }
+            }
+        }
+
+        // Abyss-side ban on the shoutbox server.
+        if (await _perms.IsBannedAsync(serverId.Value, user.Id))
+            return StatusCode(StatusCodes.Status403Forbidden, "You are banned from the shoutbox.");
+
+        // Sync forum profile each session.
+        user.DisplayName = displayName;
+        user.AvatarUrl = identity.AvatarUrl;
+        user.LastActiveAt = DateTime.UtcNow;
+        if (conn != null)
+        {
+            conn.XfUsername = identity.XfUsername;
+            conn.LinkedAt = DateTime.UtcNow;
+        }
+
+        // Ensure membership in the shoutbox server.
+        var isMember = await _db.ServerMembers.AnyAsync(sm => sm.ServerId == serverId.Value && sm.UserId == user.Id);
+        if (!isMember)
+            _db.ServerMembers.Add(new ServerMember { ServerId = serverId.Value, UserId = user.Id });
+
+        // Issue tokens (same pattern as AuthController.CreateAuthResponseAsync / InvitesController.GuestJoin).
+        var refresh = TokenService.CreateRefreshToken(user, out var refreshToken);
+        _db.RefreshTokens.Add(refresh);
+        await _db.SaveChangesAsync();
+
+        // Broadcast the new member so existing shoutbox clients update their list.
+        if (!isMember)
+        {
+            var defaultRoles = await _db.ServerRoles
+                .Where(r => r.ServerId == serverId.Value && r.IsDefault)
+                .Select(r => new ServerRoleDto(r.Id, r.Name, r.Color, r.Permissions, r.Position, r.IsDefault, r.DisplaySeparately))
+                .ToListAsync();
+            var joinedDto = new ServerMemberDto(serverId.Value, user.Id, ToUserDto(user), false, defaultRoles, DateTime.UtcNow);
+            await _hub.Clients.Group($"server:{serverId.Value}").SendAsync("MemberJoined", serverId.Value.ToString(), joinedDto);
+        }
+
+        var accessToken = _tokenService.CreateToken(user);
+        return Ok(new ShoutboxSessionResponse(accessToken, refreshToken, serverId.Value, channelId.Value, ToUserDto(user)));
+    }
+
+    private async Task<Guid?> ReadConfigGuidAsync(string key)
+    {
+        var row = await _db.AppConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.Key == key);
+        if (row?.Value == null) return null;
+        return Guid.TryParse(row.Value, out var id) ? id : null;
+    }
+
+    private static UserDto ToUserDto(AppUser user) =>
+        new(user.Id, user.UserName!, user.DisplayName, user.AvatarUrl, user.Status, user.Bio, user.PresenceStatus, IsGuest: user.IsGuest);
 
     // ─── Claim flow (Abyss issues a signed JWT for the XF addon to verify) ─
 

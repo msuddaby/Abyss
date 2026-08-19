@@ -66,6 +66,8 @@ public class DmController : ControllerBase
     [HttpGet("search")]
     public async Task<ActionResult<List<UserDto>>> SearchUsers([FromQuery] string q)
     {
+        // Forum-backed shoutbox users are confined to the shoutbox channel.
+        if (User.HasClaim("forumBacked", "true")) return Ok(new List<UserDto>());
         if (string.IsNullOrWhiteSpace(q) || q.Length < 1) return Ok(new List<UserDto>());
 
         // Get friend IDs (accepted friendships)
@@ -102,6 +104,8 @@ public class DmController : ControllerBase
     [HttpPost("{userId}")]
     public async Task<ActionResult<DmChannelDto>> CreateOrGetDm(string userId)
     {
+        // Forum-backed shoutbox users are confined to the shoutbox channel.
+        if (User.HasClaim("forumBacked", "true")) return Forbid();
         if (userId == UserId) return BadRequest("Cannot DM yourself");
 
         var otherUser = await _db.Users.FindAsync(userId);

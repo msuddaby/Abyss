@@ -2,19 +2,13 @@ import { useEffect, useRef } from 'react';
 import { useVoiceStore } from '@abyss/shared';
 import type { CameraQuality, ScreenShareQuality } from '@abyss/shared';
 import { isMobile } from '../stores/mobileStore';
+import { SCREEN_OPTIONS } from '../constants/screenShareTiers';
 
 const CAMERA_OPTIONS: { value: CameraQuality; label: string; detail: string }[] = [
   { value: 'low', label: 'Low', detail: '360p 15fps' },
   { value: 'medium', label: 'Medium', detail: '480p 30fps' },
   { value: 'high', label: 'High', detail: '720p 30fps' },
   { value: 'very-high', label: 'Ultra', detail: '1080p 30fps' },
-];
-
-const SCREEN_OPTIONS: { value: ScreenShareQuality; label: string; detail: string }[] = [
-  { value: 'quality', label: 'Quality', detail: '5fps' },
-  { value: 'balanced', label: 'Balanced', detail: '15fps' },
-  { value: 'motion', label: 'Motion', detail: '30fps' },
-  { value: 'high-motion', label: 'High Motion', detail: '60fps' },
 ];
 
 interface QualityPopoverProps {

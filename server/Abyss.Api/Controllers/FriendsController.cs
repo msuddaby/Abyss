@@ -71,6 +71,8 @@ public class FriendsController : ControllerBase
     [HttpPost("request/{userId}")]
     public async Task<IActionResult> SendRequest(string userId)
     {
+        // Forum-backed shoutbox users are confined to the shoutbox channel.
+        if (User.HasClaim("forumBacked", "true")) return Forbid();
         if (userId == UserId) return BadRequest("Cannot friend yourself");
 
         var targetUser = await _db.Users.FindAsync(userId);

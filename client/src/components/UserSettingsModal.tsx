@@ -6,6 +6,7 @@ import axios from "axios";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
 import { VoiceDebugPanel } from "./VoiceDebugPanel";
+import { SCREEN_OPTIONS } from "../constants/screenShareTiers";
 import SettingsModal from "./SettingsModal";
 import { isMobile } from "../stores/mobileStore";
 import type { SettingsTab as SettingsTabDef } from "./SettingsModal";
@@ -84,6 +85,8 @@ export default function UserSettingsModal({
   const inputSensitivity = useVoiceStore((s) => s.inputSensitivity);
   const setInputSensitivity = useVoiceStore((s) => s.setInputSensitivity);
   const cameraDeviceId = useVoiceStore((s) => s.cameraDeviceId);
+  const screenShareQuality = useVoiceStore((s) => s.screenShareQuality);
+  const setScreenShareQuality = useVoiceStore((s) => s.setScreenShareQuality);
   const setCameraDeviceId = useVoiceStore((s) => s.setCameraDeviceId);
   const voiceChatDesktopNotify = useVoiceStore((s) => s.voiceChatDesktopNotify);
   const setVoiceChatDesktopNotify = useVoiceStore((s) => s.setVoiceChatDesktopNotify);
@@ -1198,6 +1201,28 @@ export default function UserSettingsModal({
                         ))}
                     </select>
                   </label>
+                </div>
+
+                <div className="us-card">
+                  <div className="us-card-title">Screen Share</div>
+                  <label>
+                    Quality
+                    <select
+                      className="settings-select"
+                      value={screenShareQuality}
+                      onChange={(e) => setScreenShareQuality(e.target.value as typeof screenShareQuality)}
+                    >
+                      {SCREEN_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label} — {opt.detail}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <p className="us-hint">
+                    Higher tiers need more upload bandwidth and CPU. Changes apply to the
+                    next share, or immediately if you are already sharing.
+                  </p>
                 </div>
 
                 <div className="us-card">

@@ -64,6 +64,41 @@ Returns `{ "thread_id": 1234, "url": "https://forum.example.com/threads/cool-thr
 
 The first post becomes the thread OP. Ghost posts are authored by the configured ghost user with a small BBCode header showing the original Abyss author's name (and avatar, if provided).
 
+### `GET /abyss-shoutbox`
+
+The iframe target for the embeddable shoutbox. Embed it in any XF template:
+
+```html
+<iframe src="{{ link('abyss-shoutbox') }}" class="abyssShoutbox"
+        style="width:100%;height:480px;border:0;border-radius:8px"></iframe>
+```
+
+- For a **logged-in** visitor: mints a short-lived HS256 JWT
+  (`iss=xenforo`, `aud=abyss`, `token_use=shoutbox`, `sub=<xf user id>`,
+  `xf_username`, `display_name`, `avatar_url`, `xf_is_banned`, `nbf`, `exp`)
+  and redirects the iframe to `{abyssBase}/widget.html#token=<jwt>`. The token
+  rides in the URL fragment so it never lands in a server access log.
+- For a **guest**: redirects to `{abyssBase}/widget.html` with no token; the
+  widget renders its own "log in to chat" placeholder.
+
+The Abyss widget reads the token from `location.hash` and exchanges it at
+`POST /api/xenforo/shoutbox/session`, which find-or-creates a persistent
+forum-backed Abyss user (keyed to the XF user id), confines it to the
+dedicated shoutbox server, and issues an Abyss session.
+
+#### Abyss-side setup (one-time)
+
+1. Create a dedicated **Shoutbox** server in Abyss with a single text channel.
+   Lock its `@everyone` role to only `ViewChannel + ReadMessageHistory +
+   SendMessages + AddReactions` (no management perms) so forum users are
+   contained to that one channel.
+2. Set two `AppConfigs` rows on the Abyss DB: `ShoutboxServerId` and
+   `ShoutboxChannelId` (the GUIDs of that server/channel).
+3. Set `SHOUTBOX_FRAME_ANCESTORS=https://forum.example.com` on the Abyss
+   server (defaults to `XENFORO_BASE_URL` if unset) so `/widget.html` sends a
+   `Content-Security-Policy: frame-ancestors` header allowing the forum to
+   frame it.
+
 ## Notes / gotchas
 
 - The Abyss client opens `/api/xenforo/link/start` with `?access_token=<jwt>&return=<abyss-client-url>`. The Abyss API forwards to this addon's `/abyss/link/start` with its own `nonce` + a `return_url` pointing back at the Abyss API's `LinkCallback`. Abyss's callback then redirects back to the original Abyss client URL with `?linked=1`.
@@ -79,6 +114,7 @@ src/addons/Abyss/Bridge/
 ├── Setup.php
 ├── Util/Jwt.php                    # HS256 sign/verify, no deps
 ├── Pub/Controller/Link.php         # /abyss/link/start, /abyss/link/claim
+├── Pub/Controller/Shoutbox.php     # /abyss-shoutbox (embeddable chat iframe)
 ├── Api/Controller/Threads.php      # POST /api/abyss/threads
 └── _data/
     ├── routes.xml          # public + api routes in one file

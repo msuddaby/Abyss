@@ -31,9 +31,11 @@ public class GuestCleanupService : BackgroundService
 
                 var cutoff = DateTime.UtcNow.AddDays(-7);
 
-                // Find guests inactive for 7+ days
+                // Find guests inactive for 7+ days. Forum-backed users are also
+                // IsGuest, but their identity is keyed to a persistent XenForo
+                // connection — never reap them.
                 var staleGuests = await db.Users
-                    .Where(u => u.IsGuest &&
+                    .Where(u => u.IsGuest && !u.IsForumBacked &&
                         ((u.LastActiveAt != null && u.LastActiveAt < cutoff) ||
                          (u.LastActiveAt == null && u.CreatedAt < cutoff)))
                     .ToListAsync(stoppingToken);

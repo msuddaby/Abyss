@@ -3,7 +3,28 @@ import { getStorage } from '../storage.js';
 
 type VoiceMode = 'voice-activity' | 'push-to-talk';
 export type CameraQuality = 'low' | 'medium' | 'high' | 'very-high';
-export type ScreenShareQuality = 'quality' | 'balanced' | 'motion' | 'high-motion';
+export type ScreenShareQuality = '720p30' | '1080p30' | '1080p60' | '1440p30';
+
+export const DEFAULT_SCREEN_SHARE_QUALITY: ScreenShareQuality = '1080p30';
+
+/**
+ * Older builds persisted framerate-only tier names. Map them onto the closest
+ * resolution-bearing tier so upgrading users don't land on `undefined`.
+ */
+const LEGACY_SCREEN_SHARE_QUALITY: Record<string, ScreenShareQuality> = {
+  quality: '720p30',
+  balanced: '1080p30',
+  motion: '1080p30',
+  'high-motion': '1080p60',
+};
+
+export function normalizeScreenShareQuality(value: string | null | undefined): ScreenShareQuality {
+  if (!value) return DEFAULT_SCREEN_SHARE_QUALITY;
+  if (value === '720p30' || value === '1080p30' || value === '1080p60' || value === '1440p30') {
+    return value;
+  }
+  return LEGACY_SCREEN_SHARE_QUALITY[value] ?? DEFAULT_SCREEN_SHARE_QUALITY;
+}
 export type ConnectionMode = 'connecting' | 'sfu' | 'disconnected';
 
 interface VoiceState {
@@ -345,7 +366,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       return { userVolumes: next };
     }),
   cameraQuality: 'medium' as CameraQuality,
-  screenShareQuality: 'balanced' as ScreenShareQuality,
+  screenShareQuality: DEFAULT_SCREEN_SHARE_QUALITY as ScreenShareQuality,
   setCameraQuality: (quality) => {
     getStorage().setItem('cameraQuality', quality);
     set({ cameraQuality: quality });
@@ -412,7 +433,7 @@ export function hydrateVoiceStore() {
     voiceChatDesktopNotify: boolOr('voiceChatDesktopNotify', false),
     nativeDesktopNotificationsEnabled: boolOr('nativeDesktopNotificationsEnabled', true),
     cameraQuality: (s.getItem('cameraQuality') as CameraQuality) || 'medium',
-    screenShareQuality: (s.getItem('screenShareQuality') as ScreenShareQuality) || 'balanced',
+    screenShareQuality: normalizeScreenShareQuality(s.getItem('screenShareQuality')),
     keybindToggleMute: s.getItem('keybindToggleMute') || 'mod+shift+m',
     keybindToggleDeafen: s.getItem('keybindToggleDeafen') || 'mod+shift+d',
     keybindDisconnect: s.getItem('keybindDisconnect') || 'mod+shift+e',

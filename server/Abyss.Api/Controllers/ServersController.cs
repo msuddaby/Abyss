@@ -51,6 +51,9 @@ public class ServersController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<ServerDto>> Create(CreateServerRequest req)
     {
+        // Forum-backed shoutbox users are confined to the shoutbox channel.
+        if (User.HasClaim("forumBacked", "true")) return Forbid();
+
         var server = new Server
         {
             Id = Guid.NewGuid(),

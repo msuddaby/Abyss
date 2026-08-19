@@ -22,6 +22,8 @@ public record BridgePost(
 
 public record XenForoNodeDto(int NodeId, string Title, string NodeType, int? ParentNodeId);
 
+public record ShoutboxIdentity(int XfUserId, string XfUsername, string? DisplayName, string? AvatarUrl, bool IsBanned);
+
 public record CreateThreadResult(int ThreadId, string Url);
 
 /// <summary>
@@ -277,24 +279,26 @@ public class XenForoBridgeService
         return handler.WriteToken(token);
     }
 
+    // Shared validation parameters for JWTs minted by the XF addon (issuer
+    // "xenforo", audience "abyss", HmacSha256 over the shared secret).
+    private TokenValidationParameters XfInboundTokenParams() => new()
+    {
+        ValidateIssuer = true,
+        ValidIssuer = XfIssuer,
+        ValidateAudience = true,
+        ValidAudience = Issuer,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(_sharedSecret),
+        ClockSkew = TimeSpan.FromSeconds(30),
+    };
+
     /// <summary>Verifies a link JWT issued by the XF addon. Returns (xfUserId, xfUsername).</summary>
     public (int XfUserId, string XfUsername) VerifyLinkJwt(string token, string expectedNonce)
     {
         EnsureConfigured();
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
-        var parameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = XfIssuer,
-            ValidateAudience = true,
-            ValidAudience = Issuer,
-            ValidateLifetime = true,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(_sharedSecret),
-            ClockSkew = TimeSpan.FromSeconds(30),
-        };
-
-        var principal = handler.ValidateToken(token, parameters, out _);
+        var principal = handler.ValidateToken(token, XfInboundTokenParams(), out _);
         var nonceClaim = principal.FindFirst("abyss_link_nonce")?.Value;
         if (!string.Equals(nonceClaim, expectedNonce, StringComparison.Ordinal))
             throw new SecurityTokenException("nonce mismatch");
@@ -305,6 +309,34 @@ public class XenForoBridgeService
 
         var username = principal.FindFirst("xf_username")?.Value ?? string.Empty;
         return (xfUserId, username);
+    }
+
+    /// <summary>
+    /// Verifies a shoutbox-session JWT minted by the XF addon for the logged-in
+    /// forum user. Unlike the link JWT there is no nonce (no pre-existing Abyss
+    /// user); identity comes entirely from the token. The "token_use" claim must
+    /// be "shoutbox" so a captured link JWT can't be replayed against the
+    /// shoutbox session endpoint.
+    /// </summary>
+    public ShoutboxIdentity VerifyShoutboxJwt(string token)
+    {
+        EnsureConfigured();
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
+        var principal = handler.ValidateToken(token, XfInboundTokenParams(), out _);
+
+        if (!string.Equals(principal.FindFirst("token_use")?.Value, "shoutbox", StringComparison.Ordinal))
+            throw new SecurityTokenException("token_use is not shoutbox");
+
+        var sub = principal.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        if (!int.TryParse(sub, out var xfUserId) || xfUserId <= 0)
+            throw new SecurityTokenException("invalid sub");
+
+        var username = principal.FindFirst("xf_username")?.Value ?? string.Empty;
+        var displayName = principal.FindFirst("display_name")?.Value;
+        var avatarUrl = principal.FindFirst("avatar_url")?.Value;
+        var isBanned = string.Equals(principal.FindFirst("xf_is_banned")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+
+        return new ShoutboxIdentity(xfUserId, username, displayName, avatarUrl, isBanned);
     }
 
     private void EnsureConfigured()

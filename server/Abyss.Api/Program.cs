@@ -335,7 +335,19 @@ app.UseRateLimiter();
 // Security headers
 app.Use(async (context, next) =>
 {
-    context.Response.Headers["X-Frame-Options"] = "DENY";
+    // The shoutbox widget (/widget.html) is deliberately embeddable cross-origin
+    // in the forum, so it gets a frame-ancestors CSP instead of X-Frame-Options:DENY.
+    if (context.Request.Path.StartsWithSegments("/widget.html", StringComparison.OrdinalIgnoreCase))
+    {
+        var frameAncestors = (Environment.GetEnvironmentVariable("SHOUTBOX_FRAME_ANCESTORS")
+            ?? Environment.GetEnvironmentVariable("XENFORO_BASE_URL") ?? string.Empty).TrimEnd('/');
+        if (!string.IsNullOrWhiteSpace(frameAncestors))
+            context.Response.Headers["Content-Security-Policy"] = $"frame-ancestors {frameAncestors}";
+    }
+    else
+    {
+        context.Response.Headers["X-Frame-Options"] = "DENY";
+    }
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";
     context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     await next();

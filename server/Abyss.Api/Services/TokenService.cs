@@ -25,6 +25,11 @@ public class TokenService
             claims.Add(new Claim("isGuest", "true"));
         }
 
+        if (user.IsForumBacked)
+        {
+            claims.Add(new Claim("forumBacked", "true"));
+        }
+
         var sysadminUsername = Environment.GetEnvironmentVariable("SYSADMIN_USERNAME");
         if (!string.IsNullOrWhiteSpace(sysadminUsername)
             && string.Equals(user.UserName, sysadminUsername, StringComparison.Ordinal))
