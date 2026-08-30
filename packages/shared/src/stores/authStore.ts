@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
+import api, { postMultipart } from '../services/api.js';
 import { resetConnection } from '../services/signalr.js';
 import { getStorage } from '../storage.js';
 import type { User, Server } from '../types/index.js';
@@ -186,10 +186,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   updateAvatar: async (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await api.post('/auth/avatar', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    const user = res.data;
+    const user = await postMultipart<User>('/auth/avatar', formData);
     getStorage().setItem('user', JSON.stringify(user));
     set({ user });
   },

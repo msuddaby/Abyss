@@ -29,13 +29,6 @@ export function groupReactions(message: Message) {
   return groups;
 }
 
-export function formatFileSize(size: number) {
-  if (!size && size !== 0) return "";
-  if (size < 1024) return `${size} B`;
-  const kb = size / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  if (mb < 1024) return `${mb.toFixed(1)} MB`;
-  const gb = mb / 1024;
-  return `${gb.toFixed(1)} GB`;
-}
+// Lives in @abyss/shared so upload validation can reuse it; re-exported here for
+// the existing call sites.
+export { formatFileSize } from "@abyss/shared";

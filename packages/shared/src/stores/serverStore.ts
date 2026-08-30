@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
+import api, { postMultipart } from '../services/api.js';
 import { resilientInvoke } from '../services/signalr.js';
 import { getStorage } from '../storage.js';
 import type { Server, Channel, ServerMember, ServerRole, ServerBan, AuditLog, CustomEmoji, VoiceUserState, EquippedCosmetics } from '../types/index.js';
@@ -183,10 +183,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
     if (data.joinLeaveMessagesEnabled !== undefined) formData.append('joinLeaveMessagesEnabled', String(data.joinLeaveMessagesEnabled));
     if (data.joinLeaveChannelId !== undefined && data.joinLeaveChannelId !== null) formData.append('joinLeaveChannelId', data.joinLeaveChannelId);
 
-    const res = await api.patch(`/servers/${serverId}`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    const server: Server = res.data;
+    const server = await postMultipart<Server>(`/servers/${serverId}`, formData, { method: 'patch' });
     set((s) => ({
       servers: s.servers.map((sv) => (sv.id === server.id ? server : sv)),
       activeServer: s.activeServer?.id === server.id ? server : s.activeServer,
@@ -608,10 +605,7 @@ export const useServerStore = create<ServerState>((set, get) => ({
   },
 
   uploadEmoji: async (serverId, formData) => {
-    const res = await api.post(`/servers/${serverId}/emojis`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    const emoji: CustomEmoji = res.data;
+    const emoji = await postMultipart<CustomEmoji>(`/servers/${serverId}/emojis`, formData);
     set((s) => s.emojis.some((e) => e.id === emoji.id) ? s : { emojis: [...s.emojis, emoji] });
     return emoji;
   },

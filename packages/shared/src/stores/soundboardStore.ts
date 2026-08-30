@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
+import api, { postMultipart } from '../services/api.js';
 import type { SoundboardClip } from '../types/index.js';
 
 interface SoundboardState {
@@ -29,10 +29,7 @@ export const useSoundboardStore = create<SoundboardState>((set) => ({
   },
 
   uploadClip: async (serverId: string, formData: FormData) => {
-    const res = await api.post(`/servers/${serverId}/soundboard`, formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-    return res.data;
+    return postMultipart<SoundboardClip>(`/servers/${serverId}/soundboard`, formData);
   },
 
   renameClip: async (serverId: string, clipId: string, name: string) => {

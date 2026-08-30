@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, useAppConfigStore, validateSizedFile, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 import AudioTrimmer from './AudioTrimmer';
+import { describeUploadError } from '../utils/uploadErrors';
 import { useModerationStore } from '../stores/moderationStore';
 import SettingsModal from './SettingsModal';
 import type { SettingsTab } from './SettingsModal';
@@ -186,6 +187,8 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [emojiUploading, setEmojiUploading] = useState(false);
   const [emojiError, setEmojiError] = useState('');
 
+  const uploadLimits = useAppConfigStore((s) => s.uploadLimits);
+
   // Soundboard tab state
   const soundboardClips = useSoundboardStore((s) => s.clips);
   const [sbName, setSbName] = useState('');
@@ -194,6 +197,16 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [sbUploading, setSbUploading] = useState(false);
   const [sbError, setSbError] = useState('');
   const sbFileRef = useRef<HTMLInputElement>(null);
+  // Clears every piece of soundboard upload state together. The tab's three
+  // sections are gated on sbFile/sbTrimming independently, so they must always be
+  // reset as a unit or the UI can land in an unrecoverable combination.
+  const resetSbUpload = useCallback(() => {
+    setSbTrimming(false);
+    setSbFile(null);
+    setSbName('');
+    setSbError('');
+    if (sbFileRef.current) sbFileRef.current.value = '';
+  }, []);
   const [sbPreviewAudio, setSbPreviewAudio] = useState<HTMLAudioElement | null>(null);
   const [sbPreviewClipId, setSbPreviewClipId] = useState<string | null>(null);
   const [sbSearch, setSbSearch] = useState('');
@@ -322,8 +335,17 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   };
 
   const handleServerIconChange = (file: File | null) => {
-    setServerIconFile(file);
     setServerError('');
+    if (file) {
+      const check = validateSizedFile(file, uploadLimits.serverIconMaxSize, 'Server icons');
+      if (!check.ok) {
+        setServerError(check.reason);
+        setServerIconFile(null);
+        setServerIconPreview(null);
+        return;
+      }
+    }
+    setServerIconFile(file);
     if (!file) setServerIconPreview(null);
   };
 
@@ -351,8 +373,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
       setServerIconFile(null);
       setServerIconPreview(null);
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: string } })?.response?.data;
-      setServerError(typeof msg === 'string' ? msg : 'Update failed');
+      setServerError(describeUploadError(err));
     } finally {
       setServerSaving(false);
     }
@@ -745,8 +766,18 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                       accept="image/png,image/gif,image/webp"
                       onChange={(e) => {
                         const f = e.target.files?.[0] ?? null;
-                        setEmojiFile(f);
                         setEmojiError('');
+                        if (f) {
+                          const check = validateSizedFile(f, uploadLimits.emojiMaxSize, 'Emoji');
+                          if (!check.ok) {
+                            setEmojiError(check.reason);
+                            setEmojiFile(null);
+                            setEmojiPreview(null);
+                            e.target.value = '';
+                            return;
+                          }
+                        }
+                        setEmojiFile(f);
                         if (f) {
                           const reader = new FileReader();
                           reader.onload = (ev) => setEmojiPreview(ev.target?.result as string);
@@ -785,8 +816,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                           setEmojiFile(null);
                           setEmojiPreview(null);
                         } catch (err: unknown) {
-                          const msg = (err as { response?: { data?: string } })?.response?.data;
-                          setEmojiError(typeof msg === 'string' ? msg : 'Upload failed');
+                          setEmojiError(describeUploadError(err));
                         } finally {
                           setEmojiUploading(false);
                         }
@@ -822,13 +852,21 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                         accept="audio/*"
                         onChange={(e) => {
                           const f = e.target.files?.[0] ?? null;
-                          setSbFile(f);
                           setSbError('');
-                          if (f) {
-                            setSbTrimming(true);
-                            const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\- ]/g, '_').slice(0, 32);
-                            if (base.length >= 2) setSbName(base);
+                          if (!f) {
+                            setSbFile(null);
+                            return;
                           }
+                          const check = validateSizedFile(f, uploadLimits.soundMaxSize, 'Soundboard clips');
+                          if (!check.ok) {
+                            setSbError(check.reason);
+                            if (sbFileRef.current) sbFileRef.current.value = '';
+                            return;
+                          }
+                          setSbFile(f);
+                          setSbTrimming(true);
+                          const base = f.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_\- ]/g, '_').slice(0, 32);
+                          if (base.length >= 2) setSbName(base);
                         }}
                       />
                     </div>
@@ -836,9 +874,13 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                   {sbTrimming && sbFile && (
                     <AudioTrimmer
                       file={sbFile}
-                      maxDuration={5}
+                      maxDuration={uploadLimits.soundMaxDurationSeconds ?? 5}
                       onConfirm={async (trimmedFile) => {
-                        setSbTrimming(false);
+                        if (sbUploading) return;
+                        // Validate BEFORE leaving the trimming state. Dropping out of
+                        // it first would hide the trimmer while sbFile kept the file
+                        // picker hidden too, stranding the user with only the name
+                        // input and no way to recover.
                         if (!sbName.trim()) {
                           setSbError('Please enter a clip name');
                           return;
@@ -850,22 +892,15 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                           fd.append('file', trimmedFile);
                           fd.append('name', sbName);
                           await useSoundboardStore.getState().uploadClip(serverId, fd);
-                          setSbName('');
-                          setSbFile(null);
-                          if (sbFileRef.current) sbFileRef.current.value = '';
+                          resetSbUpload();
                         } catch (err: unknown) {
-                          const msg = (err as { response?: { data?: string } })?.response?.data;
-                          setSbError(typeof msg === 'string' ? msg : 'Upload failed');
+                          // Stay in the trimmer so the user can retry or cancel.
+                          setSbError(describeUploadError(err));
                         } finally {
                           setSbUploading(false);
                         }
                       }}
-                      onCancel={() => {
-                        setSbTrimming(false);
-                        setSbFile(null);
-                        setSbName('');
-                        if (sbFileRef.current) sbFileRef.current.value = '';
-                      }}
+                      onCancel={resetSbUpload}
                     />
                   )}
                   {sbFile && (
@@ -878,6 +913,11 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                         maxLength={32}
                         autoFocus
                       />
+                      {/* Always-available escape hatch: guarantees the user can get
+                          back to the file picker from any state. */}
+                      <button type="button" onClick={resetSbUpload} disabled={sbUploading}>
+                        Cancel
+                      </button>
                     </div>
                   )}
                   {sbUploading && <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Uploading...</p>}

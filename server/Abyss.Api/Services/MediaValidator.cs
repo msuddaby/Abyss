@@ -32,8 +32,21 @@ public class MediaValidator
         long? MaxSize = null,
         HashSet<string>? AllowedExtensions = null,
         HashSet<string>? AllowedMimeTypes = null,
-        bool RequireExtension = true
+        bool RequireExtension = true,
+        // Names this upload kind in user-facing errors ("emoji", "sound", ...).
+        string CategoryLabel = "emoji"
     );
+
+    /// <summary>
+    /// Format a byte count for a user-facing message. Sub-megabyte limits read as
+    /// "256.0KB" rather than a misleading "0.2MB".
+    /// </summary>
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024 * 1024)
+            return $"{bytes / 1024.0:F1}KB";
+        return $"{bytes / (1024.0 * 1024.0):F1}MB";
+    }
 
     /// <summary>
     /// Validate an uploaded file comprehensively with default MediaConfig rules.
@@ -67,7 +80,7 @@ public class MediaValidator
                 return new ValidationResult(false, $"File type '{ext}' is not allowed");
 
             maxSize = options.MaxSize ?? _config.MaxSizesByCategory["default"];
-            category = "emoji";
+            category = options.CategoryLabel;
         }
         else
         {
@@ -85,8 +98,7 @@ public class MediaValidator
         // 2. Size limit check
         if (file.Length > maxSize)
         {
-            var sizeMB = maxSize / (1024.0 * 1024.0);
-            return new ValidationResult(false, $"File too large. Maximum size for {category} files is {sizeMB:F1}MB");
+            return new ValidationResult(false, $"File too large. Maximum size for {category} files is {FormatSize(maxSize)}");
         }
 
         // 3. Magic number validation

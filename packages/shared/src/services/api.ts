@@ -204,10 +204,93 @@ api.interceptors.response.use(
 
 export default api;
 
+/** Marker on the error thrown when an upload stops making progress. */
+export const UPLOAD_STALLED = 'UPLOAD_STALLED';
+
+/**
+ * If no upload progress arrives for this long, treat the request as dead.
+ *
+ * This is a *stall* timeout rather than a flat request timeout on purpose: a flat
+ * timeout would kill legitimate large uploads on slow connections, whereas a
+ * rejected/reset connection shows up as progress stopping dead and never resuming.
+ * Without this the promise never settles at all and the composer stays wedged.
+ */
+const UPLOAD_STALL_MS = 30_000;
+
+/**
+ * POST multipart form data with stall detection and cancellation.
+ *
+ * Every upload in the app must go through this rather than a bare `api.post`:
+ * without it a rejected or dropped connection can leave the promise pending
+ * forever, which strands whatever UI state was gated on the upload finishing.
+ */
+export async function postMultipart<T = unknown>(
+  url: string,
+  formData: FormData,
+  options?: {
+    method?: 'post' | 'patch';
+    onProgress?: (percent: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<T> {
+  const controller = new AbortController();
+  let stalled = false;
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const armStallTimer = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, UPLOAD_STALL_MS);
+  };
+
+  const onExternalAbort = () => controller.abort();
+  const signal = options?.signal;
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', onExternalAbort);
+  }
+
+  armStallTimer();
+  try {
+    // Content-Type is deliberately not set: axios derives it from the FormData
+    // along with the required multipart boundary. Hardcoding it drops the
+    // boundary, which the Node adapter (Electron main) would send verbatim.
+    const res = await api.request({
+      url,
+      method: options?.method ?? 'post',
+      data: formData,
+      signal: controller.signal,
+      onUploadProgress: (evt) => {
+        armStallTimer();
+        const onProgress = options?.onProgress;
+        if (!onProgress) return;
+        const total = evt.total ?? 0;
+        // total can be unknown; report -1 so callers can show indeterminate
+        // progress instead of a bar frozen at 0.
+        onProgress(total > 0 ? Math.min(100, Math.round((evt.loaded / total) * 100)) : -1);
+      },
+    });
+    return res.data as T;
+  } catch (err: any) {
+    if (stalled) {
+      const stallError: any = new Error('Upload stalled');
+      stallError.code = UPLOAD_STALLED;
+      throw stallError;
+    }
+    throw err;
+  } finally {
+    if (stallTimer) clearTimeout(stallTimer);
+    signal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
 export async function uploadFile(
   file: File,
   options?: { serverId?: string; channelId?: string },
   onProgress?: (percent: number) => void,
+  signal?: AbortSignal,
 ): Promise<{
   id: string;
   url: string;
@@ -221,16 +304,5 @@ export async function uploadFile(
   formData.append('file', file);
   if (options?.serverId) formData.append('serverId', options.serverId);
   if (options?.channelId) formData.append('channelId', options.channelId);
-  const res = await api.post('/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    onUploadProgress: (evt) => {
-      if (!onProgress) return;
-      const total = evt.total ?? 0;
-      if (total > 0) {
-        const percent = Math.min(100, Math.round((evt.loaded / total) * 100));
-        onProgress(percent);
-      }
-    },
-  });
-  return res.data;
+  return postMultipart('/upload', formData, { onProgress, signal });
 }

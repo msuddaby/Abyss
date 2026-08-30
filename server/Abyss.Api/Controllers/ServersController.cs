@@ -23,9 +23,11 @@ public class ServersController : ControllerBase
     private readonly SystemMessageService _systemMessages;
     private readonly CosmeticService _cosmeticService;
     private readonly RssFeedService _rss;
+    private readonly MediaConfig _mediaConfig;
 
-    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService, RssFeedService rss)
+    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService, RssFeedService rss, MediaConfig mediaConfig)
     {
+        _mediaConfig = mediaConfig;
         _db = db;
         _perms = perms;
         _hub = hub;
@@ -140,7 +142,8 @@ public class ServersController : ControllerBase
         else if (req.Icon != null)
         {
             if (req.Icon.Length == 0) return BadRequest("No file");
-            if (req.Icon.Length > 5 * 1024 * 1024) return BadRequest("File too large (max 5MB)");
+            if (req.Icon.Length > _mediaConfig.ServerIconMaxSize)
+                return BadRequest($"File too large (max {_mediaConfig.ServerIconMaxSize / (1024 * 1024)}MB)");
             var imageError = ImageService.ValidateImageFile(req.Icon);
             if (imageError != null) return BadRequest(imageError);
             server.IconUrl = await _imageService.ProcessAvatarAsync(req.Icon);

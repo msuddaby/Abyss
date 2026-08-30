@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useServerConfigStore, useXenForoStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, parseValidationErrors, getFieldError } from "@abyss/shared";
+import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useAppConfigStore, validateSizedFile, useServerConfigStore, useXenForoStore, getApiBase, setApiBase, getStorage, isElectron, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, parseValidationErrors, getFieldError } from "@abyss/shared";
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { Capacitor } from "@capacitor/core";
 import axios from "axios";
 import { formatKeybind } from "./VoiceControls";
 import AudioTrimmer from "./AudioTrimmer";
+import { describeUploadError } from "../utils/uploadErrors";
 import { VoiceDebugPanel } from "./VoiceDebugPanel";
 import { SCREEN_OPTIONS } from "../constants/screenShareTiers";
 import SettingsModal from "./SettingsModal";
@@ -101,6 +102,7 @@ export default function UserSettingsModal({
 
   const preferences = useUserPreferencesStore((s) => s.preferences);
   const uploadSound = useUserPreferencesStore((s) => s.uploadSound);
+  const uploadLimits = useAppConfigStore((s) => s.uploadLimits);
   const removeSound = useUserPreferencesStore((s) => s.removeSound);
   const [soundUploading, setSoundUploading] = useState<'join' | 'leave' | null>(null);
   const [soundError, setSoundError] = useState<string | null>(null);
@@ -529,6 +531,13 @@ export default function UserSettingsModal({
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const check = validateSizedFile(file, uploadLimits.avatarMaxSize, 'Avatars');
+    if (!check.ok) {
+      setProfileError(check.reason);
+      e.target.value = '';
+      return;
+    }
+    setProfileError(null);
     setAvatarFile(file);
     setAvatarPreview(URL.createObjectURL(file));
   };
@@ -628,14 +637,16 @@ export default function UserSettingsModal({
   const [trimmerType, setTrimmerType] = useState<'join' | 'leave' | null>(null);
 
   const handleSoundFileSelect = (type: 'join' | 'leave', e: React.ChangeEvent<HTMLInputElement>) => {
-    const MAX_FILE_SIZE = 2 * 1024 * 1024;
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
     setSoundError(null);
 
-    if (file.size >= MAX_FILE_SIZE) {
-      setSoundError('Sound must be less than 2mb');
+    // Limit comes from the server via /api/config so it can't drift from
+    // MediaConfig.SoundMaxSize.
+    const check = validateSizedFile(file, uploadLimits.soundMaxSize, 'Sounds');
+    if (!check.ok) {
+      setSoundError(check.reason);
       return;
     }
 
@@ -650,9 +661,8 @@ export default function UserSettingsModal({
     setSoundUploading(trimmerType);
     try {
       await uploadSound(trimmerType, trimmedFile);
-    } catch (err: any) {
-      const msg = err?.response?.data || (err instanceof Error ? err.message : 'Upload failed');
-      setSoundError(typeof msg === 'string' ? msg : 'Upload failed');
+    } catch (err: unknown) {
+      setSoundError(describeUploadError(err));
     } finally {
       setSoundUploading(null);
     }
@@ -1137,7 +1147,7 @@ export default function UserSettingsModal({
                         {trimmerFile && trimmerType === type && (
                           <AudioTrimmer
                             file={trimmerFile}
-                            maxDuration={5}
+                            maxDuration={uploadLimits.soundMaxDurationSeconds ?? 5}
                             onConfirm={handleTrimmerConfirm}
                             onCancel={handleTrimmerCancel}
                           />

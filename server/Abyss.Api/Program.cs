@@ -187,14 +187,20 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-// Request size limits
+// Request size limits.
+// This is only the transport envelope — the real per-file policy lives in
+// MediaConfig.MaxSizesByCategory. It must stay above the largest category limit
+// (200MB video) with room for multipart framing (boundaries, the serverId/channelId
+// parts, headers), otherwise Kestrel kills the request before MediaValidator can
+// return a friendly error.
+const long MaxRequestBodyBytes = 220_200_960; // 210MB
 builder.Services.Configure<KestrelServerOptions>(options =>
 {
-    options.Limits.MaxRequestBodySize = 52_428_800; // 50MB
+    options.Limits.MaxRequestBodySize = MaxRequestBodyBytes;
 });
 builder.Services.Configure<FormOptions>(options =>
 {
-    options.MultipartBodyLengthLimit = 52_428_800; // 50MB
+    options.MultipartBodyLengthLimit = MaxRequestBodyBytes;
 });
 
 // Voice state cleanup
@@ -448,6 +454,17 @@ app.Map("/error", (HttpContext context) =>
 {
     var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
     var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+
+    // An oversized request body is a client mistake, not a server fault. Preserve the
+    // 413 Kestrel put on the exception instead of masking it as a 500, and log it as a
+    // warning so it doesn't get reported as an unhandled exception.
+    if (exception is Microsoft.AspNetCore.Http.BadHttpRequestException badRequest
+        && badRequest.StatusCode == StatusCodes.Status413PayloadTooLarge)
+    {
+        logger.LogWarning("Rejected oversized request body on {Path}", context.Request.Path);
+        return Results.Problem(title: "File too large", statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
+
     logger.LogError(exception, "Unhandled exception");
     return Results.Problem(title: "An error occurred", statusCode: 500);
 });

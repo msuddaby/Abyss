@@ -130,6 +130,16 @@ public class MediaConfig
     };
 
     /// <summary>
+    /// Profile avatar upload limit.
+    /// </summary>
+    public long AvatarMaxSize { get; } = 5 * 1024 * 1024; // 5MB
+
+    /// <summary>
+    /// Server icon upload limit.
+    /// </summary>
+    public long ServerIconMaxSize { get; } = 5 * 1024 * 1024; // 5MB
+
+    /// <summary>
     /// Maximum decompressed size for archives (zip bomb protection).
     /// </summary>
     public long MaxDecompressedSize { get; } = 100 * 1024 * 1024; // 100MB

@@ -25,6 +25,7 @@ public class AuthController : ControllerBase
     private readonly ImageService _imageService;
     private readonly CosmeticService _cosmeticService;
     private readonly EmailService _emailService;
+    private readonly MediaConfig _mediaConfig;
     private const string InviteOnlyKey = "InviteOnly";
 
     public AuthController(
@@ -35,8 +36,10 @@ public class AuthController : ControllerBase
         AppDbContext db,
         ImageService imageService,
         CosmeticService cosmeticService,
-        EmailService emailService)
+        EmailService emailService,
+        MediaConfig mediaConfig)
     {
+        _mediaConfig = mediaConfig;
         _userManager = userManager;
         _signInManager = signInManager;
         _tokenService = tokenService;
@@ -189,7 +192,8 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<UserDto>> UploadAvatar(IFormFile file)
     {
         if (file.Length == 0) return BadRequest("No file");
-        if (file.Length > 5 * 1024 * 1024) return BadRequest("File too large (max 5MB)");
+        if (file.Length > _mediaConfig.AvatarMaxSize)
+            return BadRequest($"File too large (max {_mediaConfig.AvatarMaxSize / (1024 * 1024)}MB)");
 
         var imageError = ImageService.ValidateImageFile(file);
         if (imageError != null) return BadRequest(imageError);

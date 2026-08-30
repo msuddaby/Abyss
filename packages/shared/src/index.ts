@@ -6,7 +6,7 @@ export type { StorageAdapter } from './storage.js';
 export * from './types/index.js';
 
 // Services
-export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken, ensureFreshToken } from './services/api.js';
+export { default as api, getApiBase, setApiBase, setOnUnauthorized, uploadFile, refreshAccessToken, ensureFreshToken, UPLOAD_STALLED, postMultipart } from './services/api.js';
 export { getConnection, startConnection, ensureConnected, stopConnection, suspendConnection, resetConnection, onReconnected, healthCheck, focusReconnect, resilientInvoke, getLastReconnectDebugInfo } from './services/signalr.js';
 export type { SignalRReconnectDebugInfo } from './services/signalr.js';
 export type { SignalRConnection } from './services/signalr.protocol.js';
@@ -46,7 +46,9 @@ export { useXenForoStore } from './stores/xenForoStore.js';
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';
 
 // Utils
-export { formatTime, formatDate } from './utils/formatting.js';
+export { formatTime, formatDate, formatFileSize } from './utils/formatting.js';
+export { validateFileForUpload, validateSizedFile, DEFAULT_UPLOAD_LIMITS } from './utils/uploadLimits.js';
+export type { UploadLimits, UploadValidationResult } from './utils/uploadLimits.js';
 export { parseMentions, resolveMentionName, resolveCustomEmoji, MENTION_EMOJI_REGEX } from './utils/mentions.js';
 export type { MentionSegment } from './utils/mentions.js';
 export { shouldGroupMessage, groupReactions } from './utils/messages.js';

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
+using Abyss.Api.Services;
 
 namespace Abyss.Api.Controllers;
 
@@ -12,14 +13,16 @@ namespace Abyss.Api.Controllers;
 public class ConfigController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly MediaConfig _mediaConfig;
     private const string MaxMessageLengthKey = "MaxMessageLength";
     private const string ForceRelayModeKey = "ForceRelayMode";
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
 
-    public ConfigController(AppDbContext db)
+    public ConfigController(AppDbContext db, MediaConfig mediaConfig)
     {
         _db = db;
+        _mediaConfig = mediaConfig;
     }
 
     [HttpGet]
@@ -39,6 +42,17 @@ public class ConfigController : ControllerBase
         var relayRow = rows.FirstOrDefault(r => r.Key == ForceRelayModeKey);
         var forceRelayMode = relayRow != null && bool.TryParse(relayRow.Value, out var relay) && relay;
 
-        return Ok(new AppConfigDto(maxMessageLength, forceRelayMode));
+        var uploadLimits = new UploadLimitsDto(
+            new Dictionary<string, long>(_mediaConfig.MaxSizesByCategory),
+            _mediaConfig.AllowedExtensions.ToDictionary(
+                kvp => kvp.Key.ToLowerInvariant(),
+                kvp => kvp.Value.Category),
+            _mediaConfig.EmojiMaxSize,
+            _mediaConfig.SoundMaxSize,
+            _mediaConfig.SoundMaxDurationSeconds,
+            _mediaConfig.AvatarMaxSize,
+            _mediaConfig.ServerIconMaxSize);
+
+        return Ok(new AppConfigDto(maxMessageLength, forceRelayMode, uploadLimits));
     }
 }

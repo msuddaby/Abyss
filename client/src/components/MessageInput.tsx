@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
-import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, useRateLimitStore, useSignalRStore, uploadFile, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
+import { useMessageStore, useServerStore, useDmStore, useAppConfigStore, useToastStore, useRateLimitStore, useSignalRStore, uploadFile, validateFileForUpload, getApiBase, getConnection, hasChannelPermission, Permission } from "@abyss/shared";
+import { describeUploadError, isCanceledUpload } from "../utils/uploadErrors";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import GifPicker from "./GifPicker";
@@ -54,6 +55,8 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const [previews, setPreviews] = useState<Array<string | null>>([]);
   const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
   const [sending, setSending] = useState(false);
+  // Aborts the in-flight upload so removing a stuck file recovers the composer.
+  const uploadAbortRef = useRef<AbortController | null>(null);
   const [isEmpty, setIsEmpty] = useState(true);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -94,6 +97,7 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   const isDmMode = useDmStore((s) => s.isDmMode);
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
   const maxMessageLength = useAppConfigStore((s) => s.maxMessageLength);
+  const uploadLimits = useAppConfigStore((s) => s.uploadLimits);
   const addToast = useToastStore((s) => s.addToast);
   const signalRStatus = useSignalRStore((s) => s.status);
   const rateLimitEntry = useRateLimitStore((s) => s.activeLimits['SendMessage']);
@@ -670,12 +674,22 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       addToast('You do not have permission to attach files in this channel.', 'error');
       return;
     }
-    setFiles((prev) => [...prev, ...selected]);
-    const newPreviews = selected.map((file) => (file.type.startsWith("image/") ? "" : null));
+    // Reject oversized files up front rather than letting the upload fail, using
+    // the limits the server published via /api/config.
+    const accepted: File[] = [];
+    for (const file of selected) {
+      const result = validateFileForUpload(file, uploadLimits);
+      if (result.ok) accepted.push(file);
+      else addToast(result.reason, 'error');
+    }
+    if (accepted.length === 0) return;
+
+    setFiles((prev) => [...prev, ...accepted]);
+    const newPreviews = accepted.map((file) => (file.type.startsWith("image/") ? "" : null));
     setPreviews((prev) => {
       const start = prev.length;
       const next = [...prev, ...newPreviews];
-      selected.forEach((file, i) => {
+      accepted.forEach((file, i) => {
         if (file.type.startsWith("image/")) {
           const reader = new FileReader();
           reader.onload = (ev) => {
@@ -697,6 +711,12 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
   };
 
   const removeFile = (index: number) => {
+    // If an upload is in flight, cancel it — otherwise removing a stuck file
+    // leaves the request running and the composer disabled.
+    if (uploadAbortRef.current) {
+      uploadAbortRef.current.abort();
+      uploadAbortRef.current = null;
+    }
     setFiles((prev) => prev.filter((_, i) => i !== index));
     setPreviews((prev) => prev.filter((_, i) => i !== index));
     setUploadProgress((prev) => {
@@ -776,20 +796,35 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
     setSending(true);
     try {
       const attachmentIds: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setUploadProgress((prev) => ({ ...prev, [i]: 0 }));
-        const result = await uploadFile(
-          file,
-          {
-            serverId: isDmMode ? undefined : activeServer?.id,
-            channelId: effectiveChannelId ?? undefined,
-          },
-          (percent) => {
-          setUploadProgress((prev) => ({ ...prev, [i]: percent }));
-          },
-        );
-        attachmentIds.push(result.id);
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          setUploadProgress((prev) => ({ ...prev, [i]: 0 }));
+          const controller = new AbortController();
+          uploadAbortRef.current = controller;
+          const result = await uploadFile(
+            file,
+            {
+              serverId: isDmMode ? undefined : activeServer?.id,
+              channelId: effectiveChannelId ?? undefined,
+            },
+            (percent) => {
+            setUploadProgress((prev) => ({ ...prev, [i]: percent }));
+            },
+            controller.signal,
+          );
+          attachmentIds.push(result.id);
+        }
+      } catch (err: unknown) {
+        // Uploads happen before sendMessage, so no pending message exists yet and
+        // the retry/discard UI can't surface this — it has to be a toast.
+        console.error('Upload failed', err);
+        setUploadProgress({});
+        // Keep the files and the editor contents so the user can retry or remove.
+        if (!isCanceledUpload(err)) addToast(describeUploadError(err), 'error');
+        return;
+      } finally {
+        uploadAbortRef.current = null;
       }
       // Clear the editor optimistically — the pending message system will handle
       // retry/discard if the send fails, so the user can keep typing.
@@ -812,7 +847,8 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
       // appear as pending with retry/discard options.
       await sendMessage(effectiveChannelId, content, attachmentIds, replyId);
     } catch {
-      // Failure is surfaced via the pending message UI (retry/discard), not a toast
+      // sendMessage failure only: surfaced via the pending message UI
+      // (retry/discard), not a toast. Upload failures are handled above.
     } finally {
       setSending(false);
     }
@@ -901,7 +937,9 @@ export default function MessageInput({ channelId: channelIdOverride }: { channel
                 )}
                 {typeof progress === "number" && sending && (
                   <div className="file-preview-progress">
-                    <div className="file-preview-progress-bar" style={{ width: `${progress}%` }} />
+                    {/* -1 means the browser couldn't report a total; show a full
+                        bar rather than one frozen at zero. */}
+                    <div className="file-preview-progress-bar" style={{ width: progress < 0 ? '100%' : `${progress}%` }} />
                   </div>
                 )}
                 <button className="remove-file" onClick={() => removeFile(i)}>

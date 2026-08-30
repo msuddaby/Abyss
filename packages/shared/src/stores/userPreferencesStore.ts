@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import api from '../services/api.js';
+import api, { postMultipart } from '../services/api.js';
 import { useVoiceStore } from './voiceStore.js';
 import { getStorage } from '../storage.js';
 import type { UserPreferences } from '../types/index.js';
@@ -40,8 +40,8 @@ export const useUserPreferencesStore = create<UserPreferencesState>((set, get) =
   uploadSound: async (type: 'join' | 'leave', file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await api.post(`/users/preferences/sounds/${type}`, formData);
-    set({ preferences: res.data });
+    const prefs = await postMultipart<UserPreferences>(`/users/preferences/sounds/${type}`, formData);
+    set({ preferences: prefs });
   },
 
   removeSound: async (type: 'join' | 'leave') => {

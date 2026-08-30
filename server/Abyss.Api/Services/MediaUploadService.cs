@@ -107,7 +107,8 @@ public class MediaUploadService
             MaxSize: _mediaConfig.SoundMaxSize,
             AllowedExtensions: _mediaConfig.SoundAllowedExtensions,
             AllowedMimeTypes: _mediaConfig.SoundAllowedMimeTypes,
-            RequireExtension: true
+            RequireExtension: true,
+            CategoryLabel: "sound"
         );
 
         var validation = await _mediaValidator.ValidateUploadAsync(file, options);
