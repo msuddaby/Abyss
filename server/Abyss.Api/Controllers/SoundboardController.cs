@@ -23,7 +23,6 @@ public class SoundboardController : ControllerBase
     private readonly MediaUploadService _mediaUploadService;
 
     private static readonly Regex NameRegex = new(@"^[a-zA-Z0-9_\- ]{2,32}$", RegexOptions.Compiled);
-    private const int MaxClipsPerServer = 50;
 
     public SoundboardController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, MediaUploadService mediaUploadService)
     {
@@ -58,10 +57,6 @@ public class SoundboardController : ControllerBase
 
         if (file == null || file.Length == 0)
             return BadRequest("No file provided.");
-
-        var count = await _db.SoundboardClips.CountAsync(sc => sc.ServerId == serverId);
-        if (count >= MaxClipsPerServer)
-            return BadRequest($"Server has reached the maximum of {MaxClipsPerServer} soundboard clips.");
 
         var nameExists = await _db.SoundboardClips.AnyAsync(sc => sc.ServerId == serverId && sc.Name == name);
         if (nameExists)

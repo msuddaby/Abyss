@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useServerStore, useAuthStore, useMediaProviderStore, useSoundboardStore, getApiBase, hasPermission, Permission, getDisplayColor, getHighestRole, canActOn, NotificationLevel, api } from '@abyss/shared';
 import type { AuditLog, ServerRole, ServerMember } from '@abyss/shared';
 import AudioTrimmer from './AudioTrimmer';
@@ -196,6 +196,13 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const sbFileRef = useRef<HTMLInputElement>(null);
   const [sbPreviewAudio, setSbPreviewAudio] = useState<HTMLAudioElement | null>(null);
   const [sbPreviewClipId, setSbPreviewClipId] = useState<string | null>(null);
+  const [sbSearch, setSbSearch] = useState('');
+  const filteredSoundboardClips = useMemo(() => {
+    const sorted = [...soundboardClips].sort((a, b) => a.name.localeCompare(b.name));
+    if (!sbSearch.trim()) return sorted;
+    const q = sbSearch.trim().toLowerCase();
+    return sorted.filter((clip) => clip.name.toLowerCase().includes(q));
+  }, [soundboardClips, sbSearch]);
 
   // Media provider state
   const mediaConnections = useMediaProviderStore((s) => s.connections);
@@ -806,7 +813,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
             {tab === 'soundboard' && canManageSoundboard && (
               <div className="soundboard-tab">
                 <div className="us-card">
-                  <div className="us-card-title">Upload Clip ({soundboardClips.length} / 50)</div>
+                  <div className="us-card-title">Upload Clip ({soundboardClips.length})</div>
                   {!sbFile && (
                     <div className="sb-upload-row">
                       <input
@@ -876,9 +883,21 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
                   {sbUploading && <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>Uploading...</p>}
                   {sbError && <p className="emoji-error">{sbError}</p>}
                 </div>
+                {soundboardClips.length > 8 && (
+                  <input
+                    type="text"
+                    className="sb-search"
+                    placeholder="Search sounds..."
+                    value={sbSearch}
+                    onChange={(e) => setSbSearch(e.target.value)}
+                  />
+                )}
                 <div className="sb-clip-list">
                   {soundboardClips.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No soundboard clips yet.</p>}
-                  {soundboardClips.map((clip) => (
+                  {soundboardClips.length > 0 && filteredSoundboardClips.length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>No sounds match "{sbSearch}"</p>
+                  )}
+                  {filteredSoundboardClips.map((clip) => (
                     <div key={clip.id} className="sb-clip-item">
                       <span className="sb-clip-name">{clip.name}</span>
                       <span className="sb-clip-duration">{clip.duration.toFixed(1)}s</span>

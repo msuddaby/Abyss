@@ -111,10 +111,10 @@ const CAMERA_QUALITY_CONSTRAINTS: Record<CameraQuality, { width: number; height:
 // 60fps tier unreachable. contentHint/degradationPreference tell the encoder
 // whether to protect motion (gameplay) or detail (text).
 const SCREEN_SHARE_QUALITY_CONSTRAINTS: Record<ScreenShareQuality, ScreenSharePreset> = {
-  '720p30':  { width: 1280, height: 720,  frameRate: 30, maxBitrate: 3_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
-  '1080p30': { width: 1920, height: 1080, frameRate: 30, maxBitrate: 5_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
-  '1080p60': { width: 1920, height: 1080, frameRate: 60, maxBitrate: 8_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
-  '1440p30': { width: 2560, height: 1440, frameRate: 30, maxBitrate: 8_000_000, contentHint: 'detail', degradationPreference: 'maintain-resolution' },
+  '720p30':  { width: 1280, height: 720,  frameRate: 30, maxBitrate: 5_000_000,  contentHint: 'motion', degradationPreference: 'balanced' },
+  '1080p30': { width: 1920, height: 1080, frameRate: 30, maxBitrate: 8_000_000,  contentHint: 'motion', degradationPreference: 'balanced' },
+  '1080p60': { width: 1920, height: 1080, frameRate: 60, maxBitrate: 12_000_000, contentHint: 'motion', degradationPreference: 'balanced' },
+  '1440p30': { width: 2560, height: 1440, frameRate: 30, maxBitrate: 14_000_000, contentHint: 'detail', degradationPreference: 'maintain-resolution' },
 };
 
 // ──────────────────────────────────────────────────────────────────────────────
