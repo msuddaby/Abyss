@@ -24,7 +24,7 @@ export function formatKeybind(bind: string): string {
       if (p === 'mod') return isMac ? '⌘' : 'Ctrl';
       if (p === 'shift') return 'Shift';
       if (p === 'alt') return isMac ? '⌥' : 'Alt';
-      return p.length === 1 ? p.toUpperCase() : p;
+      return p.toUpperCase();
     })
     .join('+');
 }

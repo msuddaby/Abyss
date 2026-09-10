@@ -194,9 +194,10 @@ export default function UserSettingsModal({
       e.stopPropagation();
       // Ignore bare modifier presses
       if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
-      // Require at least one modifier
+      const isFKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(e.key); // F1–F24
+      // Require at least one modifier, unless it's a bare F-key
       const hasMod = e.ctrlKey || e.metaKey;
-      if (!hasMod && !e.altKey && !e.shiftKey) return;
+      if (!isFKey && !hasMod && !e.altKey && !e.shiftKey) return;
       const parts: string[] = [];
       if (hasMod) parts.push("mod");
       if (e.altKey) parts.push("alt");
