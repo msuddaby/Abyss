@@ -194,10 +194,14 @@ export default function UserSettingsModal({
       e.stopPropagation();
       // Ignore bare modifier presses
       if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
-      const isFKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(e.key); // F1–F24
-      // Require at least one modifier, unless it's a bare F-key
+      // Non-printable/special keys (F-keys, arrows, media/macro keys like
+      // "LaunchApplication7") always report a multi-character e.key, unlike
+      // any character that could actually be typed — safe to allow bare,
+      // since they never collide with normal typing.
+      const isSpecialKey = e.key.length > 1;
+      // Require at least one modifier, unless it's a bare special key
       const hasMod = e.ctrlKey || e.metaKey;
-      if (!isFKey && !hasMod && !e.altKey && !e.shiftKey) return;
+      if (!isSpecialKey && !hasMod && !e.altKey && !e.shiftKey) return;
       const parts: string[] = [];
       if (hasMod) parts.push("mod");
       if (e.altKey) parts.push("alt");
