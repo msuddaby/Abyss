@@ -1,6 +1,24 @@
 import { create } from 'zustand';
 import api, { postMultipart } from '../services/api.js';
+import { getStorage } from '../storage.js';
 import type { SoundboardClip } from '../types/index.js';
+
+function loadClipKeybinds(): Record<string, string> {
+  try {
+    const raw = getStorage().getItem('soundboardKeybinds');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveClipKeybinds(binds: Record<string, string>) {
+  try {
+    getStorage().setItem('soundboardKeybinds', JSON.stringify(binds));
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 interface SoundboardState {
   clips: SoundboardClip[];
@@ -12,11 +30,39 @@ interface SoundboardState {
   addClipLocal: (clip: SoundboardClip) => void;
   updateClipLocal: (clip: SoundboardClip) => void;
   removeClipLocal: (clipId: string) => void;
+  // Per-clip keybinds (local preference, same format/rules as the voice
+  // shortcuts: "mod+shift+m", bare "f9", bare macro key names, etc). Keyed
+  // by clip id, persisted to local storage — not synced server-side, since
+  // this is a personal binding rather than a server-wide setting.
+  clipKeybinds: Record<string, string>;
+  setClipKeybind: (clipId: string, bind: string) => void;
+  clearClipKeybind: (clipId: string) => void;
 }
 
-export const useSoundboardStore = create<SoundboardState>((set) => ({
+export const useSoundboardStore = create<SoundboardState>((set, get) => ({
   clips: [],
   loading: false,
+  clipKeybinds: loadClipKeybinds(),
+
+  setClipKeybind: (clipId: string, bind: string) => {
+    // Only one clip may own a given bind at a time — clear it from
+    // whichever other clip previously held it, mirroring the voice
+    // keybinds' "same-key-unequips-others" behavior.
+    const next: Record<string, string> = {};
+    for (const [id, existing] of Object.entries(get().clipKeybinds)) {
+      if (existing !== bind) next[id] = existing;
+    }
+    next[clipId] = bind;
+    saveClipKeybinds(next);
+    set({ clipKeybinds: next });
+  },
+
+  clearClipKeybind: (clipId: string) => {
+    const next = { ...get().clipKeybinds };
+    delete next[clipId];
+    saveClipKeybinds(next);
+    set({ clipKeybinds: next });
+  },
 
   fetchClips: async (serverId: string) => {
     set({ loading: true });
@@ -54,6 +100,7 @@ export const useSoundboardStore = create<SoundboardState>((set) => ({
   },
 
   removeClipLocal: (clipId: string) => {
+    get().clearClipKeybind(clipId);
     set((s) => ({
       clips: s.clips.filter((c) => c.id !== clipId),
     }));

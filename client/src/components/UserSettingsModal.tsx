@@ -3,7 +3,7 @@ import { api, useAuthStore, useVoiceStore, useUserPreferencesStore, useAppConfig
 import type { UserCosmetic, CosmeticItem } from "@abyss/shared";
 import { Capacitor } from "@capacitor/core";
 import axios from "axios";
-import { formatKeybind } from "./VoiceControls";
+import { formatKeybind, captureKeybindFromEvent } from "../utils/keybind";
 import AudioTrimmer from "./AudioTrimmer";
 import { describeUploadError } from "../utils/uploadErrors";
 import { VoiceDebugPanel } from "./VoiceDebugPanel";
@@ -192,17 +192,8 @@ export default function UserSettingsModal({
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      // Ignore bare modifier presses
-      if (["Control", "Meta", "Shift", "Alt"].includes(e.key)) return;
-      // Require at least one modifier
-      const hasMod = e.ctrlKey || e.metaKey;
-      if (!hasMod && !e.altKey && !e.shiftKey) return;
-      const parts: string[] = [];
-      if (hasMod) parts.push("mod");
-      if (e.altKey) parts.push("alt");
-      if (e.shiftKey) parts.push("shift");
-      parts.push(e.key.toLowerCase());
-      const bind = parts.join("+");
+      const bind = captureKeybindFromEvent(e);
+      if (!bind) return;
       keybindSetters[capturingKeybind](bind);
       setCapturingKeybind(null);
     };

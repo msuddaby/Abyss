@@ -9783,11 +9783,18 @@ label.has-error select:focus {
   min-height: 0;
 }
 
+.soundboard-clip {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
 .soundboard-clip-btn {
   padding: 6px 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
@@ -9807,6 +9814,56 @@ label.has-error select:focus {
 
 .soundboard-clip-label {
   pointer-events: none;
+}
+
+.soundboard-clip-keybind {
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.soundboard-clip-keybind:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.soundboard-clip-keybind.recording {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.soundboard-clip-keybind-clear {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-floating, var(--bg-tertiary));
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.soundboard-clip-keybind-clear:hover {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .soundboard-empty {
