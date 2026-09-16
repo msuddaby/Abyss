@@ -9783,18 +9783,12 @@ label.has-error select:focus {
   min-height: 0;
 }
 
-.soundboard-clip {
-  position: relative;
-  display: inline-flex;
-  align-items: stretch;
-}
-
 .soundboard-clip-btn {
+  position: relative;
   padding: 6px 12px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-right: none;
-  border-radius: 6px 0 0 6px;
+  border-radius: 6px;
   color: var(--text-primary);
   font-size: 12px;
   cursor: pointer;
@@ -9812,58 +9806,59 @@ label.has-error select:focus {
   transform: scale(0.96);
 }
 
+/* Small indicator dot — a clip with a keybind set, so the narrow panel
+   doesn't need extra label space to show it (see it in the tooltip, or
+   right-click for the full menu). */
+.soundboard-clip-btn.has-keybind::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.soundboard-clip-btn.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .soundboard-clip-label {
   pointer-events: none;
 }
 
-.soundboard-clip-keybind {
-  padding: 6px 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
-  border-radius: 0 6px 6px 0;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-  max-width: 90px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.soundboard-clip-keybind:hover {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.soundboard-clip-keybind.recording {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.soundboard-clip-keybind-clear {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 16px;
-  height: 16px;
-  padding: 0;
+.soundboard-clip-menu {
+  position: fixed;
+  z-index: 1000;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
   background: var(--bg-floating, var(--bg-tertiary));
   border: 1px solid var(--border-color);
-  border-radius: 50%;
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.soundboard-clip-menu-item {
+  padding: 6px 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
   cursor: pointer;
 }
 
-.soundboard-clip-keybind-clear:hover {
+.soundboard-clip-menu-item:hover {
+  background: var(--bg-modifier-hover, var(--bg-hover));
+}
+
+.soundboard-clip-menu-item.danger {
   color: var(--danger);
-  border-color: var(--danger);
 }
 
 .soundboard-empty {
