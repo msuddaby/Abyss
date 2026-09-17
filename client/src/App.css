@@ -9817,12 +9817,12 @@ label.has-error select:focus {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-primary);
 }
 
 .soundboard-clip-btn.recording {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
 }
 
 .soundboard-clip-label {

@@ -3,15 +3,6 @@ import api, { postMultipart } from '../services/api.js';
 import { getStorage } from '../storage.js';
 import type { SoundboardClip } from '../types/index.js';
 
-function loadClipKeybinds(): Record<string, string> {
-  try {
-    const raw = getStorage().getItem('soundboardKeybinds');
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
 function saveClipKeybinds(binds: Record<string, string>) {
   try {
     getStorage().setItem('soundboardKeybinds', JSON.stringify(binds));
@@ -42,7 +33,7 @@ interface SoundboardState {
 export const useSoundboardStore = create<SoundboardState>((set, get) => ({
   clips: [],
   loading: false,
-  clipKeybinds: loadClipKeybinds(),
+  clipKeybinds: {},
 
   setClipKeybind: (clipId: string, bind: string) => {
     // Only one clip may own a given bind at a time — clear it from
@@ -106,3 +97,24 @@ export const useSoundboardStore = create<SoundboardState>((set, get) => ({
     }));
   },
 }));
+
+/**
+ * Hydrate soundboard clip keybinds from persistent storage.
+ * Must be called AFTER setStorage() so the adapter is available — the store
+ * itself is constructed at module-eval time, before any adapter exists.
+ */
+export function hydrateSoundboardKeybinds() {
+  let binds: Record<string, string> = {};
+  try {
+    const raw = getStorage().getItem('soundboardKeybinds');
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const [id, bind] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof bind === 'string' && bind) binds[id] = bind;
+      }
+    }
+  } catch {
+    binds = {};
+  }
+  useSoundboardStore.setState({ clipKeybinds: binds });
+}

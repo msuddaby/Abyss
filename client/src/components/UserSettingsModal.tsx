@@ -189,26 +189,23 @@ export default function UserSettingsModal({
 
   useEffect(() => {
     if (!capturingKeybind) return;
+    // Capture phase + stopPropagation, so the keypress never reaches the app's
+    // own shortcuts while we're recording. That means Escape has to be handled
+    // here too — a separate bubble-phase listener would never see it.
     const onKey = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (e.key === "Escape") {
+        setCapturingKeybind(null);
+        return;
+      }
       const bind = captureKeybindFromEvent(e);
       if (!bind) return;
       keybindSetters[capturingKeybind](bind);
       setCapturingKeybind(null);
     };
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setCapturingKeybind(null);
-      }
-    };
     window.addEventListener("keydown", onKey, true);
-    window.addEventListener("keydown", onEsc);
-    return () => {
-      window.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("keydown", onEsc);
-    };
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [capturingKeybind, setKeybindToggleMute, setKeybindToggleDeafen, setKeybindDisconnect]);
 
   useEffect(() => {

@@ -36,7 +36,7 @@ export { useNotificationSettingsStore } from './stores/notificationSettingsStore
 export { useUserPreferencesStore } from './stores/userPreferencesStore.js';
 export { useMediaProviderStore } from './stores/mediaProviderStore.js';
 export { useWatchPartyStore } from './stores/watchPartyStore.js';
-export { useSoundboardStore } from './stores/soundboardStore.js';
+export { useSoundboardStore, hydrateSoundboardKeybinds } from './stores/soundboardStore.js';
 export { useServerConfigStore } from './stores/serverConfigStore.js';
 export { useRateLimitStore } from './stores/rateLimitStore.js';
 export { useRssFeedStore } from './stores/rssFeedStore.js';

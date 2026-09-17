@@ -27,11 +27,18 @@ export function formatKeybind(bind: string): string {
 }
 
 /**
+ * Keys the app itself relies on, so they can never be stolen by a bind:
+ * Escape dismisses modals and cancels bind capture, Tab moves focus, Enter
+ * activates the focused control.
+ */
+const RESERVED_KEYS = ['Escape', 'Tab', 'Enter'];
+
+/**
  * Turns a keydown event into a bind string ("mod+shift+m", "f9",
  * "launchapplication7", ...), or null if the event shouldn't be captured
- * (a bare modifier press, or a printable character pressed without any
- * modifier — reserved so typeable keys can't be bound without a modifier
- * and collide with normal typing elsewhere in the app).
+ * (a bare modifier press, a reserved key, or a printable character pressed
+ * without any modifier — reserved so typeable keys can't be bound without a
+ * modifier and collide with normal typing elsewhere in the app).
  *
  * Non-printable/special keys (F-keys, arrows, media/macro keys like
  * "LaunchApplication7") always report a multi-character e.key, unlike any
@@ -40,6 +47,7 @@ export function formatKeybind(bind: string): string {
  */
 export function captureKeybindFromEvent(e: KeyboardEvent): string | null {
   if (['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) return null;
+  if (RESERVED_KEYS.includes(e.key)) return null;
   const isSpecialKey = e.key.length > 1;
   const hasMod = e.ctrlKey || e.metaKey;
   if (!isSpecialKey && !hasMod && !e.altKey && !e.shiftKey) return null;
