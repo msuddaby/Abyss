@@ -1,33 +1,10 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission } from '@abyss/shared';
+import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission, resilientInvoke } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 import SoundboardPanel from './SoundboardPanel';
 import QualityPopover from './QualityPopover';
 import { isMobile } from '../stores/mobileStore';
-
-function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
-  const parts = bind.split('+');
-  const key = parts.pop()!;
-  const mods = new Set(parts);
-  const mod = e.ctrlKey || e.metaKey;
-  if (mods.has('mod') && !mod) return false;
-  if (mods.has('shift') && !e.shiftKey) return false;
-  if (mods.has('alt') && !e.altKey) return false;
-  return e.key.toLowerCase() === key;
-}
-
-export function formatKeybind(bind: string): string {
-  const isMac = /mac|iphone|ipad|ipod/i.test(navigator.userAgent);
-  return bind
-    .split('+')
-    .map((p) => {
-      if (p === 'mod') return isMac ? '⌘' : 'Ctrl';
-      if (p === 'shift') return 'Shift';
-      if (p === 'alt') return isMac ? '⌥' : 'Alt';
-      return p.length === 1 ? p.toUpperCase() : p;
-    })
-    .join('+');
-}
+import { matchesKeybind, formatKeybind } from '../utils/keybind';
 
 export default function VoiceControls() {
   const { currentChannelId, isScreenSharing, isCameraOn, voiceMode, isPttActive, pttKey, setVoiceMode, needsAudioUnlock } = useVoiceStore();
@@ -92,6 +69,7 @@ export default function VoiceControls() {
   const keybindToggleMute = useVoiceStore((s) => s.keybindToggleMute);
   const keybindToggleDeafen = useVoiceStore((s) => s.keybindToggleDeafen);
   const keybindDisconnect = useVoiceStore((s) => s.keybindDisconnect);
+  const clipKeybinds = useSoundboardStore((s) => s.clipKeybinds);
 
   useEffect(() => {
     if (!currentChannelId) return;
@@ -104,18 +82,33 @@ export default function VoiceControls() {
       if (matchesKeybind(e, keybindToggleMute)) {
         e.preventDefault();
         toggleMute();
-      } else if (matchesKeybind(e, keybindToggleDeafen)) {
+        return;
+      }
+      if (matchesKeybind(e, keybindToggleDeafen)) {
         e.preventDefault();
         toggleDeafen();
-      } else if (matchesKeybind(e, keybindDisconnect)) {
+        return;
+      }
+      if (matchesKeybind(e, keybindDisconnect)) {
         e.preventDefault();
         leaveVoice();
+        return;
+      }
+      if (!canUseSoundboard) return;
+      for (const [clipId, bind] of Object.entries(clipKeybinds)) {
+        if (matchesKeybind(e, bind)) {
+          e.preventDefault();
+          void resilientInvoke('PlaySoundboardClip', currentChannelId, clipId).catch((err) => {
+            console.warn('Failed to play soundboard clip', err);
+          });
+          break;
+        }
       }
     };
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentChannelId, toggleMute, toggleDeafen, leaveVoice, keybindToggleMute, keybindToggleDeafen, keybindDisconnect]);
+  }, [currentChannelId, toggleMute, toggleDeafen, leaveVoice, keybindToggleMute, keybindToggleDeafen, keybindDisconnect, clipKeybinds, canUseSoundboard]);
 
   useEffect(() => {
     if (!canStream && isScreenSharing) {
