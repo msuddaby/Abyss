@@ -12,6 +12,9 @@ import type { Message } from "@abyss/shared";
 import Picker from "@emoji-mart/react";
 import data from "@emoji-mart/data";
 import { groupReactions } from "../../utils/messageUtils";
+import ReactionTooltip from "./ReactionTooltip";
+
+const TOOLTIP_DELAY_MS = 250;
 
 export interface MessageReactionsHandle {
   openPicker: () => void;
@@ -34,6 +37,11 @@ const MessageReactions = forwardRef<
   const [pickerStyle, setPickerStyle] = useState<React.CSSProperties | null>(
     null,
   );
+  const [hovered, setHovered] = useState<{
+    emoji: string;
+    anchor: DOMRect;
+  } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const currentUser = useAuthStore((s) => s.user);
   const emojis = useServerStore((s) => s.emojis);
@@ -90,6 +98,36 @@ const MessageReactions = forwardRef<
 
   useImperativeHandle(ref, () => ({ openPicker }));
 
+  const showTooltip = (emoji: string, el: HTMLElement) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    // Measure when the tooltip actually opens, not on mouseenter — the list may have
+    // scrolled during the delay.
+    hoverTimer.current = setTimeout(() => {
+      if (!el.isConnected) return;
+      setHovered({ emoji, anchor: el.getBoundingClientRect() });
+    }, TOOLTIP_DELAY_MS);
+  };
+
+  const hideTooltip = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    setHovered(null);
+  }, []);
+
+  // The tooltip is fixed-positioned off a rect captured on hover, so any scroll or
+  // resize would leave it stranded — just dismiss it.
+  useEffect(() => {
+    if (!hovered) return;
+    window.addEventListener("scroll", hideTooltip, true);
+    window.addEventListener("resize", hideTooltip);
+    return () => {
+      window.removeEventListener("scroll", hideTooltip, true);
+      window.removeEventListener("resize", hideTooltip);
+    };
+  }, [hovered, hideTooltip]);
+
+  useEffect(() => () => hideTooltip(), [hideTooltip]);
+
   const openPicker = (e?: React.MouseEvent<HTMLElement>) => {
     if (!canAddReactions) return;
     const target = e?.currentTarget as HTMLElement | null;
@@ -132,40 +170,52 @@ const MessageReactions = forwardRef<
   };
 
   const reactionGroups = groupReactions(message);
+  const hoveredGroup = hovered
+    ? reactionGroups.find((g) => g.emoji === hovered.emoji)
+    : undefined;
 
   return (
     <>
       {reactionGroups.length > 0 && (
         <div className="message-reactions">
           {reactionGroups.map((g) => (
-            <button
+            // The wrapper carries the hover handlers because the button is `disabled`
+            // without the AddReactions permission, and disabled buttons swallow mouse
+            // events — those users should still be able to see who reacted.
+            <span
               key={g.emoji}
-              className={`reaction-button${currentUser && g.userIds.includes(currentUser.id) ? " reacted" : ""}`}
-              onClick={() => onToggleReaction(g.emoji)}
-              disabled={!canAddReactions}
-              title={
-                !canAddReactions ? "No permission to add reactions" : undefined
-              }
+              className="reaction-pill-wrap"
+              onMouseEnter={(e) => showTooltip(g.emoji, e.currentTarget)}
+              onMouseLeave={hideTooltip}
             >
-              <span className="reaction-emoji">
-                {g.emoji.startsWith("custom:")
-                  ? (() => {
-                      const eid = g.emoji.substring(7);
-                      const ce = emojis.find((e) => e.id === eid);
-                      return ce ? (
-                        <img
-                          src={`${getApiBase()}${ce.imageUrl}`}
-                          alt={`:${ce.name}:`}
-                          className="custom-emoji-reaction"
-                        />
-                      ) : (
-                        "?"
-                      );
-                    })()
-                  : g.emoji}
-              </span>
-              <span className="reaction-count">{g.count}</span>
-            </button>
+              <button
+                className={`reaction-button${currentUser && g.userIds.includes(currentUser.id) ? " reacted" : ""}`}
+                onClick={() => {
+                  hideTooltip();
+                  onToggleReaction(g.emoji);
+                }}
+                disabled={!canAddReactions}
+              >
+                <span className="reaction-emoji">
+                  {g.emoji.startsWith("custom:")
+                    ? (() => {
+                        const eid = g.emoji.substring(7);
+                        const ce = emojis.find((e) => e.id === eid);
+                        return ce ? (
+                          <img
+                            src={`${getApiBase()}${ce.imageUrl}`}
+                            alt={`:${ce.name}:`}
+                            className="custom-emoji-reaction"
+                          />
+                        ) : (
+                          "?"
+                        );
+                      })()
+                    : g.emoji}
+                </span>
+                <span className="reaction-count">{g.count}</span>
+              </button>
+            </span>
           ))}
           {canAddReactions && (
             <button
@@ -176,6 +226,13 @@ const MessageReactions = forwardRef<
             </button>
           )}
         </div>
+      )}
+      {hovered && hoveredGroup && (
+        <ReactionTooltip
+          group={hoveredGroup}
+          anchor={hovered.anchor}
+          canAddReactions={canAddReactions}
+        />
       )}
       {showPicker && (
         <div

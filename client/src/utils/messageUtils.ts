@@ -1,4 +1,5 @@
-import type { Message } from "@abyss/shared";
+import { groupReactions as groupReactionsShared } from "@abyss/shared";
+import type { Message, ReactionGroup } from "@abyss/shared";
 
 export function formatTime(dateStr: string) {
   const d = new Date(dateStr);
@@ -15,18 +16,9 @@ export function formatDate(dateStr: string) {
   return d.toLocaleDateString();
 }
 
-export function groupReactions(message: Message) {
-  const groups: { emoji: string; userIds: string[]; count: number }[] = [];
-  for (const r of message.reactions ?? []) {
-    const existing = groups.find((g) => g.emoji === r.emoji);
-    if (existing) {
-      existing.userIds.push(r.userId);
-      existing.count++;
-    } else {
-      groups.push({ emoji: r.emoji, userIds: [r.userId], count: 1 });
-    }
-  }
-  return groups;
+// Message-shaped wrapper over the shared grouper, kept for the existing call sites.
+export function groupReactions(message: Message): ReactionGroup[] {
+  return groupReactionsShared(message.reactions ?? []);
 }
 
 // Lives in @abyss/shared so upload validation can reuse it; re-exported here for

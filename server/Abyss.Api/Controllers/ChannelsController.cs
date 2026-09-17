@@ -75,7 +75,7 @@ public class ChannelsController : ControllerBase
                     m.EditedAt,
                     m.IsDeleted,
                     m.IsSystem,
-                    m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+                    m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji, r.User.UserName!, r.User.DisplayName, r.User.AvatarUrl)).ToList(),
                     m.ReplyToMessageId,
                     m.ReplyToMessage == null ? null : new ReplyReferenceDto(
                         m.ReplyToMessage.Id,
@@ -115,7 +115,7 @@ public class ChannelsController : ControllerBase
                 m.EditedAt,
                 m.IsDeleted,
                 m.IsSystem,
-                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji, r.User.UserName!, r.User.DisplayName, r.User.AvatarUrl)).ToList(),
                 m.ReplyToMessageId,
                 m.ReplyToMessage == null ? null : new ReplyReferenceDto(
                     m.ReplyToMessage.Id,
@@ -186,7 +186,7 @@ public class ChannelsController : ControllerBase
                 m.EditedAt,
                 m.IsDeleted,
                 m.IsSystem,
-                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+                m.IsDeleted ? new List<ReactionDto>() : m.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji, r.User.UserName!, r.User.DisplayName, r.User.AvatarUrl)).ToList(),
                 m.ReplyToMessageId,
                 m.ReplyToMessage == null ? null : new ReplyReferenceDto(
                     m.ReplyToMessage.Id,
@@ -241,7 +241,7 @@ public class ChannelsController : ControllerBase
                     pm.Message.EditedAt,
                     pm.Message.IsDeleted,
                     pm.Message.IsSystem,
-                    pm.Message.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+                    pm.Message.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji, r.User.UserName!, r.User.DisplayName, r.User.AvatarUrl)).ToList(),
                     pm.Message.ReplyToMessageId,
                     pm.Message.ReplyToMessage == null ? null : new ReplyReferenceDto(
                         pm.Message.ReplyToMessage.Id,

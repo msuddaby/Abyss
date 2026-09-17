@@ -52,5 +52,6 @@ export type { UploadLimits, UploadValidationResult } from './utils/uploadLimits.
 export { parseMentions, resolveMentionName, resolveCustomEmoji, MENTION_EMOJI_REGEX } from './utils/mentions.js';
 export type { MentionSegment } from './utils/mentions.js';
 export { shouldGroupMessage, groupReactions } from './utils/messages.js';
+export type { ReactionGroup } from './utils/messages.js';
 export { getNameplateStyle, getMessageStyle, parseCosmeticCss } from './utils/cosmetics.js';
 export { parseValidationErrors, getFieldError, getGeneralError, hasFieldError } from './utils/validation.js';

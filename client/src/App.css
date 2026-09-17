@@ -2222,6 +2222,224 @@ label.has-error select:focus {
   z-index: 100;
 }
 
+/* Reaction hover tooltip ("Alice, Bob and Carol reacted with X").
+   Fixed-positioned and portalled to <body> so it is not clipped by the message-list
+   scroll container the way an absolutely-positioned tooltip would be. */
+.reaction-pill-wrap {
+  display: inline-flex;
+}
+
+.reaction-tooltip {
+  position: fixed;
+  z-index: 1200;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-tertiary);
+  background: var(--bg-floating);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.reaction-tooltip-line {
+  display: inline;
+}
+
+.reaction-tooltip-names {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.reaction-tooltip-emoji {
+  font-size: 15px;
+}
+
+.reaction-tooltip-emoji-img {
+  width: 18px;
+  height: 18px;
+  vertical-align: -4px;
+  object-fit: contain;
+}
+
+.reaction-tooltip-emoji-name {
+  margin-left: 2px;
+  color: var(--text-muted);
+}
+
+.reaction-tooltip-hint {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* "Show Reactions" modal */
+.reaction-details-modal {
+  width: 440px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.reaction-details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.reaction-details-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--header-primary);
+}
+
+.reaction-details-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+.reaction-details-close:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+
+.reaction-details-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.reaction-details-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.reaction-details-tab:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.reaction-details-tab.active {
+  border-color: var(--brand-primary);
+  background: rgba(44, 183, 160, 0.15);
+}
+
+.reaction-details-tab-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.reaction-details-tab-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reaction-details-tab.active .reaction-details-tab-count {
+  color: var(--brand-primary);
+}
+
+.reaction-details-glyph {
+  font-size: 16px;
+}
+
+.reaction-details-glyph-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.reaction-details-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.reaction-details-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.reaction-details-row:hover {
+  background: var(--bg-modifier-hover);
+}
+
+.reaction-details-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.reaction-details-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reaction-details-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.reaction-details-name {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reaction-details-username {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-deleted {
   opacity: 0.5;
 }

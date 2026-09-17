@@ -1,5 +1,6 @@
 import { useMessageStore, hasPermission, hasChannelPermission, Permission } from '@abyss/shared';
 import { useForumTopicStore } from '../../../stores/forumTopicStore';
+import { useReactionDetailsStore } from '../../../stores/reactionDetailsStore';
 import type { MenuItem, ProviderContext } from '../types';
 
 export function messageProvider(ctx: ProviderContext): MenuItem[] {
@@ -33,12 +34,22 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
     });
   }
 
+  if ((message.reactions?.length ?? 0) > 0) {
+    items.push({
+      id: 'message-show-reactions',
+      label: 'Show Reactions',
+      group: 'message',
+      order: 2,
+      action: () => useReactionDetailsStore.getState().open(message.id, message.channelId),
+    });
+  }
+
   if (canPin) {
     items.push({
       id: 'message-pin',
       label: isPinned ? 'Unpin Message' : 'Pin Message',
       group: 'message',
-      order: 2,
+      order: 3,
       action: () => {
         const store = useMessageStore.getState();
         if (isPinned) store.unpinMessage(message.id);
@@ -52,7 +63,7 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
       id: 'message-edit',
       label: 'Edit Message',
       group: 'message',
-      order: 3,
+      order: 4,
       action: actions.onEdit,
     });
   }
@@ -62,7 +73,7 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
       id: 'message-delete',
       label: 'Delete Message',
       group: 'message',
-      order: 4,
+      order: 5,
       danger: true,
       action: () => useMessageStore.getState().deleteMessage(message.id),
     });
@@ -82,7 +93,7 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
         id: 'message-forum-start',
         label: 'Start Forum Topic Here',
         group: 'message',
-        order: 5,
+        order: 6,
         action: () => useForumTopicStore.getState().setStart(message),
       });
     } else if (sameChannel && start.id !== message.id) {
@@ -93,14 +104,14 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
         id: 'message-forum-end',
         label: 'Create Forum Topic to Here…',
         group: 'message',
-        order: 5,
+        order: 6,
         action: () => useForumTopicStore.getState().openModal(first, second),
       });
       items.push({
         id: 'message-forum-cancel',
         label: 'Cancel Forum Topic Selection',
         group: 'message',
-        order: 6,
+        order: 7,
         action: () => useForumTopicStore.getState().clearStart(),
       });
     } else if (sameChannel && start.id === message.id) {
@@ -108,7 +119,7 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
         id: 'message-forum-cancel',
         label: 'Cancel Forum Topic Selection',
         group: 'message',
-        order: 5,
+        order: 6,
         action: () => useForumTopicStore.getState().clearStart(),
       });
     }

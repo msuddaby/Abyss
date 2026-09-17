@@ -16,6 +16,7 @@ import ContextMenu from '../components/contextMenu/ContextMenu';
 import RoleAssignModal from '../components/RoleAssignModal';
 import ModerationConfirmModal from '../components/ModerationConfirmModal';
 import CreateForumTopicModal from '../components/CreateForumTopicModal';
+import ReactionDetailsModal from '../components/ReactionDetailsModal';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import GuestUpgradeModal from '../components/GuestUpgradeModal';
 import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore, useAuthStore } from '@abyss/shared';
@@ -327,6 +328,7 @@ export default function MainLayout() {
       <RoleAssignModal />
       <ModerationConfirmModal />
       <CreateForumTopicModal />
+      <ReactionDetailsModal />
       {isBrowsingLibrary && <MediaLibraryBrowser onClose={() => setIsBrowsingLibrary(false)} />}
     </div>
   );

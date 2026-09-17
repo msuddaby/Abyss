@@ -869,7 +869,10 @@ public class ChatHub : Hub
             };
             _db.Reactions.Add(reaction);
             await _db.SaveChangesAsync();
-            var dto = new ReactionDto(reaction.Id, reaction.MessageId, reaction.UserId, reaction.Emoji);
+            var reactor = await _db.Users.FindAsync(UserId);
+            if (reactor == null) return;
+            var dto = new ReactionDto(reaction.Id, reaction.MessageId, reaction.UserId, reaction.Emoji,
+                reactor.UserName!, reactor.DisplayName, reactor.AvatarUrl);
             await Clients.Group($"channel:{message.ChannelId}").SendAsync("ReactionAdded", dto);
         }
     }
@@ -883,7 +886,7 @@ public class ChatHub : Hub
             .Include(m => m.Channel)
             .Include(m => m.Author)
             .Include(m => m.Attachments)
-            .Include(m => m.Reactions)
+            .Include(m => m.Reactions).ThenInclude(r => r.User)
             .Include(m => m.ReplyToMessage).ThenInclude(r => r!.Author)
             .FirstOrDefaultAsync(m => m.Id == msgGuid);
         if (message == null || message.IsDeleted || message.IsSystem) return;
@@ -930,7 +933,7 @@ public class ChatHub : Hub
             message.EditedAt,
             message.IsDeleted,
             message.IsSystem,
-            message.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji)).ToList(),
+            message.Reactions.Select(r => new ReactionDto(r.Id, r.MessageId, r.UserId, r.Emoji, r.User.UserName!, r.User.DisplayName, r.User.AvatarUrl)).ToList(),
             message.ReplyToMessageId,
             message.ReplyToMessage == null ? null : new ReplyReferenceDto(
                 message.ReplyToMessage.Id,

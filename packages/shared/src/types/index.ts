@@ -265,6 +265,12 @@ export interface Reaction {
   messageId: string;
   userId: string;
   emoji: string;
+  // Reactor identity, denormalised onto the reaction so "who reacted" works in DMs and
+  // for users who are no longer in the member store. Optional: messages cached before
+  // this shipped won't have it — always fall back (see client/src/utils/reactionUtils.ts).
+  username?: string;
+  displayName?: string;
+  avatarUrl?: string | null;
 }
 
 export interface Attachment {

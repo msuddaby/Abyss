@@ -42,7 +42,7 @@ public record InviteInfoDto(string ServerName, string? ServerIconUrl, int Member
 public record ReplyReferenceDto(Guid Id, string Content, string AuthorId, UserDto Author, bool IsDeleted);
 public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo, string? GhostAuthorName = null, string? GhostAuthorAvatarUrl = null, string? XfPostUrl = null);
 public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto PinnedBy);
-public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji);
+public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji, string Username = "", string DisplayName = "", string? AvatarUrl = null);
 public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string? PosterPath, string ContentType, long Size, int? Width, int? Height);
 public record AuditLogDto(Guid Id, string Action, string ActorId, UserDto Actor, string? TargetId, string? TargetName, string? Details, DateTime CreatedAt);
 public record CreateRoleRequest(

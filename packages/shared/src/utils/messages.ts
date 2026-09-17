@@ -18,18 +18,27 @@ export function shouldGroupMessage(msg: Message, prev: Message | undefined): boo
   );
 }
 
+export interface ReactionGroup {
+  emoji: string;
+  userIds: string[];
+  /** The full reaction rows, in the order they arrived — used to name the reactors. */
+  reactors: Reaction[];
+  count: number;
+}
+
 /**
  * Group reactions by emoji, collecting user IDs.
  */
-export function groupReactions(reactions: Reaction[]): { emoji: string; userIds: string[]; count: number }[] {
-  const groups: { emoji: string; userIds: string[]; count: number }[] = [];
+export function groupReactions(reactions: Reaction[]): ReactionGroup[] {
+  const groups: ReactionGroup[] = [];
   for (const r of reactions ?? []) {
     const existing = groups.find((g) => g.emoji === r.emoji);
     if (existing) {
       existing.userIds.push(r.userId);
+      existing.reactors.push(r);
       existing.count++;
     } else {
-      groups.push({ emoji: r.emoji, userIds: [r.userId], count: 1 });
+      groups.push({ emoji: r.emoji, userIds: [r.userId], reactors: [r], count: 1 });
     }
   }
   return groups;
