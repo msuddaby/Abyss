@@ -71,6 +71,55 @@ export default function VoiceControls() {
   const keybindDisconnect = useVoiceStore((s) => s.keybindDisconnect);
   const clipKeybinds = useSoundboardStore((s) => s.clipKeybinds);
 
+  const playClipById = useCallback((clipId: string) => {
+    if (!currentChannelId) return;
+    void resilientInvoke('PlaySoundboardClip', currentChannelId, clipId).catch((err) => {
+      console.warn('Failed to play soundboard clip', err);
+    });
+  }, [currentChannelId]);
+
+  // Clip ids the desktop app has armed as OS-level hotkeys. Those are skipped by
+  // the in-window handler below, or a keypress with the window focused would fire
+  // the clip twice.
+  const globallyBound = useRef<Set<string>>(new Set());
+
+  // On desktop, hand the clip binds to the main process so they fire even when
+  // Abyss isn't focused — the same uIOhook the PTT key uses. Keys uiohook can't
+  // represent (most macro/media keys) come back as unsupported and stay with the
+  // in-window handler.
+  useEffect(() => {
+    if (!window.electron || !currentChannelId || !canUseSoundboard) return;
+    const entries = Object.entries(clipKeybinds).map(([clipId, bind]) => ({ clipId, bind }));
+    if (entries.length === 0) return;
+
+    // Claim everything up front: until the main process answers, assume it took
+    // the lot, so the window handler can't double-fire in the gap.
+    globallyBound.current = new Set(entries.map((e) => e.clipId));
+    let cancelled = false;
+
+    const unsubscribe = window.electron.onGlobalClipTrigger(playClipById);
+    window.electron
+      .registerClipBinds(entries)
+      .then((unsupported) => {
+        if (cancelled) return;
+        globallyBound.current = new Set(
+          entries.map((e) => e.clipId).filter((id) => !unsupported.includes(id)),
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('Failed to register global clip keybinds', err);
+        globallyBound.current = new Set();
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      window.electron!.unregisterClipBinds();
+      globallyBound.current = new Set();
+    };
+  }, [currentChannelId, canUseSoundboard, clipKeybinds, playClipById]);
+
   useEffect(() => {
     if (!currentChannelId) return;
 
@@ -96,11 +145,10 @@ export default function VoiceControls() {
       }
       if (!canUseSoundboard) return;
       for (const [clipId, bind] of Object.entries(clipKeybinds)) {
+        if (globallyBound.current.has(clipId)) continue;
         if (matchesKeybind(e, bind)) {
           e.preventDefault();
-          void resilientInvoke('PlaySoundboardClip', currentChannelId, clipId).catch((err) => {
-            console.warn('Failed to play soundboard clip', err);
-          });
+          playClipById(clipId);
           break;
         }
       }
@@ -108,7 +156,7 @@ export default function VoiceControls() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [currentChannelId, toggleMute, toggleDeafen, leaveVoice, keybindToggleMute, keybindToggleDeafen, keybindDisconnect, clipKeybinds, canUseSoundboard]);
+  }, [currentChannelId, toggleMute, toggleDeafen, leaveVoice, keybindToggleMute, keybindToggleDeafen, keybindDisconnect, clipKeybinds, canUseSoundboard, playClipById]);
 
   useEffect(() => {
     if (!canStream && isScreenSharing) {

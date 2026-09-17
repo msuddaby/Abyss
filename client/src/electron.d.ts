@@ -41,6 +41,12 @@ interface Window {
     onGlobalPttPress: (callback: () => void) => () => void; // Returns unsubscribe function
     onGlobalPttRelease: (callback: () => void) => () => void; // Returns unsubscribe function
 
+    // Soundboard clip keybinds (OS-level, same hook as PTT).
+    // Resolves with the clip ids whose key has no uiohook equivalent.
+    registerClipBinds: (binds: { clipId: string; bind: string }[]) => Promise<string[]>;
+    unregisterClipBinds: () => void;
+    onGlobalClipTrigger: (callback: (clipId: string) => void) => () => void; // Returns unsubscribe function
+
     // Persistent storage (electron-store via main process)
     getStoreItem: (key: string) => string | null;
     setStoreItem: (key: string, value: string) => void;

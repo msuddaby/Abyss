@@ -38,6 +38,26 @@ contextBridge.exposeInMainWorld('electron', {
     };
   },
 
+  // Soundboard clip keybinds (OS-level, same hook as PTT).
+  // Resolves with the clip ids whose key has no uiohook equivalent.
+  registerClipBinds: (binds: { clipId: string; bind: string }[]): Promise<string[]> => {
+    return ipcRenderer.invoke('register-clip-binds', binds);
+  },
+
+  unregisterClipBinds: () => {
+    ipcRenderer.send('unregister-clip-binds');
+  },
+
+  onGlobalClipTrigger: (callback: (clipId: string) => void) => {
+    const subscription = (_event: any, clipId: string) => callback(clipId);
+    ipcRenderer.on('global-clip-trigger', subscription);
+
+    // Return unsubscribe function
+    return () => {
+      ipcRenderer.removeListener('global-clip-trigger', subscription);
+    };
+  },
+
   // Persistent storage (electron-store via main process)
   getStoreItem: (key: string) => {
     return ipcRenderer.sendSync('store-get', key);

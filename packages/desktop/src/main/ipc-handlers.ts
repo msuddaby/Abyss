@@ -51,6 +51,18 @@ export function setupIpcHandlers(
     shortcutManager.forceReleasePtt();
   });
 
+  // Register soundboard clip keybinds for OS-level triggering. Returns the clip
+  // ids whose key uiohook can't represent, so the renderer can keep handling
+  // those in-window rather than dropping them.
+  ipcMain.handle('register-clip-binds', (_event, binds: { clipId: string; bind: string }[]) => {
+    return shortcutManager.registerClipBinds(binds ?? []);
+  });
+
+  // Unregister all soundboard clip keybinds
+  ipcMain.on('unregister-clip-binds', () => {
+    shortcutManager.unregisterClipBinds();
+  });
+
   // Show desktop notification
   ipcMain.on('show-notification', (_event, title: string, body: string, data?: any) => {
     showNotification(window, title, body, data);

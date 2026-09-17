@@ -1,5 +1,5 @@
 import { BrowserWindow, systemPreferences } from 'electron';
-import { uIOhook, UiohookKey } from 'uiohook-napi';
+import { uIOhook, UiohookKey, type UiohookKeyboardEvent } from 'uiohook-napi';
 
 /**
  * Global shortcut manager for PTT functionality using uiohook-napi.
@@ -8,6 +8,15 @@ import { uIOhook, UiohookKey } from 'uiohook-napi';
  * enabling true hold-to-talk PTT (hold key = mic on, release key = mic off).
  * Also supports mouse button PTT bindings.
  */
+/** A soundboard clip bound to an OS-level key combo. */
+interface ClipBind {
+  clipId: string;
+  keycode: number;
+  mod: boolean;
+  shift: boolean;
+  alt: boolean;
+}
+
 export class GlobalShortcutManager {
   private window: BrowserWindow;
   private currentKey: string | null = null;
@@ -15,6 +24,9 @@ export class GlobalShortcutManager {
   private targetMouseButton: number | null = null;
   private isPttActive = false;
   private started = false;
+  // Soundboard clip keybinds. Independent of PTT: both share the one uIOhook
+  // listener, and either alone is reason enough to keep the hook running.
+  private clipBinds: ClipBind[] = [];
 
   constructor(window: BrowserWindow) {
     this.window = window;
@@ -73,6 +85,8 @@ export class GlobalShortcutManager {
           this.window.webContents.send('global-ptt-press');
         }
       }
+
+      this.dispatchClipBinds(e);
     });
 
     uIOhook.on('keyup', (e) => {
@@ -256,6 +270,67 @@ export class GlobalShortcutManager {
     return true;
   }
 
+  /**
+   * Register soundboard clip keybinds for OS-level triggering, replacing any
+   * previously registered set.
+   *
+   * Binds use the renderer's format — "mod+shift+m", "f9", "launchapplication7" —
+   * where "mod" is Ctrl (or Cmd on macOS). Returns the clip ids whose key has no
+   * uiohook equivalent (macro/media keys largely don't); the renderer keeps
+   * handling those itself while the window is focused, so they still work.
+   */
+  registerClipBinds(binds: { clipId: string; bind: string }[]): string[] {
+    this.clipBinds = [];
+    const unsupported: string[] = [];
+
+    for (const { clipId, bind } of binds) {
+      const parts = bind.split('+');
+      const key = parts.pop();
+      if (!key) continue;
+      const keycode = this.webKeyToUiohook(key);
+      if (keycode === null) {
+        console.warn('[GlobalShortcuts] No uiohook keycode for clip bind:', bind);
+        unsupported.push(clipId);
+        continue;
+      }
+      this.clipBinds.push({
+        clipId,
+        keycode,
+        mod: parts.includes('mod'),
+        shift: parts.includes('shift'),
+        alt: parts.includes('alt'),
+      });
+    }
+
+    console.log('[GlobalShortcuts] Registered', this.clipBinds.length, 'clip bind(s),',
+      unsupported.length, 'unsupported');
+    if (this.clipBinds.length > 0) this.ensureStarted();
+    return unsupported;
+  }
+
+  unregisterClipBinds(): void {
+    if (this.clipBinds.length === 0) return;
+    console.log('[GlobalShortcuts] Unregistering', this.clipBinds.length, 'clip bind(s)');
+    this.clipBinds = [];
+  }
+
+  /**
+   * Fire the first clip whose bind matches this keypress. Modifiers must match
+   * exactly, so a bare "f9" bind doesn't also fire on Ctrl+F9 — otherwise it
+   * would shadow whatever the user actually meant to press.
+   */
+  private dispatchClipBinds(e: UiohookKeyboardEvent): void {
+    if (this.clipBinds.length === 0) return;
+    const mod = e.ctrlKey || e.metaKey;
+    for (const b of this.clipBinds) {
+      if (b.keycode !== e.keycode) continue;
+      if (b.mod !== mod || b.shift !== e.shiftKey || b.alt !== e.altKey) continue;
+      console.log('[GlobalShortcuts] Clip bind triggered:', b.clipId);
+      this.window.webContents.send('global-clip-trigger', b.clipId);
+      return;
+    }
+  }
+
   unregisterPttKey(): void {
     if (!this.currentKey) return;
     console.log('[GlobalShortcuts] Unregistering PTT key:', this.currentKey);
@@ -340,6 +415,13 @@ export class GlobalShortcutManager {
       return keyMap[key];
     }
 
+    // Soundboard binds store a lowercased e.key ("f9", "arrowup"); the PTT path
+    // passes the original casing. Match either.
+    const lower = key.toLowerCase();
+    for (const [name, code] of Object.entries(keyMap)) {
+      if (name.toLowerCase() === lower) return code;
+    }
+
     // Single letter keys (a-z)
     if (key.length === 1 && /[a-zA-Z]/.test(key)) {
       const upper = key.toUpperCase() as keyof typeof UiohookKey;
@@ -357,9 +439,9 @@ export class GlobalShortcutManager {
     }
 
     // F1-F24 function keys
-    const fMatch = key.match(/^F(\d+)$/);
+    const fMatch = lower.match(/^f(\d+)$/);
     if (fMatch) {
-      const fKey = key as keyof typeof UiohookKey;
+      const fKey = `F${fMatch[1]}` as keyof typeof UiohookKey;
       if (UiohookKey[fKey] !== undefined) {
         return UiohookKey[fKey] as number;
       }
@@ -371,6 +453,7 @@ export class GlobalShortcutManager {
 
   cleanup(): void {
     this.unregisterPttKey();
+    this.unregisterClipBinds();
     if (this.started) {
       uIOhook.stop();
       this.started = false;
