@@ -418,6 +418,19 @@ export class GlobalShortcutManager {
     // Soundboard binds store a lowercased e.key ("f9", "arrowup"); the PTT path
     // passes the original casing. Match either.
     const lower = key.toLowerCase();
+
+    // Numpad binds arrive as a lowercased e.code ("numpad1", "numpadadd").
+    // These are distinct keycodes from the main keyboard — Numpad1 is 79 where
+    // top-row 1 is 2 — so they must not fall through to the digit lookup below.
+    if (lower.startsWith('numpad')) {
+      const rest = lower.slice(6);
+      const name = `Numpad${rest.charAt(0).toUpperCase()}${rest.slice(1)}` as keyof typeof UiohookKey;
+      if (UiohookKey[name] !== undefined) {
+        return UiohookKey[name] as number;
+      }
+      console.warn('[GlobalShortcuts] Unknown numpad key:', key);
+      return null;
+    }
     for (const [name, code] of Object.entries(keyMap)) {
       if (name.toLowerCase() === lower) return code;
     }

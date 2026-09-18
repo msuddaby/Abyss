@@ -2,6 +2,17 @@
 // shortcuts (mute/deafen/disconnect) and soundboard clip keybinds, so both
 // follow identical rules for what can be bound and how it's displayed.
 
+/**
+ * Numpad keys are identified by e.code, not e.key: with NumLock on e.key is a
+ * bare "1" — indistinguishable from the top row — and with NumLock off it's
+ * "End"/"ArrowDown"/etc. e.code stays "Numpad1" either way, so a numpad bind
+ * survives the NumLock state it was recorded under.
+ */
+function numpadToken(e: KeyboardEvent): string | null {
+  if (!e.code || !e.code.startsWith('Numpad')) return null;
+  return e.code.toLowerCase();
+}
+
 export function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
   const parts = bind.split('+');
   const key = parts.pop()!;
@@ -10,8 +21,18 @@ export function matchesKeybind(e: KeyboardEvent, bind: string): boolean {
   if (mods.has('mod') && !mod) return false;
   if (mods.has('shift') && !e.shiftKey) return false;
   if (mods.has('alt') && !e.altKey) return false;
+  if (key.startsWith('numpad')) return numpadToken(e) === key;
   return e.key.toLowerCase() === key;
 }
+
+const NUMPAD_LABELS: Record<string, string> = {
+  add: '+',
+  subtract: '-',
+  multiply: '*',
+  divide: '/',
+  decimal: '.',
+  enter: 'Enter',
+};
 
 export function formatKeybind(bind: string): string {
   const isMac = /mac|iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -21,6 +42,7 @@ export function formatKeybind(bind: string): string {
       if (p === 'mod') return isMac ? '⌘' : 'Ctrl';
       if (p === 'shift') return 'Shift';
       if (p === 'alt') return isMac ? '⌥' : 'Alt';
+      if (p.startsWith('numpad')) return `Num ${NUMPAD_LABELS[p.slice(6)] ?? p.slice(6).toUpperCase()}`;
       return p.toUpperCase();
     })
     .join('+');
@@ -47,14 +69,20 @@ const RESERVED_KEYS = ['Escape', 'Tab', 'Enter'];
  */
 export function captureKeybindFromEvent(e: KeyboardEvent): string | null {
   if (['Control', 'Meta', 'Shift', 'Alt'].includes(e.key)) return null;
-  if (RESERVED_KEYS.includes(e.key)) return null;
-  const isSpecialKey = e.key.length > 1;
+
+  // Numpad is resolved first: NumpadEnter must not be swallowed by the Enter
+  // reservation (that's the main Enter's job), and a numpad digit is bindable
+  // bare even though its e.key is a lone typeable "1".
+  const numpad = numpadToken(e);
+  if (!numpad && RESERVED_KEYS.includes(e.key)) return null;
+
+  const isSpecialKey = numpad !== null || e.key.length > 1;
   const hasMod = e.ctrlKey || e.metaKey;
   if (!isSpecialKey && !hasMod && !e.altKey && !e.shiftKey) return null;
   const parts: string[] = [];
   if (hasMod) parts.push('mod');
   if (e.altKey) parts.push('alt');
   if (e.shiftKey) parts.push('shift');
-  parts.push(e.key.toLowerCase());
+  parts.push(numpad ?? e.key.toLowerCase());
   return parts.join('+');
 }
