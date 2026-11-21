@@ -2,11 +2,15 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
 using Abyss.Api.Data;
 using Abyss.Api.DTOs;
 using Abyss.Api.Hubs;
@@ -29,6 +33,13 @@ public class MediaProvidersController : ControllerBase
     private readonly WatchPartyService _watchPartyService;
     private readonly IMemoryCache _thumbCache;
     private readonly YtDlpService _ytDlpService;
+    private readonly TokenValidationParameters _mediaTokenParams;
+
+    // <video>/<img> elements can't send an Authorization header, so these proxies
+    // accept the access token as ?token=. Playback URLs embed the token once and
+    // HLS keeps fetching segments with it, so allow a bounded grace period past
+    // expiry (signature, issuer and audience are still strictly validated).
+    private static readonly TimeSpan MediaTokenExpiryGrace = TimeSpan.FromHours(6);
     private static readonly MemoryCacheEntryOptions ThumbCacheOptions = new()
     {
         AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(24),
@@ -44,8 +55,12 @@ public class MediaProvidersController : ControllerBase
         ProviderConfigProtector protector,
         WatchPartyService watchPartyService,
         IMemoryCache thumbCache,
-        YtDlpService ytDlpService)
+        YtDlpService ytDlpService,
+        IOptionsMonitor<JwtBearerOptions> jwtOptions)
     {
+        _mediaTokenParams = jwtOptions.Get(JwtBearerDefaults.AuthenticationScheme)
+            .TokenValidationParameters.Clone();
+        _mediaTokenParams.ClockSkew = MediaTokenExpiryGrace;
         _db = db;
         _perms = perms;
         _hub = hub;
@@ -57,6 +72,51 @@ public class MediaProvidersController : ControllerBase
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
+
+    /// <summary>
+    /// Resolve the caller for [AllowAnonymous] media endpoints: a ?token= query
+    /// param (signature-validated) or the normal Authorization header.
+    /// </summary>
+    private string? ResolveMediaUserId(string? token)
+    {
+        if (string.IsNullOrEmpty(token))
+            return User.FindFirstValue(ClaimTypes.NameIdentifier);
+        try
+        {
+            var principal = new JwtSecurityTokenHandler().ValidateToken(token, _mediaTokenParams, out _);
+            return principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Join a client-supplied path onto a provider's base URL, refusing anything
+    /// that could change the target host (e.g. "@evil.com/", "//evil.com") or
+    /// escape the allowed path prefix. Returns null if the path is rejected.
+    /// </summary>
+    private static string? BuildUpstreamUrl(string serverUrl, string path, string requiredPrefix)
+    {
+        if (string.IsNullOrEmpty(path) || !path.StartsWith(requiredPrefix, StringComparison.Ordinal))
+            return null;
+        if (path.Contains('\\') || path.Any(char.IsControl))
+            return null;
+        var pathOnly = path.Split('?', 2)[0];
+        if (pathOnly.Split('/').Any(seg => Uri.UnescapeDataString(seg) == ".."))
+            return null;
+
+        if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out var baseUri)) return null;
+        var combined = serverUrl + path;
+        if (!Uri.TryCreate(combined, UriKind.Absolute, out var full)) return null;
+        if (full.Scheme != baseUri.Scheme
+            || !string.Equals(full.Host, baseUri.Host, StringComparison.OrdinalIgnoreCase)
+            || full.Port != baseUri.Port
+            || !string.IsNullOrEmpty(full.UserInfo))
+            return null;
+        return combined;
+    }
 
     [HttpGet]
     public async Task<ActionResult<List<MediaProviderConnectionDto>>> ListConnections(Guid serverId)
@@ -321,26 +381,7 @@ public class MediaProvidersController : ControllerBase
     [HttpGet("{connectionId}/stream/{itemId}")]
     public async Task<IActionResult> StreamItem(Guid serverId, Guid connectionId, string itemId, [FromQuery] string? token = null)
     {
-        // Check auth from query string (for video element) or header
-        string? userId = null;
-        if (!string.IsNullOrEmpty(token))
-        {
-            // Validate JWT from query string
-            try
-            {
-                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-                var jwtToken = tokenHandler.ReadJwtToken(token);
-                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-            }
-            catch
-            {
-                return Unauthorized();
-            }
-        }
-        else
-        {
-            userId = UserId;
-        }
+        var userId = ResolveMediaUserId(token);
 
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
         if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
@@ -419,22 +460,7 @@ public class MediaProvidersController : ControllerBase
     public async Task<IActionResult> HlsProxy(Guid serverId, Guid connectionId,
         [FromQuery] string path, [FromQuery] string? token = null)
     {
-        // Auth check (same pattern as StreamItem)
-        string? userId = null;
-        if (!string.IsNullOrEmpty(token))
-        {
-            try
-            {
-                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-                var jwtToken = tokenHandler.ReadJwtToken(token);
-                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            }
-            catch { return Unauthorized(); }
-        }
-        else
-        {
-            userId = UserId;
-        }
+        var userId = ResolveMediaUserId(token);
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
         if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
 
@@ -448,8 +474,10 @@ public class MediaProvidersController : ControllerBase
         var serverUrl = configDoc.RootElement.GetProperty("serverUrl").GetString()!.TrimEnd('/');
         var plexToken = configDoc.RootElement.GetProperty("authToken").GetString()!;
 
-        // Build full Plex URL — append token if not already present
-        var plexUrl = $"{serverUrl}{path}";
+        // Build full Plex URL — path must stay on the configured Plex host and
+        // under the transcode tree, or the admin token below could be sent elsewhere.
+        var plexUrl = BuildUpstreamUrl(serverUrl, path, "/video/:/transcode/");
+        if (plexUrl == null) return BadRequest("Invalid path");
         if (!plexUrl.Contains("X-Plex-Token"))
             plexUrl += (plexUrl.Contains('?') ? "&" : "?") + $"X-Plex-Token={plexToken}";
 
@@ -650,22 +678,7 @@ public class MediaProvidersController : ControllerBase
     [HttpGet("{connectionId}/ytdlp-stream")]
     public async Task<IActionResult> YtDlpStreamProxy(Guid serverId, Guid connectionId, [FromQuery] string url, [FromQuery] string? token = null)
     {
-        // Auth check (same pattern as StreamItem)
-        string? userId = null;
-        if (!string.IsNullOrEmpty(token))
-        {
-            try
-            {
-                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-                var jwtToken = tokenHandler.ReadJwtToken(token);
-                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            }
-            catch { return Unauthorized(); }
-        }
-        else
-        {
-            userId = UserId;
-        }
+        var userId = ResolveMediaUserId(token);
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
         if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
 
@@ -725,27 +738,12 @@ public class MediaProvidersController : ControllerBase
     public async Task<IActionResult> ThumbnailProxy(Guid serverId, Guid connectionId,
         [FromQuery] string path, [FromQuery] string? token = null)
     {
-        // Auth check (same pattern as HlsProxy)
-        string? userId = null;
-        if (!string.IsNullOrEmpty(token))
-        {
-            try
-            {
-                var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-                var jwtToken = tokenHandler.ReadJwtToken(token);
-                userId = jwtToken.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            }
-            catch { return Unauthorized(); }
-        }
-        else
-        {
-            userId = UserId;
-        }
+        var userId = ResolveMediaUserId(token);
         if (string.IsNullOrEmpty(userId)) return Unauthorized();
         if (!await _perms.IsMemberAsync(serverId, userId)) return Forbid();
 
         // Check server-side cache first
-        var cacheKey = $"thumb:{connectionId}:{path}";
+        var cacheKey = $"thumb:{serverId}:{connectionId}:{path}";
         if (_thumbCache.TryGetValue(cacheKey, out (byte[] Data, string ContentType) cached))
         {
             Response.Headers["Cache-Control"] = "public, max-age=86400";
@@ -761,7 +759,8 @@ public class MediaProvidersController : ControllerBase
         var serverUrl = configDoc.RootElement.GetProperty("serverUrl").GetString()!.TrimEnd('/');
         var plexToken = configDoc.RootElement.GetProperty("authToken").GetString()!;
 
-        var plexUrl = $"{serverUrl}{path}";
+        var plexUrl = BuildUpstreamUrl(serverUrl, path, "/library/");
+        if (plexUrl == null) return BadRequest("Invalid path");
         if (!plexUrl.Contains("X-Plex-Token"))
             plexUrl += (plexUrl.Contains('?') ? "&" : "?") + $"X-Plex-Token={plexToken}";
 

@@ -1542,6 +1542,17 @@ public class ChatHub : Hub
         await Clients.Group($"voice:{channelId}").SendAsync("WatchPartyHostChanged", newHostUserId);
     }
 
+    // Watch party: sysadmin forces everyone else in the party to unmute and tune back in
+    public async Task ForceUnmuteWatchParty(string channelId)
+    {
+        if (!Context.User!.HasClaim("sysadmin", "true")) return;
+        if (!Guid.TryParse(channelId, out var channelGuid)) return;
+        if (_watchPartyService.GetParty(channelGuid) == null) return;
+        if (!_voiceState.IsUserInChannel(channelGuid, UserId)) return;
+
+        await Clients.OthersInGroup($"voice:{channelId}").SendAsync("WatchPartyForceUnmuted");
+    }
+
     // Get active watch parties for a server (for sidebar WATCH badges)
     public async Task<Dictionary<Guid, string>> GetServerWatchParties(string serverId)
     {

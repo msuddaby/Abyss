@@ -54,3 +54,17 @@ export function audioBufferToWavFile(
   const wavName = fileName.replace(/\.[^.]+$/, '.wav');
   return new File([wavBuffer], wavName, { type: 'audio/wav' });
 }
+
+// Media sliders (attachments, watch parties) are expressed in "user" units where
+// 1.0 is a comfortable default and MEDIA_VOLUME_MAX is the boost ceiling. Raw
+// element/player volume at 1.0 is far too loud, so user units are scaled down.
+export const MEDIA_VOLUME_SCALE = 0.15;
+export const MEDIA_VOLUME_MAX = 2;
+
+export function toMediaVolume(userVolume: number): number {
+  return Math.max(0, Math.min(MEDIA_VOLUME_MAX, userVolume)) * MEDIA_VOLUME_SCALE;
+}
+
+export function fromMediaVolume(mediaVolume: number): number {
+  return Math.min(MEDIA_VOLUME_MAX, mediaVolume / MEDIA_VOLUME_SCALE);
+}

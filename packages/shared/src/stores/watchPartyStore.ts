@@ -7,9 +7,13 @@ interface WatchPartyState {
   activeParty: WatchParty | null;
   isBrowsingLibrary: boolean;
   isTunedIn: boolean;
+  /** Set by a sysadmin force-unmute; WatchPartyPlayer consumes and clears it. */
+  pendingForceUnmute: boolean;
 
   setActiveParty: (party: WatchParty | null) => void;
   setTunedIn: (val: boolean) => void;
+  receiveForceUnmute: () => void;
+  clearForceUnmute: () => void;
   updatePlaybackState: (timeMs: number, isPlaying: boolean) => void;
   setQueue: (queue: QueueItem[]) => void;
   updateHost: (hostUserId: string) => void;
@@ -22,6 +26,7 @@ interface WatchPartyState {
   clearQueue: (channelId: string) => Promise<void>;
   reorderQueue: (channelId: string, newOrder: number[]) => Promise<void>;
   transferHost: (channelId: string, newHostUserId: string) => Promise<void>;
+  forceUnmute: (channelId: string) => Promise<void>;
 
   setIsBrowsingLibrary: (val: boolean) => void;
 }
@@ -30,9 +35,15 @@ export const useWatchPartyStore = create<WatchPartyState>((set, get) => ({
   activeParty: null,
   isBrowsingLibrary: false,
   isTunedIn: true,
+  pendingForceUnmute: false,
 
   setActiveParty: (party) => set({ activeParty: party, ...(party ? { isTunedIn: true } : {}) }),
   setTunedIn: (val) => set({ isTunedIn: val }),
+  receiveForceUnmute: () => {
+    if (!get().activeParty) return;
+    set({ isTunedIn: true, pendingForceUnmute: true });
+  },
+  clearForceUnmute: () => set({ pendingForceUnmute: false }),
 
   updatePlaybackState: (timeMs, isPlaying) => {
     const { activeParty } = get();
@@ -123,6 +134,16 @@ export const useWatchPartyStore = create<WatchPartyState>((set, get) => ({
       await conn.invoke('TransferWatchPartyHost', channelId, newHostUserId);
     } catch (e) {
       console.error('Failed to transfer host:', e);
+      throw e;
+    }
+  },
+
+  forceUnmute: async (channelId) => {
+    try {
+      const conn = getConnection();
+      await conn.invoke('ForceUnmuteWatchParty', channelId);
+    } catch (e) {
+      console.error('Failed to force unmute watch party:', e);
       throw e;
     }
   },

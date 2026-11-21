@@ -6,6 +6,10 @@ import { YouTubePlayerAdapter } from '../services/playerAdapters/YouTubePlayerAd
 import type { PlayerAdapter } from '../services/playerAdapters/PlayerAdapter';
 import WatchPartyControls from './WatchPartyControls';
 import WatchPartyQueue from './WatchPartyQueue';
+import { MEDIA_VOLUME_MAX, toMediaVolume } from '../utils/audioUtils';
+
+// Stored in scaled user units (see toMediaVolume); v2 so pre-scaling values aren't reused.
+const WP_VOLUME_KEY = 'wp-volume-v2';
 
 function formatTime(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -35,7 +39,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
   const [playerError, setPlayerError] = useState<string | null>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('wp-volume');
+    const saved = localStorage.getItem(WP_VOLUME_KEY);
     return saved ? parseFloat(saved) : 1;
   });
 
@@ -108,8 +112,8 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     });
 
     // Apply saved volume (read directly from storage to avoid stale closure)
-    const savedVolume = localStorage.getItem('wp-volume');
-    adapter.setVolume(savedVolume ? parseFloat(savedVolume) : 1);
+    const savedVolume = localStorage.getItem(WP_VOLUME_KEY);
+    adapter.setVolume(toMediaVolume(savedVolume ? parseFloat(savedVolume) : 1));
 
     // Auto-play and sync to current position
     if (activeParty) {
@@ -205,9 +209,17 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
 
   const handleVolumeChange = useCallback((newVolume: number) => {
     setVolume(newVolume);
-    localStorage.setItem('wp-volume', String(newVolume));
-    adapterRef.current?.setVolume(newVolume);
+    localStorage.setItem(WP_VOLUME_KEY, String(newVolume));
+    adapterRef.current?.setVolume(toMediaVolume(newVolume));
   }, []);
+
+  // Sysadmin force-unmute: bring a muted viewer back to the default level.
+  const pendingForceUnmute = useWatchPartyStore((s) => s.pendingForceUnmute);
+  useEffect(() => {
+    if (!pendingForceUnmute) return;
+    useWatchPartyStore.getState().clearForceUnmute();
+    if (volume === 0) handleVolumeChange(1);
+  }, [pendingForceUnmute, volume, handleVolumeChange]);
 
   const handleNextInQueue = useCallback(async () => {
     if (!currentChannelId) return;
@@ -348,7 +360,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
                     if (volume > 0) {
                       handleVolumeChange(0);
                     } else {
-                      const saved = localStorage.getItem('wp-volume');
+                      const saved = localStorage.getItem(WP_VOLUME_KEY);
                       handleVolumeChange(saved ? parseFloat(saved) || 1 : 1);
                     }
                   }} title={volume === 0 ? 'Unmute' : 'Mute'}>
@@ -366,7 +378,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
                     type="range"
                     className="wp-volume-slider"
                     min="0"
-                    max="1"
+                    max={MEDIA_VOLUME_MAX}
                     step="0.01"
                     value={volume}
                     onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}

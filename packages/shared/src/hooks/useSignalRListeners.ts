@@ -301,7 +301,7 @@ export function useSignalRListeners() {
         'Error', 'RateLimited', 'ConfigUpdated',
         'ServerDefaultNotificationLevelChanged', 'NotificationSettingsChanged', 'UserPreferencesChanged',
         'WatchPartyStarted', 'WatchPartyStopped', 'WatchPartyActive',
-        'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged',
+        'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged', 'WatchPartyForceUnmuted',
         'WatchPartyStartedInChannel', 'WatchPartyStoppedInChannel',
         'MediaProviderLinked', 'MediaProviderUnlinked',
         'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
@@ -727,6 +727,10 @@ export function useSignalRListeners() {
 
       conn.on('WatchPartyHostChanged', (newHostUserId: string) => {
         useWatchPartyStore.getState().updateHost(newHostUserId);
+      });
+
+      conn.on('WatchPartyForceUnmuted', () => {
+        useWatchPartyStore.getState().receiveForceUnmute();
       });
 
       conn.on('WatchPartyStartedInChannel', (channelId: string, itemTitle: string) => {

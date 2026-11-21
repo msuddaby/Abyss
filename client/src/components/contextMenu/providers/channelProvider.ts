@@ -17,6 +17,16 @@ export function channelProvider(ctx: ProviderContext): MenuItem[] {
     });
   }
 
+  if (actions.onForceUnmuteWatchParty) {
+    items.push({
+      id: 'channel-force-unmute-wp',
+      label: 'Force Unmute Watch Party',
+      group: 'channel',
+      order: 0.5,
+      action: actions.onForceUnmuteWatchParty,
+    });
+  }
+
   if (actions.onEditChannel) {
     items.push({
       id: 'channel-edit',

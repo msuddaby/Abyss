@@ -142,8 +142,7 @@ public class UploadController : ControllerBase
 
         if (category is "video" or "audio")
         {
-            var safeName = SanitizeFileName(attachment.FileName);
-            Response.Headers["Content-Disposition"] = $"inline; filename=\"{safeName}\"";
+            Response.Headers["Content-Disposition"] = BuildContentDisposition("inline", attachment.FileName);
             var contentType = string.IsNullOrWhiteSpace(attachment.ContentType)
                 ? "application/octet-stream"
                 : attachment.ContentType;
@@ -151,17 +150,23 @@ public class UploadController : ControllerBase
         }
 
         Response.Headers["Content-Security-Policy"] = "sandbox; default-src 'none';";
-        Response.Headers["Content-Disposition"] = $"attachment; filename=\"{SanitizeFileName(attachment.FileName)}\"";
+        Response.Headers["Content-Disposition"] = BuildContentDisposition("attachment", attachment.FileName);
         return File(System.IO.File.OpenRead(filePath), "application/octet-stream");
     }
 
     /// <summary>
-    /// Sanitize filename to prevent header injection attacks.
+    /// Build a Content-Disposition header value that is safe for any filename.
+    /// Kestrel rejects non-ASCII header values (throws -> 500), so emit an ASCII
+    /// fallback in filename= and the real name RFC 5987-encoded in filename*=.
     /// </summary>
-    private static string SanitizeFileName(string fileName)
+    private static string BuildContentDisposition(string disposition, string fileName)
     {
-        // Remove any characters that could break headers
-        return fileName.Replace("\"", "").Replace("\r", "").Replace("\n", "");
+        var ascii = new System.Text.StringBuilder(fileName.Length);
+        foreach (var c in fileName)
+            ascii.Append(c is >= ' ' and <= '~' and not '"' and not '\\' ? c : '_');
+        var encoded = Uri.EscapeDataString(fileName)
+            .Replace("'", "%27").Replace("(", "%28").Replace(")", "%29").Replace("*", "%2A");
+        return $"{disposition}; filename=\"{ascii}\"; filename*=UTF-8''{encoded}";
     }
 
     private static string? BuildAttachmentSubdir(Guid? serverId, Guid? channelId)

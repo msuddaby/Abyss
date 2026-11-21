@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, useWatchPartyStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useLongPress } from '../hooks/useLongPress';
@@ -103,6 +103,18 @@ export default function ChannelSidebar() {
     return () => document.removeEventListener('click', handleClick);
   }, [showServerDropdown]);
 
+  // Sysadmin-only: offered when right-clicking the voice channel you're in while it has a watch party.
+  const getForceUnmuteAction = (channel: Channel): { onForceUnmuteWatchParty?: () => void } => {
+    if (!useAuthStore.getState().isSysadmin) return {};
+    if (useVoiceStore.getState().currentChannelId !== channel.id) return {};
+    if (useWatchPartyStore.getState().activeParty?.channelId !== channel.id) return {};
+    return {
+      onForceUnmuteWatchParty: () => {
+        useWatchPartyStore.getState().forceUnmute(channel.id).catch(() => {});
+      },
+    };
+  };
+
   const handleChannelContextMenu = (channel: Channel) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -115,6 +127,7 @@ export default function ChannelSidebar() {
           onChannelPermissions: () => setChannelToEditPermissions(channel),
           onDeleteChannel: () => setChannelToDelete(channel),
         } : {}),
+        ...getForceUnmuteAction(channel),
       }
     );
   };
@@ -132,6 +145,7 @@ export default function ChannelSidebar() {
           onChannelPermissions: () => setChannelToEditPermissions(channel),
           onDeleteChannel: () => setChannelToDelete(channel),
         } : {}),
+        ...getForceUnmuteAction(channel),
       }
     );
   }, [canManageChannels, openContextMenu]));

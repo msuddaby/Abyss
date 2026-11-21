@@ -2,6 +2,11 @@ import { useState, useRef, useEffect } from "react";
 import { getApiBase } from "@abyss/shared";
 import type { Attachment } from "@abyss/shared";
 import { formatFileSize } from "../../utils/messageUtils";
+import {
+  MEDIA_VOLUME_MAX,
+  toMediaVolume,
+  fromMediaVolume,
+} from "../../utils/audioUtils";
 
 const VIDEO_MAX_WIDTH = 520;
 const VIDEO_MAX_HEIGHT = 320;
@@ -74,6 +79,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
   useEffect(() => {
     if (!isVideo || !videoRef.current) return;
     const video = videoRef.current;
+    video.volume = toMediaVolume(1);
 
     const handleLoaded = () => {
       setDuration(Number.isFinite(video.duration) ? video.duration : 0);
@@ -83,7 +89,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     const handlePlay = () => setPlaying(true);
     const handlePause = () => setPlaying(false);
     const handleVolume = () => {
-      setVolume(video.volume);
+      setVolume(fromMediaVolume(video.volume));
       setMuted(video.muted);
     };
 
@@ -105,6 +111,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
   useEffect(() => {
     if (!isAudio || !audioRef.current) return;
     const audio = audioRef.current;
+    audio.volume = toMediaVolume(1);
 
     const handleLoaded = () => {
       setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
@@ -114,7 +121,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     const handlePlay = () => setPlaying(true);
     const handlePause = () => setPlaying(false);
     const handleVolume = () => {
-      setVolume(audio.volume);
+      setVolume(fromMediaVolume(audio.volume));
       setMuted(audio.muted);
     };
 
@@ -182,14 +189,14 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     if (isVideo) {
       const video = videoRef.current;
       if (!video) return;
-      video.volume = value;
+      video.volume = toMediaVolume(value);
       video.muted = value === 0;
       setVolume(value);
       setMuted(video.muted);
     } else if (isAudio) {
       const audio = audioRef.current;
       if (!audio) return;
-      audio.volume = value;
+      audio.volume = toMediaVolume(value);
       audio.muted = value === 0;
       setVolume(value);
       setMuted(audio.muted);
@@ -203,8 +210,8 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
       video.muted = !video.muted;
       setMuted(video.muted);
       if (!video.muted && video.volume === 0) {
-        video.volume = 0.5;
-        setVolume(0.5);
+        video.volume = toMediaVolume(1);
+        setVolume(1);
       }
       return;
     }
@@ -214,8 +221,8 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
       audio.muted = !audio.muted;
       setMuted(audio.muted);
       if (!audio.muted && audio.volume === 0) {
-        audio.volume = 0.5;
-        setVolume(0.5);
+        audio.volume = toMediaVolume(1);
+        setVolume(1);
       }
     }
   };
@@ -306,7 +313,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
                   className="attachment-volume"
                   type="range"
                   min={0}
-                  max={1}
+                  max={MEDIA_VOLUME_MAX}
                   step={0.01}
                   value={muted ? 0 : volume}
                   onChange={(e) => handleVolumeChange(Number(e.target.value))}
@@ -359,7 +366,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
               className="attachment-volume"
               type="range"
               min={0}
-              max={1}
+              max={MEDIA_VOLUME_MAX}
               step={0.01}
               value={muted ? 0 : volume}
               onChange={(e) => handleVolumeChange(Number(e.target.value))}

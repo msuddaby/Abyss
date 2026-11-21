@@ -40,6 +40,7 @@ export const ALL_SIGNALR_EVENTS = [
   // Watch party
   'WatchPartyStarted', 'WatchPartyStopped', 'WatchPartyActive',
   'PlaybackCommand', 'SyncPosition', 'QueueUpdated', 'WatchPartyHostChanged',
+  'WatchPartyForceUnmuted',
   'WatchPartyStartedInChannel', 'WatchPartyStoppedInChannel',
   // Media providers
   'MediaProviderLinked', 'MediaProviderUnlinked',
