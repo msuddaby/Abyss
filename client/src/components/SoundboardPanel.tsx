@@ -207,7 +207,7 @@ export default function SoundboardPanel() {
             <circle cx="8" cy="5" r="1.6" fill="currentColor" />
             <circle cx="13" cy="9" r="1.6" fill="currentColor" />
           </svg>
-          <span>{formatSpeed(speed)} · {formatPitch(pitch)}</span>
+          <span>{altered ? `${formatSpeed(speed)} · ${formatPitch(pitch)}` : 'FX'}</span>
         </button>
       </div>
 
