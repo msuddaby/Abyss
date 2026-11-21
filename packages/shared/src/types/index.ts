@@ -452,6 +452,8 @@ export interface QueueItem {
   thumbnail?: string;
   durationMs?: number;
   addedByUserId: string;
+  /** Set when the item comes from a different provider than the party's current one. */
+  mediaProviderConnectionId?: string | null;
 }
 
 export interface WatchParty {
@@ -550,6 +552,8 @@ export const Permission = {
   ModerateWatchTogether: 1 << 22,
   UseYtDlp: 1 << 23,
   CreateForumTopic: 1 << 24,
+  UploadToArchive: 1 << 25,
+  ManageArchive: 1 << 26,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {
@@ -595,3 +599,53 @@ export function canActOn(actor: ServerMember, target: ServerMember): boolean {
     : Math.max(0, ...target.roles.map((r) => r.position));
   return actorPos > targetPos;
 }
+
+// Archive
+export interface ArchiveAlbum {
+  id: string;
+  serverId: string;
+  name: string;
+  createdById: string;
+  coverItemId?: string | null;
+  coverUrl?: string | null;
+  itemCount: number;
+  createdAt: string;
+}
+
+export interface ArchiveItem {
+  id: string;
+  serverId: string;
+  albumId?: string | null;
+  uploaderId: string;
+  uploader?: User | null;
+  title: string;
+  description?: string | null;
+  fileName: string;
+  /** Images: static /uploads URL. Videos: API URL that needs ?token= for <video>. */
+  url: string;
+  contentType: string;
+  size: number;
+  width?: number | null;
+  height?: number | null;
+  durationMs?: number | null;
+  posterPath?: string | null;
+  createdAt: string;
+}
+
+export interface GalleryItem {
+  attachmentId: string;
+  messageId: string;
+  channelId: string;
+  channelName: string;
+  author: User;
+  fileName: string;
+  filePath: string;
+  posterPath?: string | null;
+  contentType: string;
+  size: number;
+  width?: number | null;
+  height?: number | null;
+  createdAt: string;
+}
+
+export type ArchiveTypeFilter = 'all' | 'video' | 'image';

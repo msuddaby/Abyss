@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useMediaProviderStore, useServerStore, useVoiceStore, useWatchPartyStore, useToastStore } from '@abyss/shared';
+import ArchivePicker from './archive/ArchivePicker';
 import type { MediaLibrary, MediaItem, MediaProviderConnection, YouTubeResolveResult, YtDlpResolveResult } from '@abyss/shared';
 
 interface Props {
@@ -25,7 +26,7 @@ function isContainer(type: string): boolean {
   return type === 'show' || type === 'season' || type === 'artist' || type === 'album';
 }
 
-type Tab = 'library' | 'youtube' | 'ytdlp';
+type Tab = 'library' | 'youtube' | 'ytdlp' | 'archive';
 
 export default function MediaLibraryBrowser({ onClose }: Props) {
   const activeServer = useServerStore((s) => s.activeServer);
@@ -316,11 +317,19 @@ export default function MediaLibraryBrowser({ onClose }: Props) {
             >
               Direct Link
             </button>
+            <button
+              className={`mlb-tab ${activeTab === 'archive' ? 'active' : ''}`}
+              onClick={() => setActiveTab('archive')}
+            >
+              Archive
+            </button>
           </div>
           <button className="mlb-close-btn" onClick={onClose}>✕</button>
         </div>
 
-        {activeTab === 'ytdlp' ? (
+        {activeTab === 'archive' && activeServer ? (
+          <ArchivePicker serverId={activeServer.id} channelId={currentChannelId} onClose={onClose} />
+        ) : activeTab === 'ytdlp' ? (
           <div className="mlb-yt-section">
             <div className="mlb-yt-input-row">
               <input

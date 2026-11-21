@@ -96,6 +96,14 @@ public class WatchPartyController : ControllerBase
                 return BadRequest("This domain is not allowed");
         }
 
+        // Archive videos must belong to this server
+        if (connection.ProviderType == MediaProviderType.Archive)
+        {
+            if (!Guid.TryParse(req.ProviderItemId, out var archiveItemId)
+                || !await _db.ArchiveItems.AnyAsync(i => i.Id == archiveItemId && i.ServerId == serverId && i.ContentType.StartsWith("video/")))
+                return BadRequest("Archive item not found");
+        }
+
         var id = Guid.NewGuid();
         var state = new WatchPartyState
         {
@@ -120,7 +128,11 @@ public class WatchPartyController : ControllerBase
         {
             try
             {
-                if (connection.ProviderType == MediaProviderType.YtDlp)
+                if (connection.ProviderType == MediaProviderType.Archive)
+                {
+                    state.PlaybackUrl = $"/api/servers/{serverId}/archive/items/{req.ProviderItemId}/file";
+                }
+                else if (connection.ProviderType == MediaProviderType.YtDlp)
                 {
                     // Route through our yt-dlp proxy so resolved URL + headers are handled server-side
                     state.PlaybackUrl = $"/api/servers/{serverId}/media-providers/{connection.Id}/ytdlp-stream?url={Uri.EscapeDataString(req.ProviderItemId)}";
@@ -231,7 +243,17 @@ public class WatchPartyController : ControllerBase
         var state = _watchPartyService.GetParty(channelId);
         if (state == null) return BadRequest("No active watch party");
 
-        var queueItem = new QueueItemDto(req.ProviderItemId, req.Title, req.Thumbnail, req.DurationMs, UserId);
+        // Items may come from a different provider than the one currently playing (e.g. an
+        // archive video queued during a Plex party); remember which connection to play it with.
+        Guid? queueConnectionId = null;
+        if (req.MediaProviderConnectionId is Guid connId && connId != state.MediaProviderConnectionId)
+        {
+            if (!await _db.MediaProviderConnections.AnyAsync(c => c.Id == connId && c.ServerId == channel.ServerId))
+                return BadRequest("Invalid media provider connection");
+            queueConnectionId = connId;
+        }
+
+        var queueItem = new QueueItemDto(req.ProviderItemId, req.Title, req.Thumbnail, req.DurationMs, UserId, queueConnectionId);
         state.Queue.Add(queueItem);
 
         // Persist queue to DB

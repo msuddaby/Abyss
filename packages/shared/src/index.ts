@@ -41,6 +41,8 @@ export { useServerConfigStore } from './stores/serverConfigStore.js';
 export { useRateLimitStore } from './stores/rateLimitStore.js';
 export { useRssFeedStore } from './stores/rssFeedStore.js';
 export { useXenForoStore } from './stores/xenForoStore.js';
+export { useArchiveStore } from './stores/archiveStore.js';
+export type { ArchiveTab, ArchiveSort, ArchiveUpload } from './stores/archiveStore.js';
 
 // Hooks
 export { useSignalRListeners, fetchServerState, refreshSignalRState, rejoinActiveChannel } from './hooks/useSignalRListeners.js';

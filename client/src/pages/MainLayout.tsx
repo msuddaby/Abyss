@@ -19,7 +19,8 @@ import CreateForumTopicModal from '../components/CreateForumTopicModal';
 import ReactionDetailsModal from '../components/ReactionDetailsModal';
 import WatchPartyPlayer from '../components/WatchPartyPlayer';
 import GuestUpgradeModal from '../components/GuestUpgradeModal';
-import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore, useAuthStore } from '@abyss/shared';
+import ArchiveView from '../components/archive/ArchiveView';
+import { useServerStore, useSearchStore, useDmStore, useSignalRListeners, useSignalRStore, useAppConfigStore, useWatchPartyStore, useVoiceStore, useAuthStore, useArchiveStore } from '@abyss/shared';
 import { useEffect, useRef, useState } from 'react';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useSwipeGesture } from '../hooks/useSwipeGesture';
@@ -28,6 +29,13 @@ export default function MainLayout() {
   const activeChannel = useServerStore((s) => s.activeChannel);
   const activeServer = useServerStore((s) => s.activeServer);
   const isDmMode = useDmStore((s) => s.isDmMode);
+  const archiveServerId = useArchiveStore((s) => s.openServerId);
+  const archiveOpen = !isDmMode && !!activeServer && archiveServerId === activeServer.id;
+
+  // Picking any channel (or another server) leaves the archive view
+  useEffect(() => {
+    useArchiveStore.getState().closeArchive();
+  }, [activeChannel?.id, activeServer?.id]);
   const activeDmChannel = useDmStore((s) => s.activeDmChannel);
   const searchIsOpen = useSearchStore((s) => s.isOpen);
   const openSearch = useSearchStore((s) => s.openSearch);
@@ -207,6 +215,8 @@ export default function MainLayout() {
               />
             )}
           </>
+        ) : archiveOpen ? (
+          <ArchiveView hamburger={hamburgerButton} />
         ) : activeChannel ? (
           activeChannel.type === 'Text' || activeChannel.type === 'XenForoMirror' ? (
             <>

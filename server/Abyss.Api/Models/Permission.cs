@@ -28,4 +28,6 @@ public enum Permission : long
     ModerateWatchTogether = 1 << 22,
     UseYtDlp = 1L << 23,
     CreateForumTopic = 1L << 24,
+    UploadToArchive = 1L << 25,
+    ManageArchive = 1L << 26,
 }

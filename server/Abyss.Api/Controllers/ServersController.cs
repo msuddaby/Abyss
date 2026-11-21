@@ -80,7 +80,8 @@ public class ServersController : ControllerBase
                 Permission.Connect |
                 Permission.Speak |
                 Permission.Stream |
-                Permission.AddToWatchTogether),
+                Permission.AddToWatchTogether |
+                Permission.UploadToArchive),
             Position = 0,
             IsDefault = true,
             DisplaySeparately = false,

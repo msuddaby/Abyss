@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, useWatchPartyStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, useWatchPartyStore, useArchiveStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useLongPress } from '../hooks/useLongPress';
@@ -59,6 +59,8 @@ export default function ChannelSidebar() {
   const pendingRequestCount = useFriendStore((s) => s.requests.filter((r) => !r.isOutgoing).length);
 
   const currentMember = members.find((m) => m.userId === user?.id);
+  const archiveServerId = useArchiveStore((s) => s.openServerId);
+  const archiveOpen = !!activeServer && archiveServerId === activeServer.id;
   const canManageChannels = currentMember ? hasPermission(currentMember, Permission.ManageChannels) : false;
   const canManageServer = currentMember ? hasPermission(currentMember, Permission.ManageServer) : false;
   const canViewAuditLog = currentMember ? hasPermission(currentMember, Permission.ViewAuditLog) : false;
@@ -327,7 +329,13 @@ export default function ChannelSidebar() {
 
   const handleChannelClick = (channel: Channel) => {
     if (isMobile()) useMobileStore.getState().closeLeftDrawer();
+    useArchiveStore.getState().closeArchive();
     setActiveChannel(channel);
+  };
+
+  const handleArchiveClick = () => {
+    if (isMobile()) useMobileStore.getState().closeLeftDrawer();
+    useArchiveStore.getState().openArchive(activeServer.id);
   };
 
   const handleVoiceJoin = async (channelId: string) => {
@@ -448,6 +456,19 @@ export default function ChannelSidebar() {
         )}
       </div>
       <div className="channel-list">
+        <button
+          className={`channel-item archive-nav-item${archiveOpen ? ' active' : ''}`}
+          onClick={handleArchiveClick}
+          aria-current={archiveOpen ? 'page' : undefined}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="5" rx="1" />
+            <path d="M5 9v10a1 1 0 001 1h12a1 1 0 001-1V9" />
+            <path d="M10 13h4" />
+          </svg>
+          Archive
+        </button>
+        <div className="archive-nav-divider" />
         {textChannels.length > 0 && (
           <div className="channel-category">
             <span className="category-label">Text Channels</span>
@@ -473,7 +494,7 @@ export default function ChannelSidebar() {
                 >
                   {hasUnread && <div className="channel-unread-dot" />}
                   <button
-                    className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}${hasUnread ? ' unread' : ''}${isChMuted ? ' muted-channel' : ''}`}
+                    className={`channel-item ${activeChannel?.id === channel.id && !archiveOpen ? 'active' : ''}${hasUnread ? ' unread' : ''}${isChMuted ? ' muted-channel' : ''}`}
                     onClick={() => handleChannelClick(channel)}
                   >
                     <span className="channel-hash">#</span>

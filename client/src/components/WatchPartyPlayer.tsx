@@ -231,10 +231,15 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     }
 
     const nextItem = party.queue[0];
-    const remainingQueue = party.queue.slice(1);
+    const nextConnectionId = nextItem.mediaProviderConnectionId || party.mediaProviderConnectionId;
+    // Items without an explicit connection belong to the current party's provider; pin them
+    // before the party's provider changes (e.g. a Plex queue with an archive video in front).
+    const remainingQueue = party.queue.slice(1).map((q) => (
+      q.mediaProviderConnectionId ? q : { ...q, mediaProviderConnectionId: party.mediaProviderConnectionId }
+    )).map((q) => (q.mediaProviderConnectionId === nextConnectionId ? { ...q, mediaProviderConnectionId: null } : q));
     await useWatchPartyStore.getState().stopWatchParty(currentChannelId).catch(console.error);
     await useWatchPartyStore.getState().startWatchParty(currentChannelId, {
-      mediaProviderConnectionId: party.mediaProviderConnectionId,
+      mediaProviderConnectionId: nextConnectionId,
       providerItemId: nextItem.providerItemId,
       itemTitle: nextItem.title,
       itemThumbnail: nextItem.thumbnail,

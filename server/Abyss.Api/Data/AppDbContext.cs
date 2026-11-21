@@ -38,6 +38,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<SoundboardClip> SoundboardClips => Set<SoundboardClip>();
     public DbSet<CosmeticItem> CosmeticItems => Set<CosmeticItem>();
     public DbSet<UserCosmetic> UserCosmetics => Set<UserCosmetic>();
+    public DbSet<ArchiveAlbum> ArchiveAlbums => Set<ArchiveAlbum>();
+    public DbSet<ArchiveItem> ArchiveItems => Set<ArchiveItem>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -492,5 +494,49 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<UserCosmetic>()
             .HasIndex(uc => new { uc.UserId, uc.IsEquipped });
+
+        // Archive
+        builder.Entity<ArchiveAlbum>()
+            .HasOne(a => a.Server)
+            .WithMany()
+            .HasForeignKey(a => a.ServerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<ArchiveAlbum>()
+            .HasOne(a => a.CreatedBy)
+            .WithMany()
+            .HasForeignKey(a => a.CreatedById)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<ArchiveAlbum>()
+            .HasIndex(a => new { a.ServerId, a.Name })
+            .IsUnique();
+
+        builder.Entity<ArchiveItem>()
+            .HasOne(i => i.Server)
+            .WithMany()
+            .HasForeignKey(i => i.ServerId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<ArchiveItem>()
+            .HasOne(i => i.Album)
+            .WithMany()
+            .HasForeignKey(i => i.AlbumId)
+            .OnDelete(DeleteBehavior.SetNull);
+
+        builder.Entity<ArchiveItem>()
+            .HasOne(i => i.Uploader)
+            .WithMany()
+            .HasForeignKey(i => i.UploaderId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.Entity<ArchiveItem>()
+            .Ignore(i => i.IsVideo);
+
+        builder.Entity<ArchiveItem>()
+            .HasIndex(i => new { i.ServerId, i.CreatedAt });
+
+        builder.Entity<ArchiveItem>()
+            .HasIndex(i => new { i.AlbumId, i.CreatedAt });
     }
 }

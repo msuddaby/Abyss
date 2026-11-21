@@ -1,4 +1,4 @@
-import { useMessageStore, hasPermission, hasChannelPermission, Permission } from '@abyss/shared';
+import { useMessageStore, useArchiveStore, useToastStore, hasPermission, hasChannelPermission, Permission } from '@abyss/shared';
 import { useForumTopicStore } from '../../../stores/forumTopicStore';
 import { useReactionDetailsStore } from '../../../stores/reactionDetailsStore';
 import type { MenuItem, ProviderContext } from '../types';
@@ -76,6 +76,28 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
       order: 5,
       danger: true,
       action: () => useMessageStore.getState().deleteMessage(message.id),
+    });
+  }
+
+  // Save image/video attachments into the server archive
+  const media = (message.attachments ?? []).filter((a) => a.contentType.startsWith('image/') || a.contentType.startsWith('video/'));
+  const serverId = ctx.activeServer?.id;
+  if (!isDmMode && serverId && media.length > 0 && currentMember && hasPermission(currentMember, Permission.UploadToArchive)) {
+    items.push({
+      id: 'message-save-archive',
+      label: media.length > 1 ? `Save ${media.length} Files to Archive` : 'Save to Archive',
+      group: 'message',
+      order: 4.5,
+      action: async () => {
+        const results = await Promise.allSettled(media.map((a) => useArchiveStore.getState().saveFromAttachment(serverId, a.id)));
+        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (ok > 0) useToastStore.getState().addToast(ok > 1 ? `Saved ${ok} files to Archive` : 'Saved to Archive', 'success');
+        if (failed) {
+          const data = failed.reason?.response?.data;
+          useToastStore.getState().addToast(typeof data === 'string' && data ? data : 'Could not save to archive', 'error');
+        }
+      },
     });
   }
 

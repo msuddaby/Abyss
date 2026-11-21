@@ -17,6 +17,7 @@ import { useUserPreferencesStore } from '../stores/userPreferencesStore.js';
 import { useWatchPartyStore } from '../stores/watchPartyStore.js';
 import { useMediaProviderStore } from '../stores/mediaProviderStore.js';
 import { useSoundboardStore } from '../stores/soundboardStore.js';
+import { useArchiveStore } from '../stores/archiveStore.js';
 import { useRateLimitStore } from '../stores/rateLimitStore.js';
 import { useRssFeedStore } from '../stores/rssFeedStore.js';
 import type { RssFeedState } from '../types/index.js';
@@ -25,7 +26,7 @@ import { getApiBase } from '../services/api.js';
 import { getLiveKitRoom } from '../services/livekitService.js';
 import type { SignalRConnection } from '../services/signalr.protocol.js';
 import { clampSpeed, clampPitch, isFxNeutral, isTapeFx, renderFxBuffer } from '../utils/soundboardFx.js';
-import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics } from '../types/index.js';
+import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics, ArchiveItem } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
 const soundCache = new Map<string, any>();
@@ -305,6 +306,7 @@ export function useSignalRListeners() {
         'WatchPartyStartedInChannel', 'WatchPartyStoppedInChannel',
         'MediaProviderLinked', 'MediaProviderUnlinked',
         'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
+        'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
       ];
       for (const e of events) conn.off(e);
 
@@ -768,6 +770,25 @@ export function useSignalRListeners() {
 
       conn.on('SoundboardClipRemoved', (_serverId: string, clipId: string) => {
         useSoundboardStore.getState().removeClipLocal(clipId);
+      });
+
+      // Archive event handlers (store ignores events for archives that aren't open)
+      conn.on('ArchiveItemAdded', (_serverId: string, item: ArchiveItem) => {
+        useArchiveStore.getState().addItemLocal(item);
+      });
+
+      conn.on('ArchiveItemUpdated', (_serverId: string, item: ArchiveItem) => {
+        useArchiveStore.getState().updateItemLocal(item);
+      });
+
+      conn.on('ArchiveItemDeleted', (_serverId: string, itemId: string) => {
+        useArchiveStore.getState().removeItemLocal(itemId);
+      });
+
+      conn.on('ArchiveAlbumsChanged', (serverId: string) => {
+        if (useArchiveStore.getState().openServerId === serverId) {
+          useArchiveStore.getState().fetchAlbums(serverId).catch(console.error);
+        }
       });
 
       refreshSignalRState(conn);

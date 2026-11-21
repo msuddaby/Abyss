@@ -262,6 +262,21 @@ public class ImageService
         return (dirPath, $"{baseUrl}/{urlSubdir}");
     }
 
+    /// <summary>
+    /// Map a public /uploads/... URL (as returned by ProcessImageAsync / ProcessVideoPosterAsync)
+    /// to its absolute path under the web root. Returns null for anything that would escape it.
+    /// </summary>
+    public string? ResolveWebPath(string? relativeUrl)
+    {
+        if (string.IsNullOrWhiteSpace(relativeUrl) || !relativeUrl.StartsWith("/uploads/", StringComparison.Ordinal))
+            return null;
+        var full = Path.GetFullPath(Path.Combine(
+            _webRoot,
+            relativeUrl.TrimStart('/').Replace('/', Path.DirectorySeparatorChar)));
+        var root = Path.GetFullPath(_webRoot) + Path.DirectorySeparatorChar;
+        return full.StartsWith(root, StringComparison.Ordinal) ? full : null;
+    }
+
     private (int Width, int Height)? TryGetStoredImageDimensions(string? relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))

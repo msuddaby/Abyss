@@ -7,5 +7,6 @@ public enum MediaProviderType
     Spotify = 3,
     Twitch = 4,
     SoundCloud = 5,
-    YtDlp = 6
+    YtDlp = 6,
+    Archive = 7
 }

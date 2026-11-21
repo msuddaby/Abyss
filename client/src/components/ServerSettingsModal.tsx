@@ -116,6 +116,13 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
     ],
   },
   {
+    section: 'Archive',
+    perms: [
+      { perm: Permission.UploadToArchive, label: 'Upload to Archive', description: 'Upload photos and videos, create albums, and save chat media to the archive' },
+      { perm: Permission.ManageArchive, label: 'Manage Archive', description: "Edit, move, and delete anyone's archive items and albums" },
+    ],
+  },
+  {
     section: 'Forum Bridge',
     perms: [
       { perm: Permission.CreateForumTopic, label: 'Create Forum Topic', description: 'Post a digest of channel messages as a thread on the linked XenForo forum' },

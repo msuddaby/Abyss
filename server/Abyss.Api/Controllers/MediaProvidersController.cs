@@ -124,7 +124,7 @@ public class MediaProvidersController : ControllerBase
         if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
 
         var connections = await _db.MediaProviderConnections
-            .Where(c => c.ServerId == serverId)
+            .Where(c => c.ServerId == serverId && c.ProviderType != MediaProviderType.Archive)
             .OrderBy(c => c.LinkedAt)
             .Select(c => new MediaProviderConnectionDto(
                 c.Id, c.ServerId, c.OwnerId, c.ProviderType.ToString(),

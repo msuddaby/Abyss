@@ -105,8 +105,8 @@ public record PlaybackInfoDto(string Url, string ContentType, Dictionary<string,
 public record WatchPartyDto(Guid Id, Guid ChannelId, Guid MediaProviderConnectionId, string HostUserId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs, double CurrentTimeMs, bool IsPlaying, DateTime LastSyncAt, List<QueueItemDto> Queue, DateTime StartedAt, string? ProviderType = null, string? PlaybackUrl = null);
 public record YouTubeResolveDto(Guid ConnectionId, string VideoId, string Title, string ThumbnailUrl);
 public record StartWatchPartyRequest(Guid MediaProviderConnectionId, string ProviderItemId, string ItemTitle, string? ItemThumbnail, long? ItemDurationMs, List<QueueItemDto>? Queue = null);
-public record QueueItemDto(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs, string AddedByUserId);
-public record AddToQueueRequest(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs);
+public record QueueItemDto(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs, string AddedByUserId, Guid? MediaProviderConnectionId = null);
+public record AddToQueueRequest(string ProviderItemId, string Title, string? Thumbnail, long? DurationMs, Guid? MediaProviderConnectionId = null);
 public record ReorderQueueRequest(List<int> NewOrder);
 
 // User preferences DTOs
@@ -132,3 +132,14 @@ public class UpdateUserPreferencesRequest
     public bool? AutoGainControl { get; set; }
     public string? UiPreferences { get; set; }
 }
+
+// Archive DTOs
+public record ArchiveAlbumDto(Guid Id, Guid ServerId, string Name, string CreatedById, Guid? CoverItemId, string? CoverUrl, int ItemCount, DateTime CreatedAt);
+public record ArchiveItemDto(Guid Id, Guid ServerId, Guid? AlbumId, string UploaderId, UserDto? Uploader, string Title, string? Description, string FileName, string Url, string ContentType, long Size, int? Width, int? Height, long? DurationMs, string? PosterPath, DateTime CreatedAt);
+public record ArchiveItemPageDto(List<ArchiveItemDto> Items, string? NextCursor);
+public record CreateArchiveAlbumRequest(string Name);
+public record UpdateArchiveAlbumRequest(string? Name, Guid? CoverItemId);
+public record UpdateArchiveItemRequest(string? Title, string? Description, Guid? AlbumId, bool ClearAlbum = false);
+public record SaveAttachmentToArchiveRequest(Guid? AlbumId, string? Title);
+public record GalleryItemDto(Guid AttachmentId, Guid MessageId, Guid ChannelId, string ChannelName, UserDto Author, string FileName, string FilePath, string? PosterPath, string ContentType, long Size, int? Width, int? Height, DateTime CreatedAt);
+public record GalleryPageDto(List<GalleryItemDto> Items, string? NextCursor);

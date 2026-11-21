@@ -128,6 +128,7 @@ builder.Services.AddSingleton<VideoPosterService>();
 builder.Services.AddSingleton<MediaConfig>();
 builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
+builder.Services.AddScoped<ArchiveService>();
 builder.Services.AddScoped<CosmeticService>();
 builder.Services.AddSingleton<EmailService>();
 

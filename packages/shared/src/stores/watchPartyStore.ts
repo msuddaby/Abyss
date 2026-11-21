@@ -21,7 +21,7 @@ interface WatchPartyState {
   startWatchParty: (channelId: string, data: { mediaProviderConnectionId: string; providerItemId: string; itemTitle: string; itemThumbnail?: string; itemDurationMs?: number; queue?: QueueItem[] }) => Promise<void>;
   stopWatchParty: (channelId: string) => Promise<void>;
   fetchWatchParty: (channelId: string) => Promise<void>;
-  addToQueue: (channelId: string, data: { providerItemId: string; title: string; thumbnail?: string; durationMs?: number }) => Promise<void>;
+  addToQueue: (channelId: string, data: { providerItemId: string; title: string; thumbnail?: string; durationMs?: number; mediaProviderConnectionId?: string }) => Promise<void>;
   removeFromQueue: (channelId: string, index: number) => Promise<void>;
   clearQueue: (channelId: string) => Promise<void>;
   reorderQueue: (channelId: string, newOrder: number[]) => Promise<void>;
