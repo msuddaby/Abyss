@@ -9947,19 +9947,25 @@ label.has-error select:focus {
 }
 
 .soundboard-panel {
+  --sb-warm: #e0a458;
+  --sb-warm-dim: rgba(224, 164, 88, 0.16);
+  --sb-brand-dim: rgba(44, 183, 160, 0.16);
+  --sb-brand-line: rgba(44, 183, 160, 0.45);
   background: var(--bg-secondary);
   border-top: 1px solid var(--border-color);
-  padding: 10px 12px;
+  padding: 8px 8px 8px;
   display: flex;
   flex-direction: column;
-  max-height: 320px;
+  gap: 8px;
+  max-height: 460px;
+  min-height: 0;
 }
 
 .soundboard-header-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 6px;
+  padding-left: 4px;
   flex-shrink: 0;
 }
 
@@ -9976,17 +9982,311 @@ label.has-error select:focus {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   border-radius: 10px;
-  padding: 1px 7px;
+  padding: 0 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.soundboard-header-spacer {
+  flex: 1;
+}
+
+/* FX chip: shows the current global speed/pitch; amber once off default */
+.sb-fx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 7px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sb-fx-chip:hover {
+  color: var(--text-primary);
+}
+
+.sb-fx-chip.open {
+  border-color: var(--sb-brand-line);
+}
+
+.sb-fx-chip.altered {
+  color: var(--sb-warm);
+  background: var(--sb-warm-dim);
+  border-color: rgba(224, 164, 88, 0.4);
+}
+
+.sb-fx {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.sb-fx-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sb-fx-row.disabled {
+  opacity: 0.5;
+}
+
+.sb-fx-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sb-fx-label output {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  color: var(--header-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-fx-label output.off {
+  color: var(--text-muted);
+}
+
+.sb-fx-range {
+  position: relative;
+  height: 20px;
+}
+
+.sb-fx-track {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  top: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: #24272c;
+  pointer-events: none;
+}
+
+.sb-fx-fill {
+  position: absolute;
+  top: 0;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--brand-color);
+}
+
+.sb-fx-range input[type="range"] {
+  position: relative;
+  width: 100%;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.sb-fx-range input[type="range"]:disabled {
+  cursor: default;
+}
+
+.sb-fx-range input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: transparent;
+}
+
+.sb-fx-range input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: transparent;
+}
+
+.sb-fx-range input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--header-primary);
+  box-shadow: 0 0 0 3px var(--bg-tertiary);
+}
+
+.sb-fx-range input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--header-primary);
+  box-shadow: 0 0 0 3px var(--bg-tertiary);
+}
+
+.sb-fx-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sb-fx-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sb-fx-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sb-fx-toggle small {
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.sb-fx-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 8px;
+  background: #33373d;
+  transition: background 0.15s;
+}
+
+.sb-fx-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.sb-fx-toggle input:checked + .sb-fx-switch {
+  background: var(--brand-color);
+}
+
+.sb-fx-toggle input:checked + .sb-fx-switch::after {
+  transform: translateX(12px);
+  background: var(--bg-tertiary);
+}
+
+.sb-fx-toggle input:focus-visible + .sb-fx-switch {
+  outline: 2px solid var(--brand-color);
+  outline-offset: 2px;
+}
+
+.sb-fx-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sb-fx-preset {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.sb-fx-preset:hover {
+  color: var(--text-primary);
+}
+
+.sb-fx-preset.on {
+  color: var(--brand-color);
+  background: var(--sb-brand-dim);
+  border-color: var(--sb-brand-line);
+}
+
+.sb-fx-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sb-fx-foot button {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.sb-fx-foot button:hover:not(:disabled) {
+  background: var(--bg-modifier-hover);
+  color: var(--text-primary);
+}
+
+.sb-fx-foot button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Tabs + search */
+.sb-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sb-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.sb-tab {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sb-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-modifier-hover);
+}
+
+.sb-tab[aria-selected="true"] {
+  color: var(--header-primary);
+  background: var(--bg-modifier-active);
 }
 
 .soundboard-search {
-  flex-shrink: 0;
-  width: 100%;
-  padding: 6px 10px;
-  margin-bottom: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: 5px;
   color: var(--text-primary);
   font-size: 12px;
   box-sizing: border-box;
@@ -9994,53 +10294,53 @@ label.has-error select:focus {
 
 .soundboard-search:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--sb-brand-line);
 }
 
+/* Clip grid: two columns of tiles */
 .soundboard-grid {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 5px;
   overflow-y: auto;
   min-height: 0;
 }
 
 .soundboard-clip-btn {
   position: relative;
-  padding: 6px 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 6px 8px 7px;
   background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  border: 1px solid transparent;
   border-radius: 6px;
   color: var(--text-primary);
-  font-size: 12px;
+  text-align: left;
   cursor: pointer;
+  user-select: none;
   transition: background 0.15s, border-color 0.15s;
-  white-space: nowrap;
 }
 
 .soundboard-clip-btn:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: #16191d;
+  border-color: var(--border-color);
 }
 
 .soundboard-clip-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
-/* Small indicator dot — a clip with a keybind set, so the narrow panel
-   doesn't need extra label space to show it (see it in the tooltip, or
-   right-click for the full menu). */
-.soundboard-clip-btn.has-keybind::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent-primary);
+.soundboard-clip-btn:focus-visible {
+  outline: 2px solid var(--brand-color);
+  outline-offset: 1px;
+}
+
+.soundboard-clip-btn.playing {
+  border-color: var(--sb-brand-line);
 }
 
 .soundboard-clip-btn.recording {
@@ -10048,8 +10348,99 @@ label.has-error select:focus {
   color: var(--accent-primary);
 }
 
-.soundboard-clip-label {
+.soundboard-clip-progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--sb-brand-dim);
+  border-right: 2px solid var(--brand-color);
   pointer-events: none;
+  animation-name: soundboard-clip-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+@keyframes soundboard-clip-progress {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .soundboard-clip-progress {
+    animation: none;
+    width: 100%;
+    border-right: 0;
+  }
+}
+
+.soundboard-clip-label {
+  position: relative;
+  padding-right: 14px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.soundboard-clip-meta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.soundboard-clip-meta .shifted {
+  color: var(--sb-warm);
+}
+
+.soundboard-clip-kb {
+  margin-left: auto;
+  min-width: 0;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.soundboard-clip-star {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0;
+}
+
+.soundboard-clip-btn:hover .soundboard-clip-star,
+.soundboard-clip-star:focus-visible,
+.soundboard-clip-star.on {
+  opacity: 1;
+}
+
+.soundboard-clip-star:hover {
+  color: var(--text-primary);
+}
+
+.soundboard-clip-star.on {
+  color: var(--sb-warm);
 }
 
 .soundboard-clip-menu {
@@ -10085,9 +10476,10 @@ label.has-error select:focus {
 }
 
 .soundboard-empty {
+  grid-column: 1 / -1;
   width: 100%;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12px;
   text-align: center;
   padding: 12px 0;
 }

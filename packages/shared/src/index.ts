@@ -54,4 +54,10 @@ export type { MentionSegment } from './utils/mentions.js';
 export { shouldGroupMessage, groupReactions } from './utils/messages.js';
 export type { ReactionGroup } from './utils/messages.js';
 export { getNameplateStyle, getMessageStyle, parseCosmeticCss } from './utils/cosmetics.js';
+export {
+  SOUNDBOARD_SPEED_MIN, SOUNDBOARD_SPEED_MAX, SOUNDBOARD_PITCH_MIN, SOUNDBOARD_PITCH_MAX, SOUNDBOARD_SPEED_DETENTS,
+  SOUNDBOARD_FX_PRESETS, DEFAULT_SOUNDBOARD_FX, clampSpeed, clampPitch, tapePitch, isFxNeutral, effectiveFx,
+  formatSpeed, formatPitch,
+} from './utils/soundboardFx.js';
+export type { SoundboardFx, SoundboardFxPreset } from './utils/soundboardFx.js';
 export { parseValidationErrors, getFieldError, getGeneralError, hasFieldError } from './utils/validation.js';

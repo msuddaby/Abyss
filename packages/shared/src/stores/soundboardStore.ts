@@ -1,7 +1,35 @@
 import { create } from 'zustand';
 import api, { postMultipart } from '../services/api.js';
 import { getStorage } from '../storage.js';
+import { resilientInvoke } from '../services/signalr.js';
 import type { SoundboardClip } from '../types/index.js';
+import {
+  DEFAULT_SOUNDBOARD_FX,
+  clampPitch,
+  clampSpeed,
+  effectiveFx,
+  isFxNeutral,
+  type SoundboardFx,
+} from '../utils/soundboardFx.js';
+
+const RECENT_MAX = 12;
+
+function saveJson(key: string, value: unknown) {
+  try {
+    getStorage().setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function readJson(key: string): unknown {
+  try {
+    const raw = getStorage().getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
 
 function saveClipKeybinds(binds: Record<string, string>) {
   try {
@@ -28,12 +56,67 @@ interface SoundboardState {
   clipKeybinds: Record<string, string>;
   setClipKeybind: (clipId: string, bind: string) => void;
   clearClipKeybind: (clipId: string) => void;
+  // Global speed/pitch applied to every clip this user plays (panel clicks and
+  // keybinds alike). Local preference; sent with each play so listeners hear it.
+  fx: SoundboardFx;
+  setFx: (fx: Partial<SoundboardFx>) => void;
+  resetFx: () => void;
+  favoriteClipIds: string[];
+  toggleFavorite: (clipId: string) => void;
+  recentClipIds: string[];
+  /** Play a clip in the given voice channel. `original` skips the global FX. */
+  playClip: (channelId: string, clipId: string, opts?: { original?: boolean }) => Promise<void>;
 }
 
 export const useSoundboardStore = create<SoundboardState>((set, get) => ({
   clips: [],
   loading: false,
   clipKeybinds: {},
+  fx: DEFAULT_SOUNDBOARD_FX,
+  favoriteClipIds: [],
+  recentClipIds: [],
+
+  setFx: (partial) => {
+    const next = { ...get().fx, ...partial };
+    next.speed = clampSpeed(next.speed);
+    next.pitch = clampPitch(next.pitch);
+    saveJson('soundboardFx', next);
+    set({ fx: next });
+  },
+
+  resetFx: () => {
+    saveJson('soundboardFx', DEFAULT_SOUNDBOARD_FX);
+    set({ fx: DEFAULT_SOUNDBOARD_FX });
+  },
+
+  toggleFavorite: (clipId: string) => {
+    const favs = get().favoriteClipIds;
+    const next = favs.includes(clipId) ? favs.filter((id) => id !== clipId) : [...favs, clipId];
+    saveJson('soundboardFavorites', next);
+    set({ favoriteClipIds: next });
+  },
+
+  playClip: async (channelId: string, clipId: string, opts) => {
+    const recent = [clipId, ...get().recentClipIds.filter((id) => id !== clipId)].slice(0, RECENT_MAX);
+    saveJson('soundboardRecent', recent);
+    set({ recentClipIds: recent });
+
+    const { speed, pitch } = effectiveFx(get().fx);
+    if (opts?.original || isFxNeutral(speed, pitch)) {
+      await resilientInvoke('PlaySoundboardClip', channelId, clipId);
+      return;
+    }
+    try {
+      await resilientInvoke('PlaySoundboardClipFx', channelId, clipId, speed, pitch);
+    } catch (err) {
+      // Older server without the FX method: play the clip unaltered.
+      if (String((err as Error)?.message ?? err).includes('Method does not exist')) {
+        await resilientInvoke('PlaySoundboardClip', channelId, clipId);
+        return;
+      }
+      throw err;
+    }
+  },
 
   setClipKeybind: (clipId: string, bind: string) => {
     // Only one clip may own a given bind at a time — clear it from
@@ -92,14 +175,37 @@ export const useSoundboardStore = create<SoundboardState>((set, get) => ({
 
   removeClipLocal: (clipId: string) => {
     get().clearClipKeybind(clipId);
+    const { favoriteClipIds, recentClipIds } = get();
+    if (favoriteClipIds.includes(clipId)) get().toggleFavorite(clipId);
+    if (recentClipIds.includes(clipId)) {
+      const next = recentClipIds.filter((id) => id !== clipId);
+      saveJson('soundboardRecent', next);
+      set({ recentClipIds: next });
+    }
     set((s) => ({
       clips: s.clips.filter((c) => c.id !== clipId),
     }));
   },
 }));
 
+function readIdList(key: string): string[] {
+  const parsed = readJson(key);
+  return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [];
+}
+
+function readFx(): SoundboardFx {
+  const parsed = readJson('soundboardFx') as Partial<SoundboardFx> | null;
+  if (!parsed || typeof parsed !== 'object') return DEFAULT_SOUNDBOARD_FX;
+  return {
+    speed: clampSpeed(typeof parsed.speed === 'number' ? parsed.speed : 1),
+    pitch: clampPitch(typeof parsed.pitch === 'number' ? parsed.pitch : 0),
+    tape: parsed.tape === true,
+  };
+}
+
 /**
- * Hydrate soundboard clip keybinds from persistent storage.
+ * Hydrate soundboard local preferences (clip keybinds, FX, favourites, recents)
+ * from persistent storage.
  * Must be called AFTER setStorage() so the adapter is available — the store
  * itself is constructed at module-eval time, before any adapter exists.
  */
@@ -116,5 +222,10 @@ export function hydrateSoundboardKeybinds() {
   } catch {
     binds = {};
   }
-  useSoundboardStore.setState({ clipKeybinds: binds });
+  useSoundboardStore.setState({
+    clipKeybinds: binds,
+    fx: readFx(),
+    favoriteClipIds: readIdList('soundboardFavorites'),
+    recentClipIds: readIdList('soundboardRecent').slice(0, RECENT_MAX),
+  });
 }

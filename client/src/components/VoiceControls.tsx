@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission, resilientInvoke } from '@abyss/shared';
+import { useVoiceStore, useServerStore, useWatchPartyStore, useSoundboardStore, hasChannelPermission, Permission } from '@abyss/shared';
 import { useWebRTC, attemptAudioUnlock, getConnectionStats, type ConnectionStats } from '../hooks/useWebRTC';
 import SoundboardPanel from './SoundboardPanel';
 import QualityPopover from './QualityPopover';
@@ -73,7 +73,7 @@ export default function VoiceControls() {
 
   const playClipById = useCallback((clipId: string) => {
     if (!currentChannelId) return;
-    void resilientInvoke('PlaySoundboardClip', currentChannelId, clipId).catch((err) => {
+    void useSoundboardStore.getState().playClip(currentChannelId, clipId).catch((err) => {
       console.warn('Failed to play soundboard clip', err);
     });
   }, [currentChannelId]);

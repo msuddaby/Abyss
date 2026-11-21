@@ -1648,7 +1648,20 @@ public class ChatHub : Hub
     }
 
     // Soundboard
-    public async Task PlaySoundboardClip(string channelId, string clipId)
+    public Task PlaySoundboardClip(string channelId, string clipId)
+        => PlaySoundboardClipCore(channelId, clipId, 1.0, 0.0);
+
+    // Same as PlaySoundboardClip, with the player's global speed (tempo multiplier)
+    // and pitch (semitones). A separate method rather than extra params so older
+    // clients calling the 2-arg version keep working.
+    public Task PlaySoundboardClipFx(string channelId, string clipId, double speed, double pitch)
+    {
+        if (!double.IsFinite(speed)) speed = 1.0;
+        if (!double.IsFinite(pitch)) pitch = 0.0;
+        return PlaySoundboardClipCore(channelId, clipId, Math.Clamp(speed, 0.5, 2.0), Math.Clamp(pitch, -12.0, 12.0));
+    }
+
+    private async Task PlaySoundboardClipCore(string channelId, string clipId, double speed, double pitch)
     {
         if (!Guid.TryParse(channelId, out var channelGuid)) return;
         if (!Guid.TryParse(clipId, out var clipGuid)) return;
@@ -1668,7 +1681,7 @@ public class ChatHub : Hub
         var clip = await _db.SoundboardClips.FirstOrDefaultAsync(sc => sc.Id == clipGuid && sc.ServerId == channel.ServerId.Value);
         if (clip == null) return;
 
-        await Clients.Group($"voice:{channelId}").SendAsync("SoundboardClipPlayed", channelId, clip.Url, clip.Name, UserId);
+        await Clients.Group($"voice:{channelId}").SendAsync("SoundboardClipPlayed", channelId, clip.Url, clip.Name, UserId, speed, pitch);
     }
 
     // Get online user IDs (for @here mention resolution)

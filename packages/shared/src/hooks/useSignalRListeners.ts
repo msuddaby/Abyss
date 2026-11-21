@@ -24,6 +24,7 @@ import { showDesktopNotification, isElectron } from '../services/electronNotific
 import { getApiBase } from '../services/api.js';
 import { getLiveKitRoom } from '../services/livekitService.js';
 import type { SignalRConnection } from '../services/signalr.protocol.js';
+import { clampSpeed, clampPitch, isFxNeutral, isTapeFx, renderFxBuffer } from '../utils/soundboardFx.js';
 import type { Server, ServerMember, ServerRole, CustomEmoji, SoundboardClip, DmChannel, ServerNotifSettings, UserPreferences, Message, Reaction, WatchParty, QueueItem, MediaProviderConnection, FriendRequest, Friendship, EquippedCosmetics } from '../types/index.js';
 
 // Sound playback cache and helper (uses `any` to avoid DOM lib dependency in shared package)
@@ -110,6 +111,72 @@ function playVoiceSound(url: string | null | undefined, fallbackPath: string) {
     // Default sound: fixed volume
     audio.volume = 0.5;
     audio.play().catch(() => {});
+  }
+}
+
+// Soundboard playback with the sender's speed/pitch applied. Unaltered clips go
+// through the regular <audio> path; anything else is decoded and played via Web
+// Audio (see utils/soundboardFx.ts for the three paths).
+const decodedClipCache = new Map<string, Promise<AudioBuffer>>();
+const fxBufferCache = new Map<string, AudioBuffer>();
+const FX_BUFFER_CACHE_MAX = 24;
+
+function decodeClip(ctx: AudioContext, url: string): Promise<AudioBuffer> {
+  let p = decodedClipCache.get(url);
+  if (!p) {
+    p = fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((ab) => ctx.decodeAudioData(ab));
+    p.catch(() => decodedClipCache.delete(url));
+    decodedClipCache.set(url, p);
+  }
+  return p;
+}
+
+async function playSoundboardSound(url: string, speedArg: unknown, pitchArg: unknown) {
+  const speed = clampSpeed(typeof speedArg === 'number' ? speedArg : 1);
+  const pitch = clampPitch(typeof pitchArg === 'number' ? pitchArg : 0);
+  if (isFxNeutral(speed, pitch)) {
+    playVoiceSound(url, '');
+    return;
+  }
+
+  const AudioCtx = (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext;
+  if (!AudioCtx) {
+    playVoiceSound(url, '');
+    return;
+  }
+  const soundUrl = url.startsWith('http') ? url : `${getApiBase()}${url}`;
+  try {
+    if (!analysisCtx) analysisCtx = new AudioCtx();
+    const ctx: AudioContext = analysisCtx;
+    if (ctx.state === 'suspended') await ctx.resume();
+    const [buffer, volume] = await Promise.all([decodeClip(ctx, soundUrl), getNormalizedVolume(soundUrl)]);
+
+    const src = ctx.createBufferSource();
+    if (isTapeFx(speed, pitch)) {
+      src.buffer = buffer;
+      src.playbackRate.value = speed;
+    } else {
+      const key = `${soundUrl}|${speed.toFixed(3)}|${pitch.toFixed(2)}`;
+      let rendered = fxBufferCache.get(key);
+      if (!rendered) {
+        rendered = renderFxBuffer(ctx, buffer, speed, pitch);
+        if (fxBufferCache.size >= FX_BUFFER_CACHE_MAX) {
+          const oldest = fxBufferCache.keys().next().value;
+          if (oldest !== undefined) fxBufferCache.delete(oldest);
+        }
+        fxBufferCache.set(key, rendered);
+      }
+      src.buffer = rendered;
+    }
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    src.connect(gain).connect(ctx.destination);
+    src.start();
+  } catch (err) {
+    console.warn('Soundboard FX playback failed, playing original', err);
+    playVoiceSound(url, '');
   }
 }
 
@@ -679,10 +746,11 @@ export function useSignalRListeners() {
       });
 
       // Soundboard event handlers
-      conn.on('SoundboardClipPlayed', (_channelId: string, clipUrl: string, _clipName: string, _userId: string) => {
+      // speed/pitch are absent when the event comes from an older server.
+      conn.on('SoundboardClipPlayed', (_channelId: string, clipUrl: string, _clipName: string, _userId: string, speed?: number, pitch?: number) => {
         const voiceState = useVoiceStore.getState();
         if (voiceState.currentChannelId && !voiceState.isDeafened) {
-          playVoiceSound(clipUrl, '');
+          void playSoundboardSound(clipUrl, speed, pitch);
         }
       });
 

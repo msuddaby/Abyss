@@ -48,6 +48,7 @@ public class HubRateLimiter
         ["RequestSync"]              = Category.WatchParty,
         ["TransferWatchPartyHost"]   = Category.WatchParty,
         ["PlaySoundboardClip"]       = Category.Soundboard,
+        ["PlaySoundboardClipFx"]     = Category.Soundboard,
         ["GetOnlineUsers"]           = Category.Query,
         ["GetServerVoiceUsers"]      = Category.Query,
         ["GetServerVoiceSharers"]    = Category.Query,
