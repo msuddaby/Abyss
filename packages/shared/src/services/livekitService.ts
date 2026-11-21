@@ -545,15 +545,52 @@ export async function sfuSetOutputDevice(deviceId: string): Promise<void> {
   for (const audio of sfuScreenAudioElements.values()) await apply(audio);
 }
 
+// Tiers name a *vertical* resolution ("1080p" = 1080 lines). The width bound is
+// derived from the height at the widest aspect we support, so the capture keeps
+// the source's aspect ratio: a 32:9 monitor at "1080p" becomes 3840x1080, not a
+// 1920x540 letterbox squeezed into a 16:9 box and then stretched back out.
+const MAX_SCREEN_ASPECT = 32 / 9;
+// Cap on how far the bitrate scales up for wider-than-16:9 captures.
+const MAX_BITRATE_SCALE = 2;
+
+function screenCaptureBounds(opts: ScreenSharePreset) {
+  return {
+    maxWidth: Math.round(opts.height * MAX_SCREEN_ASPECT),
+    maxHeight: opts.height,
+  };
+}
+
+// Screen shares publish a single full-resolution layer (`simulcast: false` at
+// both publish sites). With simulcast, Chrome only turns the top layer on once
+// its uplink estimate clears that layer's bitrate, and a mostly static desktop
+// rarely pushes the estimate up — so every viewer got the half-resolution `q`
+// layer upscaled to their window. One layer means viewers either get full
+// resolution, or the encoder lowers bitrate while keeping resolution
+// (maintain-resolution on the text tiers).
+
+/**
+ * The tier bitrates assume a 16:9 frame. Scale by the pixels actually captured
+ * so an ultrawide capture is not starved, and a smaller window not overfed.
+ */
+function screenEncodingFor(opts: ScreenSharePreset, mediaTrack: MediaStreamTrack) {
+  const { width, height } = mediaTrack.getSettings();
+  let maxBitrate = opts.maxBitrate;
+  if (width && height) {
+    const scale = (width * height) / (opts.width * opts.height);
+    maxBitrate = Math.round(opts.maxBitrate * Math.min(MAX_BITRATE_SCALE, Math.max(0.25, scale)));
+    console.log(`[livekit] Screen capture ${width}x${height} -> ${Math.round(maxBitrate / 1000)}kbps`);
+  }
+  return { maxBitrate, maxFramerate: opts.frameRate };
+}
+
 export async function sfuPublishScreenShare(opts: ScreenSharePreset): Promise<void> {
   if (!currentRoom) return;
   console.log('[livekit] Publishing screen share', opts);
-
-  const encoding = { maxBitrate: opts.maxBitrate, maxFramerate: opts.frameRate };
+  const { maxWidth, maxHeight } = screenCaptureBounds(opts);
 
   // On Linux Electron, desktopCapturer.getSources crashes PipeWire, so getDisplayMedia
-  // (used internally by setScreenShareEnabled) is unavailable. Capture via
-  // getUserMedia+chromeMediaSource and publish as a LocalVideoTrack directly.
+  // is unavailable. Capture via getUserMedia+chromeMediaSource and publish as a
+  // LocalVideoTrack directly.
   const isLinuxElectron = (window as any).electron?.platform === 'linux';
   if (isLinuxElectron) {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -561,10 +598,9 @@ export async function sfuPublishScreenShare(opts: ScreenSharePreset): Promise<vo
         mandatory: {
           chromeMediaSource: 'desktop',
           // Without these the desktop is captured at full native resolution and
-          // then squeezed into the bitrate ceiling, which looks like mush on
-          // anything above 1080p.
-          maxWidth: opts.width,
-          maxHeight: opts.height,
+          // then squeezed into the bitrate ceiling, which looks like mush.
+          maxWidth,
+          maxHeight,
           maxFrameRate: opts.frameRate,
         },
       } as any,
@@ -583,41 +619,58 @@ export async function sfuPublishScreenShare(opts: ScreenSharePreset): Promise<vo
       // reads screenShareEncoding for ScreenShare sources and discards
       // videoEncoding entirely, silently falling back to the library default
       // of 1080p15 @ 2.5 Mbps.
-      screenShareEncoding: encoding,
+      screenShareEncoding: screenEncodingFor(opts, mediaTrack),
       degradationPreference: opts.degradationPreference,
+      simulcast: false,
     });
     return;
   }
 
-  // Without an explicit `resolution` livekit-client pins capture to
-  // ScreenSharePresets.h1080fps30, which caps the *capture* framerate at 30 and
-  // makes the 60fps tier unreachable.
+  // Capture first, publish second, so the encoding can be sized to the real
+  // capture dimensions. setScreenShareEnabled() does both in one step and only
+  // accepts `resolution`, which livekit turns into *ideal* width/height — that
+  // squeezes non-16:9 screens into a 16:9 box. A zero resolution stops livekit
+  // pinning its 1080p30 default and passes our `video` constraints through as-is.
+  const video = {
+    width: { max: maxWidth },
+    height: { max: maxHeight },
+    frameRate: { ideal: opts.frameRate, max: opts.frameRate },
+  };
   const captureOpts = {
-    resolution: { width: opts.width, height: opts.height, frameRate: opts.frameRate },
+    resolution: { width: 0, height: 0, frameRate: opts.frameRate },
+    video: video as any,
     contentHint: opts.contentHint,
   };
-  const publishOpts = {
-    screenShareEncoding: encoding,
-    degradationPreference: opts.degradationPreference,
-  };
+  let tracks;
   try {
-    await currentRoom.localParticipant.setScreenShareEnabled(
-      true,
-      { ...captureOpts, audio: true },
-      publishOpts,
-    );
+    tracks = await currentRoom.localParticipant.createScreenTracks({ ...captureOpts, audio: true });
   } catch (err: any) {
-    if (err?.name === 'NotSupportedError') {
-      // Audio capture via getDisplayMedia is not supported on this platform
-      console.warn('[livekit] Screen share audio not supported, retrying without audio');
-      await currentRoom.localParticipant.setScreenShareEnabled(
-        true,
-        { ...captureOpts, audio: false },
-        publishOpts,
-      );
-    } else {
-      throw err;
+    if (err?.name !== 'NotSupportedError') throw err;
+    // Audio capture via getDisplayMedia is not supported on this platform
+    console.warn('[livekit] Screen share audio not supported, retrying without audio');
+    tracks = await currentRoom.localParticipant.createScreenTracks({ ...captureOpts, audio: false });
+  }
+
+  try {
+    for (const track of tracks) {
+      if (track.kind === Track.Kind.Video) {
+        await currentRoom.localParticipant.publishTrack(track, {
+          source: Track.Source.ScreenShare,
+          screenShareEncoding: screenEncodingFor(opts, track.mediaStreamTrack),
+          degradationPreference: opts.degradationPreference,
+          simulcast: false,
+        });
+      } else {
+        await currentRoom.localParticipant.publishTrack(track, { source: Track.Source.ScreenShareAudio });
+      }
     }
+  } catch (err) {
+    // Don't leave a live capture (and the OS "sharing" indicator) behind.
+    for (const track of tracks) {
+      await currentRoom?.localParticipant.unpublishTrack(track).catch(() => {});
+      track.stop();
+    }
+    throw err;
   }
 }
 
@@ -752,14 +805,16 @@ export async function sfuUpdateScreenShareQuality(opts: ScreenSharePreset): Prom
   // setScreenShareEnabled — the exact API the Linux capture branch exists to
   // avoid — leaving linuxScreenShareTrack dangling.
   try {
+    const { maxWidth, maxHeight } = screenCaptureBounds(opts);
     await track.mediaStreamTrack.applyConstraints({
-      width: { ideal: opts.width },
-      height: { ideal: opts.height },
-      frameRate: { ideal: opts.frameRate },
+      width: { max: maxWidth },
+      height: { max: maxHeight },
+      frameRate: { ideal: opts.frameRate, max: opts.frameRate },
     });
     track.mediaStreamTrack.contentHint = opts.contentHint;
     await track.setDegradationPreference(opts.degradationPreference);
 
+    const { maxBitrate } = screenEncodingFor(opts, track.mediaStreamTrack);
     const sender = track.sender;
     if (sender) {
       const params = sender.getParameters();
@@ -767,7 +822,7 @@ export async function sfuUpdateScreenShareQuality(opts: ScreenSharePreset): Prom
         // Simulcast publishes several encodings; give each its share of the
         // budget based on how far down it is scaled.
         const down = enc.scaleResolutionDownBy ?? 1;
-        enc.maxBitrate = Math.floor(opts.maxBitrate / (down * down));
+        enc.maxBitrate = Math.floor(maxBitrate / (down * down));
         enc.maxFramerate = opts.frameRate;
       }
       await sender.setParameters(params);
