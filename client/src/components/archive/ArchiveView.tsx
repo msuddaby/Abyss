@@ -50,6 +50,7 @@ export default function ArchiveView({ hamburger }: { hamburger: ReactNode }) {
   const filter = useArchiveStore((s) => s.filter);
   const albums = useArchiveStore((s) => s.albums);
   const uploads = useArchiveStore((s) => s.uploads);
+  const stats = useArchiveStore((s) => s.stats);
 
   const [lightbox, setLightbox] = useState<{ entries: LightboxEntry[]; index: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -63,6 +64,7 @@ export default function ArchiveView({ hamburger }: { hamburger: ReactNode }) {
   useEffect(() => {
     if (!serverId) return;
     useArchiveStore.getState().fetchAlbums(serverId).catch(console.error);
+    useArchiveStore.getState().fetchStats(serverId).catch(console.error);
   }, [serverId]);
 
   if (!server) return null;
@@ -79,7 +81,9 @@ export default function ArchiveView({ hamburger }: { hamburger: ReactNode }) {
 
   const activeAlbum = albums.find((a) => a.id === filter.albumId);
   const subtitle = tab === 'uploads'
-    ? (activeAlbum ? `${activeAlbum.itemCount} items in ${activeAlbum.name}` : `${albums.length} album${albums.length === 1 ? '' : 's'}`)
+    ? (activeAlbum
+      ? `${activeAlbum.itemCount} item${activeAlbum.itemCount === 1 ? '' : 's'} in ${activeAlbum.name}`
+      : `${stats ? `${stats.total} item${stats.total === 1 ? '' : 's'} · ` : ''}${albums.length} album${albums.length === 1 ? '' : 's'}`)
     : 'Photos and videos posted in chat';
 
   return (
@@ -219,7 +223,7 @@ function UploadsTab({ serverId, canUpload, canManage, currentUserId, onOpen, onU
 
   const activeAlbum = albums.find((a) => a.id === filter.albumId);
   const canEditAlbum = !!activeAlbum && (canManage || activeAlbum.createdById === currentUserId);
-  const totalCount = useMemo(() => albums.reduce((n, a) => n + a.itemCount, 0), [albums]);
+  const stats = useArchiveStore((s) => s.stats);
 
   const submitNewAlbum = async () => {
     const name = newAlbum?.trim();
@@ -262,7 +266,7 @@ function UploadsTab({ serverId, canUpload, canManage, currentUserId, onOpen, onU
       <section className="archive-albums" aria-label="Albums">
         <button className={`archive-album-card all${!filter.albumId ? ' active' : ''}`} onClick={() => setFilter({ albumId: null })}>
           <span className="archive-album-name">All items</span>
-          {albums.length > 0 && <span className="archive-album-count">{totalCount} in albums</span>}
+          {stats && <span className="archive-album-count">{stats.total} item{stats.total === 1 ? '' : 's'}</span>}
         </button>
         {albums.map((a) => (
           <button

@@ -47,6 +47,10 @@ export const ALL_SIGNALR_EVENTS = [
   // Soundboard
   'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated',
   'SoundboardClipRemoved',
+  // RSS feed channels
+  'RssFeedUpdated',
+  // Archive
+  'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
   // Voice (useWebRTC — LiveKit SFU presence/state events)
   'UserJoinedVoice', 'UserLeftVoice', 'VoiceChannelUsers',
   'ScreenShareStarted', 'ScreenShareStopped', 'ActiveSharers',

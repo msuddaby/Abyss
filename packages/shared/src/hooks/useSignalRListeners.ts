@@ -773,22 +773,22 @@ export function useSignalRListeners() {
       });
 
       // Archive event handlers (store ignores events for archives that aren't open)
-      conn.on('ArchiveItemAdded', (_serverId: string, item: ArchiveItem) => {
+      conn.on('ArchiveItemAdded', (serverId: string, item: ArchiveItem) => {
         useArchiveStore.getState().addItemLocal(item);
+        useArchiveStore.getState().refreshCounts(serverId);
       });
 
       conn.on('ArchiveItemUpdated', (_serverId: string, item: ArchiveItem) => {
         useArchiveStore.getState().updateItemLocal(item);
       });
 
-      conn.on('ArchiveItemDeleted', (_serverId: string, itemId: string) => {
+      conn.on('ArchiveItemDeleted', (serverId: string, itemId: string) => {
         useArchiveStore.getState().removeItemLocal(itemId);
+        useArchiveStore.getState().refreshCounts(serverId);
       });
 
       conn.on('ArchiveAlbumsChanged', (serverId: string) => {
-        if (useArchiveStore.getState().openServerId === serverId) {
-          useArchiveStore.getState().fetchAlbums(serverId).catch(console.error);
-        }
+        useArchiveStore.getState().refreshCounts(serverId);
       });
 
       refreshSignalRState(conn);

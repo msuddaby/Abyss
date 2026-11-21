@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import api, { postMultipart } from '../services/api.js';
 import { useWatchPartyStore } from './watchPartyStore.js';
-import type { ArchiveAlbum, ArchiveItem, ArchiveTypeFilter, GalleryItem } from '../types/index.js';
+import type { ArchiveAlbum, ArchiveItem, ArchiveStats, ArchiveTypeFilter, GalleryItem } from '../types/index.js';
 
 export type ArchiveTab = 'uploads' | 'gallery';
 export type ArchiveSort = 'newest' | 'oldest';
@@ -35,6 +35,7 @@ interface ArchiveState {
   tab: ArchiveTab;
 
   albums: ArchiveAlbum[];
+  stats: ArchiveStats | null;
   items: ArchiveItem[];
   itemsCursor: string | null;
   itemsLoading: boolean;
@@ -56,6 +57,9 @@ interface ArchiveState {
   setGalleryFilter: (patch: Partial<GalleryFilter>) => void;
 
   fetchAlbums: (serverId: string) => Promise<void>;
+  fetchStats: (serverId: string) => Promise<void>;
+  /** Debounced re-fetch of album counts + totals after any add/edit/delete. */
+  refreshCounts: (serverId: string) => void;
   fetchItems: (serverId: string, opts?: { append?: boolean }) => Promise<void>;
   fetchGallery: (serverId: string, opts?: { append?: boolean }) => Promise<void>;
 
@@ -96,12 +100,14 @@ function matchesFilter(item: ArchiveItem, f: ArchiveFilter): boolean {
 // Guards against out-of-order responses when filters change quickly.
 let itemsRequestSeq = 0;
 let galleryRequestSeq = 0;
+let countsTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useArchiveStore = create<ArchiveState>((set, get) => ({
   openServerId: null,
   tab: 'uploads',
 
   albums: [],
+  stats: null,
   items: [],
   itemsCursor: null,
   itemsLoading: false,
@@ -119,7 +125,7 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
     if (get().openServerId === serverId) return;
     set({
       openServerId: serverId,
-      albums: [], items: [], itemsCursor: null, gallery: [], galleryCursor: null,
+      albums: [], stats: null, items: [], itemsCursor: null, gallery: [], galleryCursor: null,
       filter: { albumId: null, type: 'all', q: '', sort: 'newest' },
       galleryFilter: { channelId: null, type: 'all' },
     });
@@ -132,6 +138,23 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
   fetchAlbums: async (serverId) => {
     const res = await api.get<ArchiveAlbum[]>(`/servers/${serverId}/archive/albums`);
     if (get().openServerId === serverId) set({ albums: res.data });
+  },
+
+  fetchStats: async (serverId) => {
+    const res = await api.get<ArchiveStats>(`/servers/${serverId}/archive/stats`);
+    if (get().openServerId === serverId) set({ stats: res.data });
+  },
+
+  refreshCounts: (serverId) => {
+    if (get().openServerId !== serverId) return;
+    // Bursts (multi-file uploads, our own action + its SignalR echo) collapse into one fetch.
+    if (countsTimer) clearTimeout(countsTimer);
+    countsTimer = setTimeout(() => {
+      countsTimer = null;
+      if (get().openServerId !== serverId) return;
+      get().fetchAlbums(serverId).catch(console.error);
+      get().fetchStats(serverId).catch(console.error);
+    }, 400);
   },
 
   fetchItems: async (serverId, opts) => {
@@ -198,6 +221,7 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
       items: get().items.map((i) => (i.albumId === albumId ? { ...i, albumId: null } : i)),
       filter: filter.albumId === albumId ? { ...filter, albumId: null } : filter,
     });
+    get().refreshCounts(serverId);
   },
 
   uploadFiles: async (serverId, files, albumId) => {
@@ -215,6 +239,7 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
           onProgress: (progress) => patch({ progress }),
         });
         get().addItemLocal(item);
+        get().refreshCounts(serverId);
         set({ uploads: get().uploads.filter((u) => u.id !== id) });
       } catch (err: any) {
         const msg = typeof err?.response?.data === 'string' ? err.response.data : err?.message || 'Upload failed';
@@ -235,11 +260,13 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
     }
     const res = await api.patch<ArchiveItem>(`/servers/${serverId}/archive/items/${itemId}`, body);
     get().updateItemLocal(res.data);
+    if (patch.albumId !== undefined) get().refreshCounts(serverId);
   },
 
   deleteItem: async (serverId, itemId) => {
     await api.delete(`/servers/${serverId}/archive/items/${itemId}`);
     get().removeItemLocal(itemId);
+    get().refreshCounts(serverId);
   },
 
   saveFromAttachment: async (serverId, attachmentId, albumId) => {
@@ -247,6 +274,7 @@ export const useArchiveStore = create<ArchiveState>((set, get) => ({
       albumId: albumId ?? null,
     });
     get().addItemLocal(res.data);
+    get().refreshCounts(serverId);
     return res.data;
   },
 

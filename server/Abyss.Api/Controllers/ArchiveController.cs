@@ -158,6 +158,17 @@ public class ArchiveController : ControllerBase
         return Ok();
     }
 
+    [HttpGet("stats")]
+    public async Task<ActionResult<ArchiveStatsDto>> Stats(Guid serverId)
+    {
+        if (!await _perms.IsMemberAsync(serverId, UserId)) return Forbid();
+        var q = _db.ArchiveItems.Where(i => i.ServerId == serverId);
+        var total = await q.CountAsync();
+        var videos = await q.CountAsync(i => i.ContentType.StartsWith("video/"));
+        var unsorted = await q.CountAsync(i => i.AlbumId == null);
+        return Ok(new ArchiveStatsDto(total, videos, total - videos, unsorted));
+    }
+
     // ───────────── Items ─────────────
 
     [HttpGet("items")]

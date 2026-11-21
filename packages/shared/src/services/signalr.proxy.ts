@@ -6,6 +6,9 @@ import type {
   WorkerToMainMessage,
   SignalRConnection,
 } from './signalr.protocol.js';
+import { ALL_SIGNALR_EVENTS } from './signalr.protocol.js';
+
+const FORWARDED_EVENTS: ReadonlySet<string> = new Set(ALL_SIGNALR_EVENTS);
 
 type LifecycleCb = (err?: string | null) => void;
 
@@ -39,6 +42,10 @@ export class SignalRProxy implements SignalRConnection {
   }
 
   on(event: string, handler: (...args: any[]) => void): void {
+    // The worker only forwards events it pre-registered; anything else is silently dropped.
+    if (!FORWARDED_EVENTS.has(event)) {
+      console.warn(`[SignalR] '${event}' is not in ALL_SIGNALR_EVENTS (signalr.protocol.ts); the worker will never deliver it.`);
+    }
     let set = this.handlers.get(event);
     if (!set) {
       set = new Set();

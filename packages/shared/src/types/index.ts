@@ -648,4 +648,11 @@ export interface GalleryItem {
   createdAt: string;
 }
 
+export interface ArchiveStats {
+  total: number;
+  videos: number;
+  images: number;
+  unsorted: number;
+}
+
 export type ArchiveTypeFilter = 'all' | 'video' | 'image';

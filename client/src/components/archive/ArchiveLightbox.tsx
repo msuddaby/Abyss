@@ -1,14 +1,55 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useArchiveStore, useToastStore, formatFileSize } from '@abyss/shared';
 import type { ArchiveItem, GalleryItem } from '@abyss/shared';
 import ConfirmModal from '../ConfirmModal';
+import { toMediaVolume } from '../../utils/audioUtils';
 import { useArchiveWatch } from './useArchiveWatch';
 import { mediaUrl, archiveVideoUrl, isVideoType, formatDuration, shortDate, jumpToMessage, errorText } from './archiveUtils';
 import type { LightboxEntry } from './archiveUtils';
 import { ChevronIcon, CloseIcon, PlayIcon, QueueAddIcon, SpeakerIcon } from './ArchiveIcons';
 
 const entryId = (e: LightboxEntry) => (e.kind === 'archive' ? e.item.id : e.item.attachmentId);
+
+// Element volume (0-1) last used in the lightbox player, remembered across items and sessions.
+const LIGHTBOX_VOLUME_KEY = 'archive-lightbox-volume';
+const LIGHTBOX_MUTED_KEY = 'archive-lightbox-muted';
+
+function readSavedVolume(): { volume: number; muted: boolean } {
+  try {
+    const v = parseFloat(localStorage.getItem(LIGHTBOX_VOLUME_KEY) ?? '');
+    return {
+      // Default matches the app's scaled "100%" level instead of the far-too-loud element maximum
+      volume: Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : toMediaVolume(1),
+      muted: localStorage.getItem(LIGHTBOX_MUTED_KEY) === '1',
+    };
+  } catch {
+    return { volume: toMediaVolume(1), muted: false };
+  }
+}
+
+/** Native <video controls> that restores and persists the user's volume. */
+function LightboxVideo({ src, poster }: { src?: string; poster?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    const saved = readSavedVolume();
+    video.volume = saved.volume;
+    video.muted = saved.muted;
+    const onVolume = () => {
+      try {
+        localStorage.setItem(LIGHTBOX_VOLUME_KEY, String(video.volume));
+        localStorage.setItem(LIGHTBOX_MUTED_KEY, video.muted ? '1' : '0');
+      } catch { /* storage unavailable: volume just won't persist */ }
+    };
+    video.addEventListener('volumechange', onVolume);
+    return () => video.removeEventListener('volumechange', onVolume);
+  }, [src]);
+
+  return <video ref={ref} src={src} poster={poster} controls playsInline preload="metadata" />;
+}
 
 export default function ArchiveLightbox({
   entries, index, onIndexChange, onClose, canUpload, canManage, currentUserId, liveItems, liveGallery,
@@ -78,7 +119,7 @@ export default function ArchiveLightbox({
           <button className="archive-round-btn nav" onClick={() => go(-1)} disabled={pos <= 0} aria-label="Previous item"><ChevronIcon dir="left" /></button>
           <div className="archive-lightbox-frame">
             {video
-              ? <video key={entryId(entry)} src={src} poster={poster} controls playsInline preload="metadata" />
+              ? <LightboxVideo key={entryId(entry)} src={src} poster={poster} />
               : <img key={entryId(entry)} src={src} alt={title} />}
           </div>
           <button className="archive-round-btn nav" onClick={() => go(1)} disabled={pos >= list.length - 1} aria-label="Next item"><ChevronIcon dir="right" /></button>

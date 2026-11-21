@@ -136,6 +136,7 @@ public class UpdateUserPreferencesRequest
 // Archive DTOs
 public record ArchiveAlbumDto(Guid Id, Guid ServerId, string Name, string CreatedById, Guid? CoverItemId, string? CoverUrl, int ItemCount, DateTime CreatedAt);
 public record ArchiveItemDto(Guid Id, Guid ServerId, Guid? AlbumId, string UploaderId, UserDto? Uploader, string Title, string? Description, string FileName, string Url, string ContentType, long Size, int? Width, int? Height, long? DurationMs, string? PosterPath, DateTime CreatedAt);
+public record ArchiveStatsDto(int Total, int Videos, int Images, int Unsorted);
 public record ArchiveItemPageDto(List<ArchiveItemDto> Items, string? NextCursor);
 public record CreateArchiveAlbumRequest(string Name);
 public record UpdateArchiveAlbumRequest(string? Name, Guid? CoverItemId);
