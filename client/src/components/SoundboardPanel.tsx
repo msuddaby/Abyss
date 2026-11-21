@@ -19,7 +19,7 @@ export default function SoundboardPanel() {
   const [menu, setMenu] = useState<ClipMenu | null>(null);
 
   const filteredClips = useMemo(() => {
-    const sorted = [...clips].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = [...clips].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
     if (!query.trim()) return sorted;
     const q = query.trim().toLowerCase();
     return sorted.filter((clip) => clip.name.toLowerCase().includes(q));

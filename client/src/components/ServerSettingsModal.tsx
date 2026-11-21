@@ -211,7 +211,7 @@ export default function ServerSettingsModal({ serverId, onClose }: { serverId: s
   const [sbPreviewClipId, setSbPreviewClipId] = useState<string | null>(null);
   const [sbSearch, setSbSearch] = useState('');
   const filteredSoundboardClips = useMemo(() => {
-    const sorted = [...soundboardClips].sort((a, b) => a.name.localeCompare(b.name));
+    const sorted = [...soundboardClips].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
     if (!sbSearch.trim()) return sorted;
     const q = sbSearch.trim().toLowerCase();
     return sorted.filter((clip) => clip.name.toLowerCase().includes(q));
