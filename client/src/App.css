@@ -60,6 +60,19 @@ body.window-hidden *::after {
   animation-play-state: running !important;
 }
 
+/* Thrown tomatoes are one-shot animations that must play whether or not the
+   message is hovered. The doubled class out-specifies the hover-pause rules
+   above (0,3,0 vs 0,2,0). body.window-hidden still pauses them, so a splat
+   that lands while the window is hidden plays out when you come back. */
+.message-cosmetic-group .tomato-splat-layer.tomato-splat-layer,
+.message-cosmetic-group .tomato-splat-layer.tomato-splat-layer * {
+  animation-play-state: running !important;
+}
+body.window-hidden .tomato-splat-layer.tomato-splat-layer,
+body.window-hidden .tomato-splat-layer.tomato-splat-layer * {
+  animation-play-state: paused !important;
+}
+
 /* Auth Pages */
 .auth-page {
   display: flex;
