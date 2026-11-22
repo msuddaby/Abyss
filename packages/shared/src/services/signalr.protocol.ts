@@ -26,6 +26,7 @@ export const ALL_SIGNALR_EVENTS = [
   // Messages
   'ReceiveMessage', 'MessageEdited', 'MessageDeleted',
   'ReactionAdded', 'ReactionRemoved',
+  'MessageSplatted', 'MessageSplatsWiped',
   // Unreads / notifications
   'NewUnreadMessage', 'MentionReceived',
   // DMs

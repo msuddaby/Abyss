@@ -130,6 +130,7 @@ builder.Services.AddScoped<MediaValidator>();
 builder.Services.AddScoped<MediaUploadService>();
 builder.Services.AddScoped<ArchiveService>();
 builder.Services.AddScoped<CosmeticService>();
+builder.Services.AddScoped<TomatoService>();
 builder.Services.AddSingleton<EmailService>();
 
 // Watch party / media providers

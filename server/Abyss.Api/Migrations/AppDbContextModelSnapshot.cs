@@ -699,6 +699,48 @@ namespace Abyss.Api.Migrations
                     b.ToTable("Messages");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.MessageSplat", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Seed")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("WipedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<float>("X")
+                        .HasColumnType("real");
+
+                    b.Property<float>("Y")
+                        .HasColumnType("real");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("MessageSplats");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.Notification", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1622,6 +1664,25 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Channel");
 
                     b.Navigation("ReplyToMessage");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.MessageSplat", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.Message", "Message")
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Abyss.Api.Models.AppUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Message");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.Notification", b =>

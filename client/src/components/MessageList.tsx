@@ -15,7 +15,7 @@ import {
   getMessageStyle,
 } from "@abyss/shared";
 import { showDesktopNotification, isElectron } from "@abyss/shared/services/electronNotifications";
-import type { Message, Reaction, PinnedMessage } from "@abyss/shared";
+import type { Message, Reaction, PinnedMessage, MessageSplat } from "@abyss/shared";
 import MessageItem from "./MessageItem";
 
 const AT_BOTTOM_THRESHOLD = 300;
@@ -170,6 +170,8 @@ export default function MessageList() {
   const markDeleted = useMessageStore((s) => s.markDeleted);
   const addReaction = useMessageStore((s) => s.addReaction);
   const removeReaction = useMessageStore((s) => s.removeReaction);
+  const addSplat = useMessageStore((s) => s.addSplat);
+  const markSplatsWiped = useMessageStore((s) => s.markSplatsWiped);
   const addPinnedMessage = useMessageStore((s) => s.addPinnedMessage);
   const removePinnedMessage = useMessageStore((s) => s.removePinnedMessage);
   const currentUserId = useAuthStore((s) => s.user?.id);
@@ -349,6 +351,12 @@ export default function MessageList() {
     ) => {
       removeReaction(messageId, userId, emoji);
     };
+    const splatHandler = (splat: MessageSplat) => {
+      addSplat(splat);
+    };
+    const splatsWipedHandler = (messageId: string, wipedAt: string) => {
+      markSplatsWiped(messageId, wipedAt);
+    };
     const pinHandler = (pinned: PinnedMessage) => {
       addPinnedMessage(pinned);
     };
@@ -360,6 +368,8 @@ export default function MessageList() {
     conn.on("MessageDeleted", deleteHandler);
     conn.on("ReactionAdded", reactionAddedHandler);
     conn.on("ReactionRemoved", reactionRemovedHandler);
+    conn.on("MessageSplatted", splatHandler);
+    conn.on("MessageSplatsWiped", splatsWipedHandler);
     conn.on("MessagePinned", pinHandler);
     conn.on("MessageUnpinned", unpinHandler);
     return () => {
@@ -369,6 +379,8 @@ export default function MessageList() {
       conn.off("MessageDeleted", deleteHandler);
       conn.off("ReactionAdded", reactionAddedHandler);
       conn.off("ReactionRemoved", reactionRemovedHandler);
+      conn.off("MessageSplatted", splatHandler);
+      conn.off("MessageSplatsWiped", splatsWipedHandler);
       conn.off("MessagePinned", pinHandler);
       conn.off("MessageUnpinned", unpinHandler);
     };
@@ -378,6 +390,8 @@ export default function MessageList() {
     markDeleted,
     addReaction,
     removeReaction,
+    addSplat,
+    markSplatsWiped,
     addPinnedMessage,
     removePinnedMessage,
     currentUserId,

@@ -252,6 +252,30 @@ export interface Message {
   ghostAuthorAvatarUrl?: string | null;
   // Permalink to the source XF post; shown as a "via forum" badge.
   xfPostUrl?: string | null;
+  // Thrown tomatoes stuck to the message. Only present on history fetches —
+  // live messages start clean. Wiped splats are kept (wipedAt set) to draw a smear.
+  splats?: MessageSplat[] | null;
+}
+
+export interface MessageSplat {
+  id: string;
+  messageId: string;
+  userId: string;
+  kind: string;
+  /** Position as a fraction (0–1) of the message box. */
+  x: number;
+  y: number;
+  /** Deterministic shape seed so every client draws the same splat. */
+  seed: number;
+  createdAt: string;
+  wipedAt?: string | null;
+  displayName: string;
+}
+
+export interface TomatoAmmo {
+  remaining: number;
+  max: number;
+  nextRefillAt?: string | null;
 }
 
 export interface PinnedMessage {

@@ -40,7 +40,16 @@ public record InviteDto(Guid Id, string Code, Guid? ServerId, string? CreatorId,
 public record CreateServerInviteRequest(DateTime? ExpiresAt, int? MaxUses, bool AllowGuests = false);
 public record InviteInfoDto(string ServerName, string? ServerIconUrl, int MemberCount, bool AllowGuests);
 public record ReplyReferenceDto(Guid Id, string Content, string AuthorId, UserDto Author, bool IsDeleted);
-public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo, string? GhostAuthorName = null, string? GhostAuthorAvatarUrl = null, string? XfPostUrl = null);
+public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Author, Guid ChannelId, DateTime CreatedAt, List<AttachmentDto> Attachments, DateTime? EditedAt, bool IsDeleted, bool IsSystem, List<ReactionDto> Reactions, Guid? ReplyToMessageId, ReplyReferenceDto? ReplyTo, string? GhostAuthorName = null, string? GhostAuthorAvatarUrl = null, string? XfPostUrl = null)
+{
+    // Attached after the main query (see TomatoService.AttachSplatsAsync) rather than
+    // projected, so the many positional MessageDto constructions don't all need it.
+    public List<MessageSplatDto>? Splats { get; init; }
+}
+public record MessageSplatDto(Guid Id, Guid MessageId, string UserId, string Kind, float X, float Y, int Seed, DateTime CreatedAt, DateTime? WipedAt, string DisplayName);
+public record TomatoAmmoDto(int Remaining, int Max, DateTime? NextRefillAt);
+public record ThrowTomatoRequest(float X, float Y);
+public record ThrowTomatoResponse(MessageSplatDto Splat, TomatoAmmoDto Ammo);
 public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto PinnedBy);
 public record ReactionDto(Guid Id, Guid MessageId, string UserId, string Emoji, string Username = "", string DisplayName = "", string? AvatarUrl = null);
 public record AttachmentDto(Guid Id, Guid MessageId, string FileName, string FilePath, string? PosterPath, string ContentType, long Size, int? Width, int? Height);

@@ -19,14 +19,16 @@ public class ChannelsController : ControllerBase
     private readonly CosmeticService _cosmetics;
     private readonly ImageService _imageService;
     private readonly RssFeedService _rss;
+    private readonly TomatoService _tomatoes;
 
-    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics, ImageService imageService, RssFeedService rss)
+    public ChannelsController(AppDbContext db, PermissionService perms, CosmeticService cosmetics, ImageService imageService, RssFeedService rss, TomatoService tomatoes)
     {
         _db = db;
         _perms = perms;
         _cosmetics = cosmetics;
         _imageService = imageService;
         _rss = rss;
+        _tomatoes = tomatoes;
     }
 
     private string UserId => User.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -90,7 +92,7 @@ public class ChannelsController : ControllerBase
                 ))
                 .ToListAsync();
 
-            return Ok(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(newerMessages)));
+            return Ok(await _tomatoes.AttachSplatsAsync(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(newerMessages))));
         }
 
         if (before.HasValue)
@@ -130,7 +132,7 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(messages)));
+        return Ok(await _tomatoes.AttachSplatsAsync(await _cosmetics.AttachCosmeticsAsync(_imageService.EnrichAttachmentDimensions(messages))));
     }
 
     [HttpGet("{channelId}/messages/around/{messageId}")]
@@ -201,7 +203,7 @@ public class ChannelsController : ControllerBase
             ))
             .ToListAsync();
 
-        return Ok(await _cosmetics.AttachCosmeticsAsync(messages));
+        return Ok(await _tomatoes.AttachSplatsAsync(await _cosmetics.AttachCosmeticsAsync(messages)));
     }
 
     [HttpGet("{channelId}/pins")]

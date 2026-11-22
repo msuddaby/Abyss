@@ -34,6 +34,27 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
     });
   }
 
+  const liveSplats = (message.splats ?? []).filter((sp) => !sp.wipedAt);
+  if (canAddReactions && actions.onThrowTomato && !liveSplats.some((sp) => sp.userId === currentUser?.id)) {
+    items.push({
+      id: 'message-throw-tomato',
+      label: 'Throw Tomato',
+      group: 'message',
+      order: 1.5,
+      action: actions.onThrowTomato,
+    });
+  }
+
+  if (liveSplats.length > 0 && (isOwn || canManageMessages) && actions.onWipeTomatoes) {
+    items.push({
+      id: 'message-wipe-tomatoes',
+      label: 'Wipe Off Tomatoes',
+      group: 'message',
+      order: 1.6,
+      action: actions.onWipeTomatoes,
+    });
+  }
+
   if ((message.reactions?.length ?? 0) > 0) {
     items.push({
       id: 'message-show-reactions',

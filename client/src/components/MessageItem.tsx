@@ -22,6 +22,7 @@ import MessageReplyIndicator from "./message/MessageReplyIndicator";
 import MessageReactions from "./message/MessageReactions";
 import type { MessageReactionsHandle } from "./message/MessageReactions";
 import ImagePreviewModal from "./message/ImagePreviewModal";
+import TomatoSplats, { TomatoAimOverlay } from "./message/TomatoSplats";
 import { useContextMenuStore } from "../stores/contextMenuStore";
 import { useLongPress } from "../hooks/useLongPress";
 
@@ -43,6 +44,13 @@ function getImageBounds(att: Attachment) {
     width: Math.max(1, Math.round(att.width * scale)),
     height: Math.max(1, Math.round(att.height * scale)),
   };
+}
+
+function outOfTomatoesText(nextRefillAt?: string | null): string {
+  if (!nextRefillAt) return "You're out of tomatoes.";
+  const mins = Math.max(1, Math.ceil((new Date(nextRefillAt).getTime() - Date.now()) / 60_000));
+  const wait = mins >= 60 ? `${Math.ceil(mins / 60)}h` : `${mins}m`;
+  return `You're out of tomatoes. The next one ripens in ${wait}.`;
 }
 
 export default function MessageItem({
@@ -67,6 +75,7 @@ export default function MessageItem({
     | null
   >(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [aiming, setAiming] = useState(false);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const reactionsRef = useRef<MessageReactionsHandle>(null);
@@ -78,6 +87,7 @@ export default function MessageItem({
   const addToast = useToastStore((s) => s.addToast);
   const { editMessage, deleteMessage, toggleReaction, setReplyingTo } =
     useMessageStore();
+  const tomatoAmmo = useMessageStore((s) => s.tomatoAmmo);
   const isDmMode = useDmStore((s) => s.isDmMode);
   const openContextMenu = useContextMenuStore((s) => s.open);
 
@@ -90,6 +100,55 @@ export default function MessageItem({
   const canAddReactions = isDmMode
     ? true
     : hasChannelPermission(activeChannel?.permissions, Permission.AddReactions);
+  const liveSplats = useMemo(
+    () => (message.splats ?? []).filter((sp) => !sp.wipedAt),
+    [message.splats],
+  );
+  const alreadyThrown = liveSplats.some((sp) => sp.userId === currentUser?.id);
+  const canThrowTomato = canAddReactions && !alreadyThrown;
+  const canWipeTomatoes = liveSplats.length > 0 && (isOwn || canManageMessages);
+
+  const startAiming = useCallback(() => {
+    const store = useMessageStore.getState();
+    const ammo = store.tomatoAmmo;
+    if (ammo && ammo.remaining <= 0) {
+      addToast(outOfTomatoesText(ammo.nextRefillAt), "info");
+      return;
+    }
+    setAiming(true);
+    // Refresh in the background so the hint shows an accurate count.
+    void store.fetchTomatoAmmo();
+  }, [addToast]);
+
+  const handleThrow = useCallback(
+    async (x: number, y: number) => {
+      setAiming(false);
+      try {
+        await useMessageStore.getState().throwTomato(message.id, x, y);
+      } catch (err) {
+        const code = (err as { code?: string }).code;
+        if (code === "out_of_ammo") {
+          addToast(outOfTomatoesText(useMessageStore.getState().tomatoAmmo?.nextRefillAt), "info");
+        } else if (code === "already_hit") {
+          addToast("You've already hit this one.", "info");
+        } else {
+          addToast("Your tomato missed. Try again.", "error");
+        }
+      }
+    },
+    [message.id, addToast],
+  );
+
+  const cancelAiming = useCallback(() => setAiming(false), []);
+
+  const handleWipe = useCallback(async () => {
+    try {
+      await useMessageStore.getState().wipeSplats(message.id);
+    } catch {
+      addToast("Couldn't wipe the tomatoes off.", "error");
+    }
+  }, [message.id, addToast]);
+
   const authorMember = members.find((m) => m.userId === message.authorId);
   const authorColor = authorMember ? getDisplayColor(authorMember) : undefined;
   const nameplateStyle = getNameplateStyle(message.author);
@@ -203,10 +262,12 @@ export default function MessageItem({
           },
           onOpenReactionPicker: () => reactionsRef.current?.openPicker(),
           onViewProfile: () => setProfileCard({ x, y }),
+          onThrowTomato: startAiming,
+          onWipeTomatoes: handleWipe,
         },
       );
     },
-    [message, authorMember, openContextMenu],
+    [message, authorMember, openContextMenu, startAiming, handleWipe],
   );
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -327,7 +388,7 @@ export default function MessageItem({
   return (
     <div
       ref={messageRef}
-      className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}`}
+      className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}${aiming ? " message-aiming" : ""}`}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -489,6 +550,14 @@ export default function MessageItem({
           messageRef={messageRef}
         />
       </div>
+      <TomatoSplats splats={message.splats} />
+      {aiming && (
+        <TomatoAimOverlay
+          ammo={tomatoAmmo}
+          onThrow={handleThrow}
+          onCancel={cancelAiming}
+        />
+      )}
       <div className="message-actions">
         <button onClick={() => setReplyingTo(message)} title="Reply">
           &#8617;
@@ -499,6 +568,23 @@ export default function MessageItem({
             title="Add Reaction"
           >
             &#128578;
+          </button>
+        )}
+        {canThrowTomato && !aiming && (
+          <button
+            onClick={startAiming}
+            title={
+              tomatoAmmo
+                ? `Throw Tomato (${tomatoAmmo.remaining}/${tomatoAmmo.max} left)`
+                : "Throw Tomato"
+            }
+          >
+            &#127813;
+          </button>
+        )}
+        {canWipeTomatoes && (
+          <button onClick={handleWipe} title="Wipe Off Tomatoes">
+            &#129533;
           </button>
         )}
         {isOwn && !editing && (

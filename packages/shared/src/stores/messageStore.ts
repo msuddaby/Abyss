@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { resilientInvoke, onReconnected } from '../services/signalr.js';
-import type { Message, Reaction, PinnedMessage, EquippedCosmetics } from '../types/index.js';
+import type { Message, Reaction, PinnedMessage, EquippedCosmetics, MessageSplat, TomatoAmmo } from '../types/index.js';
 
 interface CachedChannel {
   messages: Message[];
@@ -51,6 +51,14 @@ interface MessageState {
   removePinnedMessage: (channelId: string, messageId: string) => void;
   isPinned: (channelId: string, messageId: string) => boolean;
   toggleReaction: (messageId: string, emoji: string) => Promise<void>;
+  /** Null until fetched. */
+  tomatoAmmo: TomatoAmmo | null;
+  fetchTomatoAmmo: () => Promise<TomatoAmmo | null>;
+  /** Throws with `.code` = 'out_of_ammo' | 'already_hit' on rejection. */
+  throwTomato: (messageId: string, x: number, y: number) => Promise<MessageSplat>;
+  wipeSplats: (messageId: string) => Promise<void>;
+  addSplat: (splat: MessageSplat) => void;
+  markSplatsWiped: (messageId: string, wipedAt: string) => void;
   editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   pinMessage: (messageId: string) => Promise<void>;
@@ -66,6 +74,7 @@ interface MessageState {
 
 export const useMessageStore = create<MessageState>((set, get) => ({
   messages: [],
+  tomatoAmmo: null,
   pinnedByChannel: {},
   channelCache: {},
   pendingMessages: [],
@@ -327,6 +336,75 @@ export const useMessageStore = create<MessageState>((set, get) => ({
 
   toggleReaction: async (messageId, emoji) => {
     await resilientInvoke('ToggleReaction', messageId, emoji);
+  },
+
+  fetchTomatoAmmo: async () => {
+    try {
+      const res = await api.get<TomatoAmmo>('/tomatoes/ammo');
+      set({ tomatoAmmo: res.data });
+      return res.data;
+    } catch {
+      return null;
+    }
+  },
+
+  throwTomato: async (messageId, x, y) => {
+    try {
+      const res = await api.post<{ splat: MessageSplat; ammo: TomatoAmmo }>(`/tomatoes/messages/${messageId}`, { x, y });
+      set({ tomatoAmmo: res.data.ammo });
+      get().addSplat(res.data.splat);
+      return res.data.splat;
+    } catch (err) {
+      const status = (err as { response?: { status?: number; data?: unknown } }).response?.status;
+      const e = new Error('Tomato throw failed') as Error & { code?: string };
+      if (status === 429) {
+        const ammo = (err as { response?: { data?: TomatoAmmo } }).response?.data;
+        if (ammo && typeof ammo.remaining === 'number') set({ tomatoAmmo: ammo });
+        e.code = 'out_of_ammo';
+      } else if (status === 409) {
+        e.code = 'already_hit';
+      }
+      throw e;
+    }
+  },
+
+  wipeSplats: async (messageId) => {
+    await api.delete(`/tomatoes/messages/${messageId}`);
+  },
+
+  addSplat: (splat) => {
+    const apply = (m: Message): Message => {
+      if (m.id !== splat.messageId) return m;
+      const existing = m.splats ?? [];
+      // The thrower gets the splat from both the POST response and the broadcast.
+      if (existing.some((s) => s.id === splat.id)) return m;
+      return { ...m, splats: [...existing, splat] };
+    };
+    set((s) => ({
+      messages: s.messages.map(apply),
+      pinnedByChannel: Object.fromEntries(
+        Object.entries(s.pinnedByChannel).map(([channelId, pins]) => ([
+          channelId,
+          pins.map((p) => p.message.id === splat.messageId ? { ...p, message: apply(p.message) } : p),
+        ])),
+      ),
+    }));
+  },
+
+  markSplatsWiped: (messageId, wipedAt) => {
+    const apply = (m: Message): Message => {
+      if (m.id !== messageId || !m.splats?.length) return m;
+      return { ...m, splats: m.splats.map((sp) => sp.wipedAt ? sp : { ...sp, wipedAt }) };
+    };
+    set((s) => ({
+      messages: s.messages.map(apply),
+      pinnedByChannel: Object.fromEntries(
+        Object.entries(s.pinnedByChannel).map(([channelId, pins]) => ([
+          channelId,
+          pins.map((p) => p.message.id === messageId ? { ...p, message: apply(p.message) } : p),
+        ])),
+      ),
+    }));
   },
 
   editMessage: async (messageId, newContent) => {

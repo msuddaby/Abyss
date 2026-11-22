@@ -40,6 +40,7 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<UserCosmetic> UserCosmetics => Set<UserCosmetic>();
     public DbSet<ArchiveAlbum> ArchiveAlbums => Set<ArchiveAlbum>();
     public DbSet<ArchiveItem> ArchiveItems => Set<ArchiveItem>();
+    public DbSet<MessageSplat> MessageSplats => Set<MessageSplat>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -135,6 +136,29 @@ public class AppDbContext : IdentityDbContext<AppUser>
         builder.Entity<Reaction>()
             .HasIndex(r => new { r.MessageId, r.UserId, r.Emoji })
             .IsUnique();
+
+        builder.Entity<MessageSplat>()
+            .HasOne(s => s.Message)
+            .WithMany()
+            .HasForeignKey(s => s.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<MessageSplat>()
+            .HasOne(s => s.User)
+            .WithMany()
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Entity<MessageSplat>()
+            .Property(s => s.Kind)
+            .HasMaxLength(16);
+
+        builder.Entity<MessageSplat>()
+            .HasIndex(s => s.MessageId);
+
+        // Ammo lookups: "how many has this user thrown in the last 24h"
+        builder.Entity<MessageSplat>()
+            .HasIndex(s => new { s.UserId, s.CreatedAt });
 
         builder.Entity<Invite>()
             .HasIndex(i => i.Code)
