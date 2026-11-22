@@ -651,7 +651,7 @@ export function useSignalRListeners() {
         useRateLimitStore.getState().setRateLimit(method, retrySeconds);
       });
 
-      conn.on('ConfigUpdated', (payload: { maxMessageLength?: number; forceRelayMode?: boolean } | number) => {
+      conn.on('ConfigUpdated', (payload: { maxMessageLength?: number; forceRelayMode?: boolean; tomatoes?: unknown } | number) => {
         if (typeof payload === 'number') {
           if (payload > 0) useAppConfigStore.getState().setMaxMessageLength(payload);
         } else {
@@ -660,6 +660,11 @@ export function useSignalRListeners() {
           }
           if (typeof payload?.forceRelayMode === 'boolean') {
             useAppConfigStore.getState().setForceRelayMode(payload.forceRelayMode);
+          }
+          if (payload?.tomatoes) {
+            useAppConfigStore.getState().setTomatoes(payload.tomatoes);
+            // Limits changed — the cached ammo count is stale.
+            void useMessageStore.getState().fetchTomatoAmmo();
           }
         }
       });

@@ -1,6 +1,6 @@
 namespace Abyss.Api.DTOs;
 
-public record AppConfigDto(int MaxMessageLength, bool ForceRelayMode, UploadLimitsDto UploadLimits);
+public record AppConfigDto(int MaxMessageLength, bool ForceRelayMode, UploadLimitsDto UploadLimits, TomatoSettingsDto? Tomatoes = null);
 
 /// <summary>
 /// Upload limits published to clients so they can validate before uploading.

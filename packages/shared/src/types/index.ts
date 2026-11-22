@@ -276,7 +276,29 @@ export interface TomatoAmmo {
   remaining: number;
   max: number;
   nextRefillAt?: string | null;
+  /** No ammo limit — remaining/max are meaningless. */
+  unlimited?: boolean;
 }
+
+/** Sysadmin-tunable tomato rules (served on /api/config). */
+export interface TomatoSettings {
+  unlimitedAmmo: boolean;
+  maxAmmo: number;
+  /** Rolling window: each throw comes back this many minutes after it was thrown. */
+  refillMinutes: number;
+  /** Live hits one user may have on one message. 0 = no limit. */
+  maxPerMessage: number;
+}
+
+export const DEFAULT_TOMATO_SETTINGS: TomatoSettings = {
+  unlimitedAmmo: false,
+  maxAmmo: 5,
+  refillMinutes: 1440,
+  maxPerMessage: 1,
+};
+
+/** Server-side ceiling on live splats per message, whatever the settings say. */
+export const MAX_LIVE_SPLATS_PER_MESSAGE = 100;
 
 export interface PinnedMessage {
   message: Message;
@@ -427,6 +449,7 @@ export interface AdminSettings {
   codes: Invite[];
   ytDlpEnabled: boolean;
   ytDlpAllowedDomains: string[];
+  tomatoes?: TomatoSettings | null;
 }
 
 // Media provider types

@@ -342,7 +342,11 @@ export function TomatoAimOverlay({
     >
       <div className="tomato-aim-hint">
         🍅 Click to throw
-        {ammo && <span className="tomato-aim-ammo">{ammo.remaining}/{ammo.max} left</span>}
+        {ammo && (
+          <span className="tomato-aim-ammo">
+            {ammo.unlimited ? "∞" : `${ammo.remaining}/${ammo.max} left`}
+          </span>
+        )}
         <span className="tomato-aim-esc">Esc to cancel</span>
       </div>
     </div>

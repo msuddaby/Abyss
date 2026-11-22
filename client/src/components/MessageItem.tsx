@@ -9,6 +9,7 @@ import {
   hasPermission,
   hasChannelPermission,
   Permission,
+  MAX_LIVE_SPLATS_PER_MESSAGE,
   getDisplayColor,
   getNameplateStyle,
   useDmStore,
@@ -88,6 +89,7 @@ export default function MessageItem({
   const { editMessage, deleteMessage, toggleReaction, setReplyingTo } =
     useMessageStore();
   const tomatoAmmo = useMessageStore((s) => s.tomatoAmmo);
+  const tomatoSettings = useAppConfigStore((s) => s.tomatoes);
   const isDmMode = useDmStore((s) => s.isDmMode);
   const openContextMenu = useContextMenuStore((s) => s.open);
 
@@ -104,14 +106,22 @@ export default function MessageItem({
     () => (message.splats ?? []).filter((sp) => !sp.wipedAt),
     [message.splats],
   );
-  const alreadyThrown = liveSplats.some((sp) => sp.userId === currentUser?.id);
-  const canThrowTomato = canAddReactions && !alreadyThrown;
+  const myHits = liveSplats.filter((sp) => sp.userId === currentUser?.id).length;
+  const perMessage = tomatoSettings.maxPerMessage;
+  const canThrowTomato =
+    canAddReactions &&
+    (perMessage === 0 || myHits < perMessage) &&
+    liveSplats.length < MAX_LIVE_SPLATS_PER_MESSAGE;
+  const outOfAmmo = !!tomatoAmmo && !tomatoAmmo.unlimited && tomatoAmmo.remaining <= 0;
+  // Guard so the overlay vanishes the moment a limit is hit (including from
+  // a settings change pushed by the sysadmin mid-aim).
+  const showAim = aiming && canThrowTomato && !outOfAmmo;
   const canWipeTomatoes = liveSplats.length > 0 && (isOwn || canManageMessages);
 
   const startAiming = useCallback(() => {
     const store = useMessageStore.getState();
     const ammo = store.tomatoAmmo;
-    if (ammo && ammo.remaining <= 0) {
+    if (ammo && !ammo.unlimited && ammo.remaining <= 0) {
       addToast(outOfTomatoesText(ammo.nextRefillAt), "info");
       return;
     }
@@ -122,21 +132,25 @@ export default function MessageItem({
 
   const handleThrow = useCallback(
     async (x: number, y: number) => {
-      setAiming(false);
+      // With one hit per message there's nothing left to aim at; otherwise stay
+      // in aim mode for rapid fire until Esc, a limit, or running dry.
+      if (perMessage === 1) setAiming(false);
       try {
         await useMessageStore.getState().throwTomato(message.id, x, y);
       } catch (err) {
-        const code = (err as { code?: string }).code;
+        const { code, message: text } = err as { code?: string; message?: string };
+        if (code === "cooldown") return; // clicking faster than the server allows
+        setAiming(false);
         if (code === "out_of_ammo") {
           addToast(outOfTomatoesText(useMessageStore.getState().tomatoAmmo?.nextRefillAt), "info");
         } else if (code === "already_hit") {
-          addToast("You've already hit this one.", "info");
+          addToast(text || "You've already hit this one.", "info");
         } else {
           addToast("Your tomato missed. Try again.", "error");
         }
       }
     },
-    [message.id, addToast],
+    [message.id, addToast, perMessage],
   );
 
   const cancelAiming = useCallback(() => setAiming(false), []);
@@ -388,7 +402,7 @@ export default function MessageItem({
   return (
     <div
       ref={messageRef}
-      className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}${aiming ? " message-aiming" : ""}`}
+      className={`message-item${grouped ? " message-grouped" : ""}${isMentioned ? " message-mentioned" : ""}${message.replyTo ? " message-has-reply" : ""}${showAim ? " message-aiming" : ""}`}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -551,7 +565,7 @@ export default function MessageItem({
         />
       </div>
       <TomatoSplats splats={message.splats} />
-      {aiming && (
+      {showAim && (
         <TomatoAimOverlay
           ammo={tomatoAmmo}
           onThrow={handleThrow}
@@ -570,11 +584,11 @@ export default function MessageItem({
             &#128578;
           </button>
         )}
-        {canThrowTomato && !aiming && (
+        {canThrowTomato && !showAim && (
           <button
             onClick={startAiming}
             title={
-              tomatoAmmo
+              tomatoAmmo && !tomatoAmmo.unlimited
                 ? `Throw Tomato (${tomatoAmmo.remaining}/${tomatoAmmo.max} left)`
                 : "Throw Tomato"
             }

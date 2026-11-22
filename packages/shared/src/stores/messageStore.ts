@@ -54,7 +54,7 @@ interface MessageState {
   /** Null until fetched. */
   tomatoAmmo: TomatoAmmo | null;
   fetchTomatoAmmo: () => Promise<TomatoAmmo | null>;
-  /** Throws with `.code` = 'out_of_ammo' | 'already_hit' on rejection. */
+  /** Throws with `.code` = 'out_of_ammo' | 'already_hit' | 'cooldown' on rejection. */
   throwTomato: (messageId: string, x: number, y: number) => Promise<MessageSplat>;
   wipeSplats: (messageId: string) => Promise<void>;
   addSplat: (splat: MessageSplat) => void;
@@ -355,13 +355,17 @@ export const useMessageStore = create<MessageState>((set, get) => ({
       get().addSplat(res.data.splat);
       return res.data.splat;
     } catch (err) {
-      const status = (err as { response?: { status?: number; data?: unknown } }).response?.status;
-      const e = new Error('Tomato throw failed') as Error & { code?: string };
-      if (status === 429) {
-        const ammo = (err as { response?: { data?: TomatoAmmo } }).response?.data;
-        if (ammo && typeof ammo.remaining === 'number') set({ tomatoAmmo: ammo });
+      const response = (err as { response?: { status?: number; data?: unknown } }).response;
+      const status = response?.status;
+      const data = response?.data as Partial<TomatoAmmo> & { cooldown?: boolean } | string | undefined;
+      const e = new Error(typeof data === 'string' && data ? data : 'Tomato throw failed') as Error & { code?: string };
+      if (status === 429 && typeof data === 'object' && data?.cooldown) {
+        e.code = 'cooldown';
+      } else if (status === 429) {
+        if (typeof data === 'object' && typeof data.remaining === 'number') set({ tomatoAmmo: data as TomatoAmmo });
         e.code = 'out_of_ammo';
       } else if (status === 409) {
+        // Per-message limit or the message is full; server text says which.
         e.code = 'already_hit';
       }
       throw e;

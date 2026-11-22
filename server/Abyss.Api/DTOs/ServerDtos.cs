@@ -47,7 +47,18 @@ public record MessageDto(Guid Id, string Content, string AuthorId, UserDto Autho
     public List<MessageSplatDto>? Splats { get; init; }
 }
 public record MessageSplatDto(Guid Id, Guid MessageId, string UserId, string Kind, float X, float Y, int Seed, DateTime CreatedAt, DateTime? WipedAt, string DisplayName);
-public record TomatoAmmoDto(int Remaining, int Max, DateTime? NextRefillAt);
+// Unlimited = no ammo limit at all; Remaining/Max/NextRefillAt are then meaningless.
+public record TomatoAmmoDto(int Remaining, int Max, DateTime? NextRefillAt, bool Unlimited = false);
+/// <summary>
+/// Sysadmin-tunable tomato rules. MaxPerMessage 0 = no per-message limit.
+/// Ammo is a rolling window: each throw comes back RefillMinutes after it was thrown.
+/// Out-of-range values are clamped by TomatoService.Normalize.
+/// </summary>
+public record TomatoSettingsDto(
+    bool UnlimitedAmmo = false,
+    int MaxAmmo = 5,
+    int RefillMinutes = 1440,
+    int MaxPerMessage = 1);
 public record ThrowTomatoRequest(float X, float Y);
 public record ThrowTomatoResponse(MessageSplatDto Splat, TomatoAmmoDto Ammo);
 public record PinnedMessageDto(MessageDto Message, DateTime PinnedAt, UserDto PinnedBy);

@@ -17,6 +17,7 @@ public class AdminController : ControllerBase
     private readonly Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> _hub;
     private readonly Services.PermissionService _perms;
     private readonly Services.LiveKitService _liveKit;
+    private readonly Services.TomatoService _tomatoes;
     private const string InviteOnlyKey = "InviteOnly";
     private const string MaxMessageLengthKey = "MaxMessageLength";
     private const string ForceRelayModeKey = "ForceRelayMode";
@@ -26,8 +27,9 @@ public class AdminController : ControllerBase
     private const int MaxMessageLengthUpperBound = 10000;
     private const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-    public AdminController(AppDbContext db, Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> hub, Services.PermissionService perms, Services.LiveKitService liveKit)
+    public AdminController(AppDbContext db, Microsoft.AspNetCore.SignalR.IHubContext<Abyss.Api.Hubs.ChatHub> hub, Services.PermissionService perms, Services.LiveKitService liveKit, Services.TomatoService tomatoes)
     {
+        _tomatoes = tomatoes;
         _db = db;
         _hub = hub;
         _perms = perms;
@@ -195,7 +197,7 @@ public class AdminController : ControllerBase
                 c.LastUsedAt))
             .ToListAsync();
 
-        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, forceRelayMode, _liveKit.IsConfigured, codes, ytDlpEnabled, ytDlpAllowedDomains));
+        return Ok(new AdminSettingsDto(inviteOnly, maxMessageLength, forceRelayMode, _liveKit.IsConfigured, codes, ytDlpEnabled, ytDlpAllowedDomains, await _tomatoes.GetSettingsAsync()));
     }
 
     [HttpPut("settings/invite-only")]
@@ -246,6 +248,15 @@ public class AdminController : ControllerBase
         await SetYtDlpAllowedDomainsAsync(domains);
         await _hub.Clients.All.SendAsync("ConfigUpdated", new { ytDlpAllowedDomains = domains });
         return Ok(new { ytDlpAllowedDomains = domains });
+    }
+
+    [HttpPut("settings/tomatoes")]
+    public async Task<ActionResult<TomatoSettingsDto>> UpdateTomatoSettings(TomatoSettingsDto request)
+    {
+        if (!IsSysadmin()) return Forbid();
+        var saved = await _tomatoes.SaveSettingsAsync(request);
+        await _hub.Clients.All.SendAsync("ConfigUpdated", new { tomatoes = saved });
+        return Ok(saved);
     }
 
     [HttpPost("invite-codes")]

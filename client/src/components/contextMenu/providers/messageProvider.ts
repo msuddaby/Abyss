@@ -1,4 +1,4 @@
-import { useMessageStore, useArchiveStore, useToastStore, hasPermission, hasChannelPermission, Permission } from '@abyss/shared';
+import { useMessageStore, useArchiveStore, useToastStore, useAppConfigStore, hasPermission, hasChannelPermission, Permission, MAX_LIVE_SPLATS_PER_MESSAGE } from '@abyss/shared';
 import { useForumTopicStore } from '../../../stores/forumTopicStore';
 import { useReactionDetailsStore } from '../../../stores/reactionDetailsStore';
 import type { MenuItem, ProviderContext } from '../types';
@@ -35,7 +35,10 @@ export function messageProvider(ctx: ProviderContext): MenuItem[] {
   }
 
   const liveSplats = (message.splats ?? []).filter((sp) => !sp.wipedAt);
-  if (canAddReactions && actions.onThrowTomato && !liveSplats.some((sp) => sp.userId === currentUser?.id)) {
+  const perMessage = useAppConfigStore.getState().tomatoes.maxPerMessage;
+  const myHits = liveSplats.filter((sp) => sp.userId === currentUser?.id).length;
+  const canThrowTomato = (perMessage === 0 || myHits < perMessage) && liveSplats.length < MAX_LIVE_SPLATS_PER_MESSAGE;
+  if (canAddReactions && actions.onThrowTomato && canThrowTomato) {
     items.push({
       id: 'message-throw-tomato',
       label: 'Throw Tomato',

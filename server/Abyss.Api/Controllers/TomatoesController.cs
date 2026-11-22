@@ -47,12 +47,27 @@ public class TomatoesController : ControllerBase
         if (message.IsSystem) return BadRequest("You can't throw tomatoes at the system.");
         if (!await CanThrowIn(message.Channel)) return Forbid();
 
-        var alreadyHit = await _db.MessageSplats.AnyAsync(s =>
-            s.MessageId == messageId && s.UserId == UserId && s.WipedAt == null);
-        if (alreadyHit) return Conflict("You've already hit this message.");
+        if (TomatoService.IsOnCooldown(UserId))
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { cooldown = true });
 
-        var ammo = await _tomatoes.GetAmmoAsync(UserId);
-        if (ammo.Remaining <= 0) return StatusCode(StatusCodes.Status429TooManyRequests, ammo);
+        var settings = await _tomatoes.GetSettingsAsync();
+
+        var live = await _db.MessageSplats
+            .Where(s => s.MessageId == messageId && s.WipedAt == null)
+            .GroupBy(s => s.UserId == UserId)
+            .Select(g => new { Mine = g.Key, Count = g.Count() })
+            .ToListAsync();
+        var mine = live.FirstOrDefault(l => l.Mine)?.Count ?? 0;
+        var total = live.Sum(l => l.Count);
+        if (settings.MaxPerMessage > 0 && mine >= settings.MaxPerMessage)
+            return Conflict(settings.MaxPerMessage == 1
+                ? "You've already hit this message."
+                : $"You've already hit this message {settings.MaxPerMessage} times.");
+        if (total >= TomatoService.MaxLiveSplatsPerMessage)
+            return Conflict("This message can't fit any more tomatoes.");
+
+        var ammo = await _tomatoes.GetAmmoAsync(UserId, settings);
+        if (!ammo.Unlimited && ammo.Remaining <= 0) return StatusCode(StatusCodes.Status429TooManyRequests, ammo);
 
         var thrower = await _db.Users.FindAsync(UserId);
         if (thrower == null) return Unauthorized();
@@ -75,7 +90,7 @@ public class TomatoesController : ControllerBase
             splat.Seed, splat.CreatedAt, null, thrower.DisplayName);
         await _hub.Clients.Group($"channel:{message.ChannelId}").SendAsync("MessageSplatted", dto);
 
-        return Ok(new ThrowTomatoResponse(dto, await _tomatoes.GetAmmoAsync(UserId)));
+        return Ok(new ThrowTomatoResponse(dto, await _tomatoes.GetAmmoAsync(UserId, settings)));
     }
 
     /// <summary>Wipe every live splat off a message. Author or ManageMessages only.</summary>

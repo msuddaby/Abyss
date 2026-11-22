@@ -1,17 +1,35 @@
 import { create } from 'zustand';
 import api from '../services/api.js';
 import { DEFAULT_UPLOAD_LIMITS, type UploadLimits } from '../utils/uploadLimits.js';
+import { DEFAULT_TOMATO_SETTINGS, type TomatoSettings } from '../types/index.js';
 
 interface AppConfigState {
   maxMessageLength: number;
   forceRelayMode: boolean;
   uploadLimits: UploadLimits;
+  tomatoes: TomatoSettings;
   loaded: boolean;
   loading: boolean;
   error: string | null;
   fetchConfig: () => Promise<void>;
   setMaxMessageLength: (value: number) => void;
   setForceRelayMode: (value: boolean) => void;
+  setTomatoes: (value: unknown) => void;
+}
+
+export function parseTomatoSettings(raw: any): TomatoSettings {
+  const d = DEFAULT_TOMATO_SETTINGS;
+  const int = (v: unknown, fallback: number, min: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= min ? Math.floor(n) : fallback;
+  };
+  if (!raw || typeof raw !== 'object') return d;
+  return {
+    unlimitedAmmo: raw.unlimitedAmmo === true,
+    maxAmmo: int(raw.maxAmmo, d.maxAmmo, 1),
+    refillMinutes: int(raw.refillMinutes, d.refillMinutes, 1),
+    maxPerMessage: int(raw.maxPerMessage, d.maxPerMessage, 0),
+  };
 }
 
 function positiveOrUndefined(value: unknown): number | undefined {
@@ -54,6 +72,7 @@ export const useAppConfigStore = create<AppConfigState>((set, get) => ({
   maxMessageLength: 4000,
   forceRelayMode: false,
   uploadLimits: DEFAULT_UPLOAD_LIMITS,
+  tomatoes: DEFAULT_TOMATO_SETTINGS,
   loaded: false,
   loading: false,
   error: null,
@@ -67,6 +86,7 @@ export const useAppConfigStore = create<AppConfigState>((set, get) => ({
         maxMessageLength: Number.isFinite(maxMessageLength) && maxMessageLength > 0 ? Math.floor(maxMessageLength) : 4000,
         forceRelayMode: res.data?.forceRelayMode === true,
         uploadLimits: parseUploadLimits(res.data?.uploadLimits),
+        tomatoes: parseTomatoSettings(res.data?.tomatoes),
         loaded: true,
         loading: false,
       });
@@ -76,4 +96,5 @@ export const useAppConfigStore = create<AppConfigState>((set, get) => ({
   },
   setMaxMessageLength: (value) => set({ maxMessageLength: value }),
   setForceRelayMode: (value) => set({ forceRelayMode: value }),
+  setTomatoes: (value) => set({ tomatoes: parseTomatoSettings(value) }),
 }));

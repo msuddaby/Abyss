@@ -7396,6 +7396,53 @@ label.has-error select:focus {
   align-items: stretch;
 }
 
+.admin-tomato-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 260px);
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.admin-tomato-inline {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.admin-tomato-inline > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-tomato-grid input,
+.admin-tomato-grid select {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #040405;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  min-width: 0;
+}
+
+.admin-tomato-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .admin-tomato-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
 .admin-code-actions {
   display: grid;
   grid-template-columns: 1fr 1.2fr auto;

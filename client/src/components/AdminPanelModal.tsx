@@ -1,7 +1,33 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, useToastStore } from '@abyss/shared';
-import type { AdminOverviewStats, AdminServer, AdminUser, AdminSettings, Invite, CosmeticItem, UserCosmetic as UserCosmeticT } from '@abyss/shared';
+import { api, getApiBase, useAuthStore, useAppConfigStore, parseCosmeticCss, DEFAULT_TOMATO_SETTINGS, CosmeticRarityNames, CosmeticRarityColors, CosmeticTypeNames, CosmeticType, useToastStore } from '@abyss/shared';
+import type { AdminOverviewStats, AdminServer, AdminUser, AdminSettings, Invite, CosmeticItem, UserCosmetic as UserCosmeticT, TomatoSettings } from '@abyss/shared';
+
+type RefillUnit = 'minutes' | 'hours' | 'days';
+const REFILL_UNIT_MINUTES: Record<RefillUnit, number> = { minutes: 1, hours: 60, days: 1440 };
+
+interface TomatoForm {
+  unlimitedAmmo: boolean;
+  maxAmmo: string;
+  refillValue: string;
+  refillUnit: RefillUnit;
+  unlimitedPerMessage: boolean;
+  maxPerMessage: string;
+}
+
+function tomatoFormFrom(s: TomatoSettings | null | undefined): TomatoForm {
+  const t = s ?? DEFAULT_TOMATO_SETTINGS;
+  // Show the refill window in the largest unit that divides it evenly.
+  const unit: RefillUnit = t.refillMinutes % 1440 === 0 ? 'days' : t.refillMinutes % 60 === 0 ? 'hours' : 'minutes';
+  return {
+    unlimitedAmmo: t.unlimitedAmmo,
+    maxAmmo: String(t.maxAmmo),
+    refillValue: String(t.refillMinutes / REFILL_UNIT_MINUTES[unit]),
+    refillUnit: unit,
+    unlimitedPerMessage: t.maxPerMessage === 0,
+    maxPerMessage: String(t.maxPerMessage === 0 ? 1 : t.maxPerMessage),
+  };
+}
 import SettingsModal from './SettingsModal';
 import type { SettingsTab } from './SettingsModal';
 import ConfirmModal from './ConfirmModal';
@@ -36,6 +62,9 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
   const [savingYtDlp, setSavingYtDlp] = useState(false);
   const [ytDlpDomainsInput, setYtDlpDomainsInput] = useState('');
   const [savingYtDlpDomains, setSavingYtDlpDomains] = useState(false);
+  const [tomatoForm, setTomatoForm] = useState<TomatoForm>(() => tomatoFormFrom(null));
+  const [savingTomatoes, setSavingTomatoes] = useState(false);
+  const setTomatoes = useAppConfigStore((s) => s.setTomatoes);
 
   // Pagination state
   const [serverPage, setServerPage] = useState(0);
@@ -87,6 +116,7 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setSettings(settingsRes.data);
       setMaxMessageLengthInput(String(settingsRes.data.maxMessageLength ?? 4000));
       setYtDlpDomainsInput((settingsRes.data.ytDlpAllowedDomains ?? []).join('\n'));
+      setTomatoForm(tomatoFormFrom(settingsRes.data.tomatoes));
     } catch (err: any) {
       setError(err?.response?.data || 'Failed to load admin overview.');
     } finally {
@@ -283,6 +313,50 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
       setError(err?.response?.data || 'Failed to update yt-dlp domains.');
     } finally {
       setSavingYtDlpDomains(false);
+    }
+  };
+
+  const updateTomatoSettings = async () => {
+    if (!settings) return;
+    const maxAmmo = Math.floor(Number(tomatoForm.maxAmmo));
+    const refill = Number(tomatoForm.refillValue);
+    const perMessage = Math.floor(Number(tomatoForm.maxPerMessage));
+    if (!tomatoForm.unlimitedAmmo) {
+      if (!Number.isFinite(maxAmmo) || maxAmmo < 1 || maxAmmo > 1000) {
+        setError('Tomatoes per user must be between 1 and 1000.');
+        return;
+      }
+      if (!Number.isFinite(refill) || refill <= 0) {
+        setError('Refill time must be a positive number.');
+        return;
+      }
+    }
+    if (!tomatoForm.unlimitedPerMessage && (!Number.isFinite(perMessage) || perMessage < 1 || perMessage > 100)) {
+      setError('Hits per message must be between 1 and 100.');
+      return;
+    }
+    const current = settings.tomatoes ?? DEFAULT_TOMATO_SETTINGS;
+    const body: TomatoSettings = {
+      unlimitedAmmo: tomatoForm.unlimitedAmmo,
+      // Keep the stored numbers when switching to unlimited so toggling back restores them.
+      maxAmmo: tomatoForm.unlimitedAmmo ? current.maxAmmo : maxAmmo,
+      refillMinutes: tomatoForm.unlimitedAmmo
+        ? current.refillMinutes
+        : Math.max(1, Math.round(refill * REFILL_UNIT_MINUTES[tomatoForm.refillUnit])),
+      maxPerMessage: tomatoForm.unlimitedPerMessage ? 0 : perMessage,
+    };
+    setSavingTomatoes(true);
+    setError(null);
+    try {
+      const res = await api.put('/admin/settings/tomatoes', body);
+      setSettings({ ...settings, tomatoes: res.data });
+      setTomatoForm(tomatoFormFrom(res.data));
+      setTomatoes(res.data);
+      useToastStore.getState().addToast('Tomato settings saved', 'success');
+    } catch (err: any) {
+      setError(err?.response?.data || 'Failed to update tomato settings.');
+    } finally {
+      setSavingTomatoes(false);
     }
   };
 
@@ -1155,6 +1229,90 @@ export default function AdminPanelModal({ onClose }: { onClose: () => void }) {
                       disabled={savingMaxMessageLength || !settings}
                     >
                       {savingMaxMessageLength ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+                <div className="us-card admin-setting-card admin-code-card">
+                  <div>
+                    <div className="admin-setting-title">🍅 Tomatoes</div>
+                    <div className="admin-setting-desc">
+                      How many tomatoes people can throw at messages. Each one refills on its own,
+                      the set time after it was thrown. Wiping a message never refunds tomatoes.
+                    </div>
+                  </div>
+                  <div className="admin-tomato-grid">
+                    <label htmlFor="tomato-ammo-mode">Ammo</label>
+                    <select
+                      id="tomato-ammo-mode"
+                      value={tomatoForm.unlimitedAmmo ? 'unlimited' : 'limited'}
+                      onChange={(e) => setTomatoForm({ ...tomatoForm, unlimitedAmmo: e.target.value === 'unlimited' })}
+                    >
+                      <option value="limited">Limited</option>
+                      <option value="unlimited">Unlimited</option>
+                    </select>
+
+                    {!tomatoForm.unlimitedAmmo && (
+                      <>
+                        <label htmlFor="tomato-max-ammo">Tomatoes per user</label>
+                        <input
+                          id="tomato-max-ammo"
+                          type="number"
+                          min={1}
+                          max={1000}
+                          value={tomatoForm.maxAmmo}
+                          onChange={(e) => setTomatoForm({ ...tomatoForm, maxAmmo: e.target.value })}
+                        />
+
+                        <label htmlFor="tomato-refill">Each refills after</label>
+                        <div className="admin-tomato-inline">
+                          <input
+                            id="tomato-refill"
+                            type="number"
+                            min={1}
+                            value={tomatoForm.refillValue}
+                            onChange={(e) => setTomatoForm({ ...tomatoForm, refillValue: e.target.value })}
+                          />
+                          <select
+                            aria-label="Refill unit"
+                            value={tomatoForm.refillUnit}
+                            onChange={(e) => setTomatoForm({ ...tomatoForm, refillUnit: e.target.value as RefillUnit })}
+                          >
+                            <option value="minutes">minutes</option>
+                            <option value="hours">hours</option>
+                            <option value="days">days</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+
+                    <label htmlFor="tomato-per-message">Hits per user per message</label>
+                    <div className="admin-tomato-inline">
+                      <select
+                        id="tomato-per-message"
+                        value={tomatoForm.unlimitedPerMessage ? 'unlimited' : 'limited'}
+                        onChange={(e) => setTomatoForm({ ...tomatoForm, unlimitedPerMessage: e.target.value === 'unlimited' })}
+                      >
+                        <option value="limited">Limited</option>
+                        <option value="unlimited">Unlimited</option>
+                      </select>
+                      {!tomatoForm.unlimitedPerMessage && (
+                        <input
+                          type="number"
+                          aria-label="Hits per user per message"
+                          min={1}
+                          max={100}
+                          value={tomatoForm.maxPerMessage}
+                          onChange={(e) => setTomatoForm({ ...tomatoForm, maxPerMessage: e.target.value })}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  <div className="admin-tomato-footer">
+                    <span className="admin-setting-desc">
+                      A message holds at most 100 tomatoes in total.
+                    </span>
+                    <button className="btn-secondary" onClick={updateTomatoSettings} disabled={savingTomatoes || !settings}>
+                      {savingTomatoes ? 'Saving...' : 'Save'}
                     </button>
                   </div>
                 </div>

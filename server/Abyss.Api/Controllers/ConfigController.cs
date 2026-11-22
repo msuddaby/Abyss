@@ -14,13 +14,15 @@ public class ConfigController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly MediaConfig _mediaConfig;
+    private readonly TomatoService _tomatoes;
     private const string MaxMessageLengthKey = "MaxMessageLength";
     private const string ForceRelayModeKey = "ForceRelayMode";
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
 
-    public ConfigController(AppDbContext db, MediaConfig mediaConfig)
+    public ConfigController(AppDbContext db, MediaConfig mediaConfig, TomatoService tomatoes)
     {
+        _tomatoes = tomatoes;
         _db = db;
         _mediaConfig = mediaConfig;
     }
@@ -53,6 +55,6 @@ public class ConfigController : ControllerBase
             _mediaConfig.AvatarMaxSize,
             _mediaConfig.ServerIconMaxSize);
 
-        return Ok(new AppConfigDto(maxMessageLength, forceRelayMode, uploadLimits));
+        return Ok(new AppConfigDto(maxMessageLength, forceRelayMode, uploadLimits, await _tomatoes.GetSettingsAsync()));
     }
 }
