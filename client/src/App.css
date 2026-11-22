@@ -2158,6 +2158,25 @@ label.has-error select:focus {
   /* Blob centre sits at (60,60) of the 120×150 viewBox → (42px, 42px). */
   margin-left: -42px;
   margin-top: -42px;
+  opacity: var(--splat-dim, 1);
+  transition: opacity 0.18s ease;
+}
+
+/* Hovering a splattered message turns the tomatoes see-through so the text
+   underneath is readable. */
+.message-item:hover .tomato-splat {
+  --splat-dim: 0.15;
+}
+
+/* A tomato that just landed stays solid long enough to watch it hit and
+   drip, even though the thrower is still hovering the message. */
+.tomato-splat.fresh {
+  animation: tomato-hold 2.2s ease both;
+}
+
+@keyframes tomato-hold {
+  0%, 80% { opacity: 1; }
+  100% { opacity: var(--splat-dim, 1); }
 }
 
 .tomato-splat-svg {
@@ -2231,6 +2250,7 @@ label.has-error select:focus {
   .tomato-projectile { display: none; }
   .tomato-splat.fresh .tomato-splat-body,
   .tomato-splat.fresh .tomato-drip { animation: none; }
+  .tomato-splat.fresh { animation: none; }
 }
 
 .tomato-aim-overlay {
