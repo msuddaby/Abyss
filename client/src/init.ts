@@ -77,18 +77,62 @@ if (!Capacitor.isNativePlatform()) {
   // Native (Capacitor): adjust layout when software keyboard appears/hides.
   // visualViewport shrinks when the keyboard is visible, so we derive the
   // keyboard height from the difference and push the layout up via CSS var.
+  const resetKeyboardInset = () => {
+    document.documentElement.style.setProperty('--keyboard-height', '0px');
+    document.documentElement.classList.remove('keyboard-open');
+  };
+  const isEditable = (el: Element | null) =>
+    !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable);
+  let nativeVideoFullscreen = false;
+
   import('@capacitor/keyboard').then(({ Keyboard }) => {
     Keyboard.addListener('keyboardWillShow', (info) => {
+      // iOS fires spurious keyboardWillShow events around the native fullscreen
+      // video player. Applying them leaves a stale bottom inset that squishes
+      // the whole UI, so only honour the event when an editable has focus.
+      if (nativeVideoFullscreen || !isEditable(document.activeElement)) {
+        console.log('[Keyboard] ignoring willShow — no editable focused');
+        return;
+      }
       console.log('[Keyboard] willShow — height:', info.keyboardHeight);
       document.documentElement.style.setProperty('--keyboard-height', `${info.keyboardHeight}px`);
       document.documentElement.classList.add('keyboard-open');
     });
     Keyboard.addListener('keyboardWillHide', () => {
       console.log('[Keyboard] willHide');
-      document.documentElement.style.setProperty('--keyboard-height', '0px');
-      document.documentElement.classList.remove('keyboard-open');
+      resetKeyboardInset();
     });
   });
+
+  // iOS native fullscreen video (webkitEnterFullscreen / native controls).
+  // These events don't bubble, so listen in the capture phase to catch every
+  // <video> in the app. On exit, WKWebView can leave a stale keyboard inset,
+  // scroll offset, or layout height (especially after rotating in the player),
+  // so clear the inset and force a relayout.
+  const settleLayout = () => {
+    resetKeyboardInset();
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    const root = document.getElementById('root');
+    if (root) {
+      root.style.height = `${window.innerHeight}px`;
+      void root.offsetHeight; // force reflow
+      root.style.height = '';
+    }
+  };
+  document.addEventListener('webkitbeginfullscreen', () => {
+    nativeVideoFullscreen = true;
+    if (isEditable(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    resetKeyboardInset();
+  }, true);
+  document.addEventListener('webkitendfullscreen', () => {
+    nativeVideoFullscreen = false;
+    settleLayout();
+    // The webview frame finishes restoring (and rotating back) asynchronously.
+    setTimeout(settleLayout, 300);
+    setTimeout(settleLayout, 800);
+  }, true);
 
   // Native (Capacitor): set up push notification tap listeners
   import('./services/pushNotifications').then(({ setupPushNotificationListeners }) => {
