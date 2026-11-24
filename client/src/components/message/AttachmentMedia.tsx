@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { getApiBase } from "@abyss/shared";
 import type { Attachment } from "@abyss/shared";
 import { formatFileSize } from "../../utils/messageUtils";
@@ -7,6 +7,7 @@ import {
   toMediaVolume,
   fromMediaVolume,
 } from "../../utils/audioUtils";
+import { enterIOSNativeVideoFullscreen } from "../../utils/fullscreen";
 
 const VIDEO_MAX_WIDTH = 520;
 const VIDEO_MAX_HEIGHT = 320;
@@ -26,6 +27,12 @@ function getVideoBounds(att: Attachment) {
   };
 }
 
+const isTouchOnly = () =>
+  typeof window !== "undefined" &&
+  window.matchMedia?.("(hover: none)").matches;
+
+const CONTROLS_HIDE_MS = 3000;
+
 // Extend HTMLVideoElement with webkit-specific properties for iOS
 interface WebkitHTMLVideoElement extends HTMLVideoElement {
   webkitEnterFullscreen?: () => void;
@@ -40,6 +47,8 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const videoShellRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -150,6 +159,37 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
       document.removeEventListener("fullscreenchange", handleFullscreen);
   }, [isVideo]);
 
+  // Touch devices have no hover, so controls are shown by tapping the video
+  // and auto-hide after a few seconds of no interaction.
+  const showControls = useCallback(() => {
+    setControlsVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(
+      () => setControlsVisible(false),
+      CONTROLS_HIDE_MS,
+    );
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    },
+    [],
+  );
+
+  const handleVideoClick = () => {
+    if (isTouchOnly() && playing) {
+      if (controlsVisible) {
+        if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+        setControlsVisible(false);
+      } else {
+        showControls();
+      }
+      return;
+    }
+    togglePlay();
+  };
+
   const togglePlay = () => {
     if (isVideo) {
       const video = videoRef.current;
@@ -231,6 +271,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     const container = videoShellRef.current ?? containerRef.current;
     const video = videoRef.current;
     if (!document.fullscreenElement) {
+      if (enterIOSNativeVideoFullscreen(video)) return;
       if (container?.requestFullscreen) {
         container.requestFullscreen().catch(() => {});
         return;
@@ -249,8 +290,9 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
     return (
       <div className="attachment-media" ref={containerRef}>
         <div
-          className="attachment-video-shell"
+          className={`attachment-video-shell${controlsVisible ? " controls-visible" : ""}`}
           ref={videoShellRef}
+          onPointerDownCapture={controlsVisible ? showControls : undefined}
           style={{
             maxWidth: `${videoBounds?.width ?? VIDEO_MAX_WIDTH}px`,
             aspectRatio: videoBounds
@@ -265,7 +307,7 @@ export default function AttachmentMedia({ att }: { att: Attachment }) {
             playsInline
             poster={poster}
             src={src}
-            onClick={togglePlay}
+            onClick={handleVideoClick}
           />
           {!playing && (
             <button className="attachment-play-overlay" onClick={togglePlay}>

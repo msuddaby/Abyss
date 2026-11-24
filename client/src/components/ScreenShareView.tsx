@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useVoiceStore, useAuthStore } from '@abyss/shared';
+import { enterIOSNativeVideoFullscreen } from '../utils/fullscreen';
 import { getScreenVideoTrack, getLocalScreenTrack, requestWatch, stopWatching, setScreenAudioVolume } from '../hooks/useWebRTC';
 
 export default function ScreenShareView() {
@@ -27,7 +28,7 @@ export default function ScreenShareView() {
     if (!el) return;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(console.warn);
-    } else {
+    } else if (!enterIOSNativeVideoFullscreen(videoRef.current)) {
       el.requestFullscreen().catch(console.warn);
     }
   }, []);

@@ -2984,6 +2984,76 @@ label.has-error select:focus {
   accent-color: var(--text-link);
 }
 
+/* Keep fullscreen controls clear of notches / status bar / home indicator */
+.attachment-video-shell:fullscreen .attachment-video-topbar,
+.attachment-video-shell:-webkit-full-screen .attachment-video-topbar {
+  top: calc(10px + env(safe-area-inset-top));
+}
+
+.attachment-video-shell:fullscreen .attachment-video-bottombar,
+.attachment-video-shell:-webkit-full-screen .attachment-video-bottombar {
+  bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+/* Touch devices: no hover, so controls are toggled by tapping the video
+   (.controls-visible) rather than hover/focus — focus sticks after a tap and
+   would otherwise pin the controls over the video. Also keep the bars to a
+   single compact row so they don't cover the whole player. */
+@media (hover: none) {
+  .attachment-video-shell:hover .attachment-video-topbar,
+  .attachment-video-shell:hover .attachment-video-bottombar,
+  .attachment-video-shell:focus-within .attachment-video-topbar,
+  .attachment-video-shell:focus-within .attachment-video-bottombar {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .attachment-video-shell.controls-visible .attachment-video-topbar,
+  .attachment-video-shell.controls-visible .attachment-video-bottombar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .attachment-video-topbar,
+  .attachment-video-bottombar {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 4px 6px;
+    left: 6px;
+    right: 6px;
+  }
+
+  .attachment-video-topbar {
+    top: 6px;
+    background: none;
+    border: none;
+  }
+
+  .attachment-video-bottombar {
+    bottom: 6px;
+  }
+
+  .attachment-time {
+    min-width: 0;
+    font-size: 11px;
+  }
+
+  .attachment-seek {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* Hardware volume buttons handle this on phones (iOS ignores it anyway) */
+  .attachment-volume {
+    display: none;
+  }
+
+  .attachment-download {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+}
+
 .attachment-audio {
   width: 100%;
 }

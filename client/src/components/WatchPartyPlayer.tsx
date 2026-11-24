@@ -7,6 +7,7 @@ import type { PlayerAdapter } from '../services/playerAdapters/PlayerAdapter';
 import WatchPartyControls from './WatchPartyControls';
 import WatchPartyQueue from './WatchPartyQueue';
 import { MEDIA_VOLUME_MAX, toMediaVolume } from '../utils/audioUtils';
+import { IS_IOS, enterIOSNativeVideoFullscreen } from '../utils/fullscreen';
 
 // Stored in scaled user units (see toMediaVolume); v2 so pre-scaling values aren't reused.
 const WP_VOLUME_KEY = 'wp-volume-v2';
@@ -273,7 +274,7 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
     if (!el) return;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(console.warn);
-    } else {
+    } else if (!enterIOSNativeVideoFullscreen(adapterRef.current?.getVideoElement())) {
       el.requestFullscreen().catch(console.warn);
     }
   }, []);
@@ -424,7 +425,10 @@ export default function WatchPartyPlayer({ mini = false }: { mini?: boolean }) {
               onPiP={pipSupported ? handlePiP : undefined}
               isPiP={isPiP}
               onTuneOut={handleTuneOut}
-              onFullscreen={handleFullscreen}
+              // iOS: element fullscreen breaks the app layout, and a YouTube
+              // iframe has no <video> for the native player — YouTube's own
+              // fullscreen button covers it there.
+              onFullscreen={IS_IOS && isYouTube ? undefined : handleFullscreen}
               isFullscreen={isFullscreen}
               onTransferHost={isHost ? () => setShowTransfer(!showTransfer) : undefined}
               onSkip={canControl ? handleNextInQueue : undefined}
