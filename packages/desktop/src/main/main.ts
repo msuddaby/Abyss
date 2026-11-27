@@ -174,11 +174,14 @@ function createWindow() {
       return;
     }
 
+    // blob: in script-src is required for AudioWorklets: Tone's
+    // standardized-audio-context re-hosts every addModule() script as a blob:
+    // URL, and worklets are governed by script-src (not worker-src).
     const csp = [
       "default-src 'self'",
       process.env.NODE_ENV === 'development'
-        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com"
-        : "script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com",
+        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://www.youtube.com"
+        : "script-src 'self' 'wasm-unsafe-eval' blob: https://www.youtube.com",
       "style-src 'self' 'unsafe-inline'",
       "connect-src 'self' http: https: ws: wss:",
       "img-src 'self' data: blob: http: https:",
