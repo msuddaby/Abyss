@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStudioStore, useAuthStore, useToastStore } from '@abyss/shared';
 import type { StudioAsset } from '@abyss/shared';
 import { assetUrl } from './engine/assetCache';
@@ -9,15 +9,15 @@ interface Props {
   editable: boolean;
   canManage: boolean;
   onAddToTimeline: (asset: StudioAsset) => void;
+  onMakeSampler: (asset: StudioAsset) => void;
 }
 
-export default function StudioAssetBin({ editable, canManage, onAddToTimeline }: Props) {
+export default function StudioAssetBin({ editable, canManage, onAddToTimeline, onMakeSampler }: Props) {
   const assets = useStudioStore((s) => s.assets);
   const doc = useStudioStore((s) => s.doc);
   const deleteAsset = useStudioStore((s) => s.deleteAsset);
   const myId = useAuthStore((s) => s.user?.id);
   const fileRef = useRef<HTMLInputElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Record<string, number>>({});
   const [dragOver, setDragOver] = useState(false);
@@ -35,12 +35,23 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline }:
     });
   };
 
+  // One player per previewed file so pause → play resumes where it stopped.
+  const players = useRef(new Map<string, HTMLAudioElement>());
+  useEffect(() => () => { for (const el of players.current.values()) el.pause(); }, []);
+
   const togglePreview = (asset: StudioAsset) => {
-    audioRef.current?.pause();
-    if (playing === asset.id) { setPlaying(null); return; }
-    const el = new Audio(assetUrl(asset.url));
-    el.onended = () => setPlaying(null);
-    audioRef.current = el;
+    if (playing === asset.id) {
+      players.current.get(asset.id)?.pause();
+      setPlaying(null);
+      return;
+    }
+    if (playing) players.current.get(playing)?.pause();
+    let el = players.current.get(asset.id);
+    if (!el) {
+      el = new Audio(assetUrl(asset.url));
+      el.onended = () => { el!.currentTime = 0; setPlaying((p) => (p === asset.id ? null : p)); };
+      players.current.set(asset.id, el);
+    }
     void el.play().catch(() => setPlaying(null));
     setPlaying(asset.id);
   };
@@ -108,6 +119,9 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline }:
             {usage.get(a.id) ? <span className="studio-asset-uses" title="Clips using this audio">×{usage.get(a.id)}</span> : null}
             {editable && (
               <button className="studio-icon-btn" onClick={() => onAddToTimeline(a)} title="Add at playhead">＋</button>
+            )}
+            {editable && (
+              <button className="studio-icon-btn" onClick={() => onMakeSampler(a)} title="New sampler track playing this sound">🎹</button>
             )}
             {(a.uploadedById === myId || canManage) && !usage.get(a.id) && (
               <button className="studio-icon-btn danger" onClick={() => void remove(a)} title="Delete">🗑</button>

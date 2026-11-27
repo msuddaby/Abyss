@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudioStore, studioId, beatsToSeconds, secondsToBeats } from '@abyss/shared';
 import type { StudioDoc, StudioClip, StudioOp, StudioPresence } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import StudioTrackHeader from './StudioTrackHeader';
 import StudioClipView, { type ClipDragMode } from './StudioClip';
+import StudioAutomationLane from './StudioAutomationLane';
 import {
   HEADER_WIDTH, TRACK_HEIGHT, RULER_HEIGHT, MIN_CLIP_BEATS,
   barBeats, snapBeats, floorBeats, colorForUser, memberName, uploadAudioFiles, audioClipOp,
@@ -25,8 +26,10 @@ interface Props {
   onSelectionChange: (ids: string[]) => void;
   selectedTrackId: string | null;
   onSelectTrack: (id: string) => void;
-  armedTrackId: string | null;
-  onArmTrack: (id: string) => void;
+  armedTrackIds: string[];
+  onArmTrack: (id: string, additive: boolean) => void;
+  /** In-progress MIDI takes, drawn as red clips */
+  recordingTakes: { trackId: string; clip: StudioClip }[];
   levels: Record<string, number>;
   peaksVersion: number;
   presence: Record<string, StudioPresence>;
@@ -51,7 +54,7 @@ const DRAG_THRESHOLD_PX = 3;
 export default function StudioArrange(props: Props) {
   const {
     doc, trackIds, pxPerBeat, totalBeats, snapGrid, editable, engine, isPlaying, playheadBeats,
-    selection, onSelectionChange, selectedTrackId, onSelectTrack, armedTrackId, onArmTrack,
+    selection, onSelectionChange, selectedTrackId, onSelectTrack, armedTrackIds, onArmTrack, recordingTakes,
     levels, peaksVersion, presence, onSeek, onOpenClip, onDeleteTrack,
   } = props;
   const edit = useStudioStore((s) => s.edit);
@@ -62,6 +65,14 @@ export default function StudioArrange(props: Props) {
   const [preview, setPreview] = useState<Record<string, StudioClip> | null>(null);
   const [loopDrag, setLoopDrag] = useState<{ a: number; b: number } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  /** trackId → automation lane shown under it */
+  const [autoLanes, setAutoLanes] = useState<Record<string, string>>({});
+  const toggleAutomation = (trackId: string) => setAutoLanes((m) => {
+    const next = { ...m };
+    if (next[trackId]) delete next[trackId];
+    else next[trackId] = Object.keys(doc.tracks[trackId]?.automation ?? {}).find((k) => doc.tracks[trackId].automation![k].length) ?? 'vol';
+    return next;
+  });
 
   const assetDur = useMemo(() => new Map(assets.map((a) => [a.id, a.durationSec])), [assets]);
   const bpm = doc.meta.bpm;
@@ -84,7 +95,9 @@ export default function StudioArrange(props: Props) {
       let delta = snapBeats(prim.start + dx, snapGrid) - prim.start;
       const minStart = Math.min(...d.ids.map((id) => d.origin[id].start));
       delta = Math.max(delta, -minStart);
-      const rows = Math.round((clientY - d.startY) / TRACK_HEIGHT);
+      // Target track = the lane under the pointer (rows vary in height with automation lanes).
+      const hovered = (document.elementFromPoint(clientX, clientY)?.closest('[data-track-id]') as HTMLElement | null)?.dataset.trackId;
+      const rows = hovered ? trackIds.indexOf(hovered) - trackIds.indexOf(prim.trackId) : 0;
       for (const id of d.ids) {
         const o = d.origin[id];
         let trackId = o.trackId;
@@ -372,21 +385,27 @@ export default function StudioArrange(props: Props) {
 
         {trackIds.map((trackId) => {
           const track = doc.tracks[trackId];
+          const autoLane = autoLanes[trackId];
           return (
-            <div key={trackId} className="studio-track-row" style={{ height: TRACK_HEIGHT }}>
+            <Fragment key={trackId}>
+            <div className="studio-track-row" style={{ height: TRACK_HEIGHT }}>
               <StudioTrackHeader
+                autoOpen={!!autoLane}
+                hasAutomation={Object.values(track.automation ?? {}).some((pts) => pts.length > 0)}
+                onToggleAutomation={() => toggleAutomation(trackId)}
                 trackId={trackId}
                 track={track}
                 engine={engine}
                 editable={editable}
                 selected={selectedTrackId === trackId}
-                armed={armedTrackId === trackId}
+                armed={armedTrackIds.includes(trackId)}
                 levelDb={levels[trackId] ?? -Infinity}
-                onSelect={() => onSelectTrack(trackId)}
-                onArm={() => onArmTrack(trackId)}
+                onSelect={() => { onSelectTrack(trackId); onSelectionChange([]); }}
+                onArm={(additive) => onArmTrack(trackId, additive)}
                 onDelete={() => onDeleteTrack(trackId)}
               />
               <div
+                data-track-id={trackId}
                 className={`studio-lane${dropTarget === trackId ? ' drop-target' : ''}${selectedTrackId === trackId ? ' selected' : ''}`}
                 style={{ width, ...gridStyle }}
                 onPointerDown={(e) => onLanePointerDown(e, trackId)}
@@ -409,6 +428,22 @@ export default function StudioArrange(props: Props) {
                     editable={editable}
                     onPointerDown={onClipPointerDown}
                     onDoubleClick={(cid) => { if (doc.clips[cid]?.kind === 'midi') onOpenClip(cid); }}
+                  />
+                ))}
+                {recordingTakes.filter((r) => r.trackId === trackId).map((r) => (
+                  <StudioClipView
+                    key="recording-take"
+                    id="recording-take"
+                    clip={r.clip}
+                    pxPerBeat={pxPerBeat}
+                    bpm={bpm}
+                    color="#ed4245"
+                    selected={false}
+                    remoteColors={[]}
+                    ghost
+                    ghostColor="#ed4245"
+                    peaksVersion={peaksVersion}
+                    editable={false}
                   />
                 ))}
                 {remoteGhosts.filter((g) => g.clip.trackId === trackId).map((g) => (
@@ -435,6 +470,21 @@ export default function StudioArrange(props: Props) {
                 )}
               </div>
             </div>
+            {autoLane && (
+              <StudioAutomationLane
+                trackId={trackId}
+                track={track}
+                laneKey={autoLane}
+                width={width}
+                pxPerBeat={pxPerBeat}
+                snapGrid={snapGrid}
+                editable={editable}
+                playheadBeats={playheadBeats}
+                onLaneChange={(k) => setAutoLanes((m) => ({ ...m, [trackId]: k }))}
+                onClose={() => toggleAutomation(trackId)}
+              />
+            )}
+            </Fragment>
           );
         })}
 

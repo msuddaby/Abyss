@@ -1,23 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Tone from 'tone';
 import {
   useStudioStore, useAuthStore, useServerStore, useToastStore, getApiBase,
   hasChannelPermission, Permission, studioId, sortedTrackIds, arrangementEnd, secondsToBeats, beatsToSeconds,
 } from '@abyss/shared';
-import type { StudioOp, StudioClip, StudioAsset, StudioNote } from '@abyss/shared';
+import type { StudioOp, StudioClip, StudioAsset, StudioNote, StudioParams } from '@abyss/shared';
 import { isMobile } from '../stores/mobileStore';
 import ConfirmModal from '../components/ConfirmModal';
 import { StudioEngine } from './engine/StudioEngine';
 import { loadAsset, onAssetLoaded } from './engine/assetCache';
 import { renderProjectToWav } from './engine/exportWav';
+import { usedAssetIds } from './engine/instruments';
 import StudioArrange from './StudioArrange';
 import PianoRoll from './PianoRoll';
 import StudioAssetBin from './StudioAssetBin';
 import StudioTrackInspector from './StudioTrackInspector';
+import StudioShortcutsModal from './StudioShortcutsModal';
+import { setAutomationContext } from './automation';
+import { useStudioInput, inputTargets } from './useStudioInput';
+import { restoreMidi, setMidiHandler } from './midiInput';
+import StudioMidiMenu from './StudioMidiMenu';
 import { useStudioRecorder, getRecordLatencyMs, setRecordLatencyMs } from './useStudioRecorder';
 import {
   SNAP_OPTIONS, snapSize, formatPosition, barBeats, nextTrackOrder, nextTrackColor,
-  isTypingTarget, colorForUser, audioClipOp,
+  keyBelongsToTarget, colorForUser, audioClipOp,
 } from './studioUtils';
 
 interface Props {
@@ -27,6 +33,19 @@ interface Props {
 }
 
 type PanelTab = 'audio' | 'track' | 'editor';
+
+/** Ableton-style computer MIDI keyboard: physical key → semitone above the octave's C. */
+const MIDI_KEYS: Record<string, number> = {
+  KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9,
+  KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16, Quote: 17,
+};
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+const PANEL_HEIGHT_KEY = 'studio.panelHeight';
+const PANEL_MIN = 120;
+
+/** Clip clipboard, shared across studios in this session. */
+let clipboard: StudioClip[] | null = null;
 
 const TIME_SIGS: [number, number][] = [[4, 4], [3, 4], [2, 4], [5, 4], [6, 8], [7, 8], [12, 8]];
 
@@ -73,16 +92,32 @@ export default function StudioView({ channelId, compact }: Props) {
   const [metronome, setMetronome] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
-  const [armedTrackId, setArmedTrackId] = useState<string | null>(null);
+  /** Record-armed tracks (per user, like Ableton's arm buttons) */
+  const [armedTrackIds, setArmedTrackIds] = useState<string[]>([]);
+  const [midiRecording, setMidiRecording] = useState(false);
+  const [recQuantize, setRecQuantize] = useState(() => {
+    try { return Number(localStorage.getItem('studio.recQuantize')) || 0; } catch { return 0; }
+  });
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelTab>('audio');
   const [panelOpen, setPanelOpen] = useState(!compact);
+  const [panelHeight, setPanelHeight] = useState(() => {
+    try { const v = Number(localStorage.getItem(PANEL_HEIGHT_KEY)); return v >= PANEL_MIN ? v : (compact ? 220 : 340); } catch { return compact ? 220 : 340; }
+  });
   const [exporting, setExporting] = useState(false);
   const [needsUnlock, setNeedsUnlock] = useState(false);
   const [confirmDeleteTrack, setConfirmDeleteTrack] = useState<string | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [autoArm, setAutoArm] = useState(false);
+  const [midiKeys, setMidiKeys] = useState(false);
+  const [midiOctave, setMidiOctave] = useState(4);
+  const [midiVel, setMidiVel] = useState(100);
+  /** Computer-keyboard key code → pitch it is holding */
+  const heldKeys = useRef(new Map<string, number>());
   const [bpmDraft, setBpmDraft] = useState<string | null>(null);
   const [latencyMs, setLatencyMs] = useState(getRecordLatencyMs);
   const recorder = useStudioRecorder(engine);
+  const input = useStudioInput({ engine, doc, armedTrackIds, selectedTrackId, recQuantize });
 
   const canManage = hasChannelPermission(channel?.permissions, Permission.ManageStudio);
   const editable = canEditPerm && !isMobile();
@@ -118,7 +153,7 @@ export default function StudioView({ channelId, compact }: Props) {
 
   useEffect(() => {
     if (!doc) return;
-    const used = new Set(Object.values(doc.clips).map((c) => c.assetId).filter(Boolean));
+    const used = usedAssetIds(doc);
     for (const a of assets) {
       if (used.has(a.id)) loadAsset(a.id, a.url).catch((e) => console.warn('[studio] asset load failed', a.name, e));
     }
@@ -130,8 +165,8 @@ export default function StudioView({ channelId, compact }: Props) {
     setSelection((sel) => (sel.every((id) => doc.clips[id]) ? sel : sel.filter((id) => doc.clips[id])));
     if (editingClipId && !doc.clips[editingClipId]) setEditingClipId(null);
     if (selectedTrackId && !doc.tracks[selectedTrackId]) setSelectedTrackId(null);
-    if (armedTrackId && !doc.tracks[armedTrackId]) setArmedTrackId(null);
-  }, [doc, editingClipId, selectedTrackId, armedTrackId]);
+    if (armedTrackIds.some((id) => !doc.tracks[id])) setArmedTrackIds((ids) => ids.filter((id) => doc.tracks[id]));
+  }, [doc, editingClipId, selectedTrackId, armedTrackIds]);
 
   useEffect(() => { setLocalPresence({ selection }); }, [selection, setLocalPresence]);
   useEffect(() => { setLocalPresence({ editingClipId }); }, [editingClipId, setLocalPresence]);
@@ -177,11 +212,19 @@ export default function StudioView({ channelId, compact }: Props) {
     if (broadcast && useStudioStore.getState().followTransport) sendTransport(false, pos);
   }, [engine, sendTransport]);
 
+  const stopRecording = useCallback(async () => {
+    if (recorder.state === 'recording') await recorder.stop();
+    else stop(true);
+    input.endTake();
+    setMidiRecording(false);
+    setIsPlaying(false);
+  }, [recorder, stop, input]);
+
   const togglePlay = useCallback(() => {
-    if (recorder.state === 'recording') { void recorder.stop(); setIsPlaying(false); return; }
+    if (recorder.state === 'recording' || midiRecording) { void stopRecording(); return; }
     if (isPlaying) stop(true);
     else void play(playhead, true);
-  }, [isPlaying, play, stop, playhead, recorder]);
+  }, [isPlaying, play, stop, playhead, recorder, midiRecording, stopRecording]);
 
   const seek = useCallback((beats: number) => {
     setPlayhead(beats);
@@ -231,19 +274,28 @@ export default function StudioView({ channelId, compact }: Props) {
     }
   };
 
+  /** Arrangement record: MIDI onto armed instrument tracks (or the selected one), audio onto an armed audio track. */
   const toggleRecord = async () => {
-    if (recorder.state === 'recording') {
-      await recorder.stop();
-      setIsPlaying(false);
-      return;
-    }
-    if (!armedTrackId) {
-      useToastStore.getState().addToast('Arm an audio track (●) to record onto it.', 'info');
+    if (recorder.state === 'recording' || midiRecording) { await stopRecording(); return; }
+    if (!doc) return;
+    const audioTrack = armedTrackIds.find((id) => doc.tracks[id]?.kind === 'audio');
+    const midiTracks = input.targets();
+    if (!audioTrack && !midiTracks.length) {
+      useToastStore.getState().addToast('Arm a track (●) to record onto it.', 'info');
       return;
     }
     if (isPlaying) stop(true);
-    await recorder.start(armedTrackId, playhead);
+    input.beginTake(midiTracks, playhead);
+    setMidiRecording(midiTracks.length > 0);
+    if (audioTrack) await recorder.start(audioTrack, playhead);
+    else await play(playhead, true);
     setIsPlaying(true);
+  };
+
+  const armTrack = (id: string, additive: boolean) => {
+    setArmedTrackIds((ids) => (ids.includes(id)
+      ? ids.filter((x) => x !== id)
+      : additive ? [...ids, id] : [id]));
   };
 
   // ───────────── Editing helpers ─────────────
@@ -251,16 +303,17 @@ export default function StudioView({ channelId, compact }: Props) {
   const trackIds = useMemo(() => (doc ? sortedTrackIds(doc) : []), [doc]);
   const grid = doc ? snapSize(snap, doc.meta) : 1;
 
-  const addTrack = (kind: 'audio' | 'instrument', instrument?: 'synth' | 'drums' | 'bass') => {
+  const addTrack = (kind: 'audio' | 'instrument', instrument?: 'synth' | 'drums' | 'bass' | 'sampler', params?: StudioParams, name?: string) => {
     if (!doc) return;
     const id = studioId();
     const count = Object.values(doc.tracks).filter((t) => t.kind === kind).length + 1;
-    const name = kind === 'audio' ? `Audio ${count}` : instrument === 'drums' ? `Drums ${count}` : instrument === 'bass' ? `Bass ${count}` : `Synth ${count}`;
+    const label = kind === 'audio' ? 'Audio' : instrument === 'drums' ? 'Drums' : instrument === 'bass' ? 'Bass' : instrument === 'sampler' ? 'Sampler' : 'Synth';
+    const trackName = (name ?? `${label} ${count}`).slice(0, 40);
     edit([{
       t: 'set', path: ['tracks', id], value: {
-        name, kind, order: nextTrackOrder(doc), color: nextTrackColor(doc),
+        name: trackName, kind, order: nextTrackOrder(doc), color: nextTrackColor(doc),
         volume: kind === 'audio' ? 0 : -6, pan: 0, mute: false, solo: false,
-        ...(kind === 'instrument' ? { instrument: { type: instrument ?? 'synth' } } : {}),
+        ...(kind === 'instrument' ? { instrument: { type: instrument ?? 'synth', ...(params ? { params } : {}) } } : {}),
       },
     }]);
     setSelectedTrackId(id);
@@ -366,26 +419,232 @@ export default function StudioView({ channelId, compact }: Props) {
     setPanelOpen(true);
   };
 
-  // ───────────── Keyboard ─────────────
+  // ───────────── Track / clip commands (keyboard) ─────────────
+
+  const duplicateTrack = (trackId: string) => {
+    if (!doc?.tracks[trackId]) return;
+    const src = doc.tracks[trackId];
+    const nextOrder = trackIds.map((id) => doc.tracks[id].order).filter((o) => o > src.order).sort((x, y) => x - y)[0];
+    const id = studioId();
+    const ops: StudioOp[] = [{
+      t: 'set', path: ['tracks', id],
+      value: { ...src, name: `${src.name} copy`.slice(0, 40), order: nextOrder === undefined ? src.order + 1 : (src.order + nextOrder) / 2 },
+    }];
+    for (const c of Object.values(doc.clips)) {
+      if (c.trackId === trackId) ops.push({ t: 'set', path: ['clips', studioId()], value: { ...c, trackId: id } });
+    }
+    edit(ops);
+    setSelectedTrackId(id);
+  };
+
+  const copySelection = () => {
+    if (!doc || !selection.length) return false;
+    clipboard = selection.map((id) => doc.clips[id]).filter(Boolean);
+    return clipboard.length > 0;
+  };
+
+  const paste = () => {
+    if (!doc || !clipboard?.length) return;
+    const anchor = Math.min(...clipboard.map((c) => c.start));
+    const singleTrack = clipboard.every((c) => c.trackId === clipboard![0].trackId);
+    const sel = selectedTrackId ? doc.tracks[selectedTrackId] : undefined;
+    const ops: StudioOp[] = [];
+    const ids: string[] = [];
+    let end = playhead;
+    for (const c of clipboard) {
+      let trackId = c.trackId;
+      // A single-track clipboard follows the selected track if the kinds match.
+      if (singleTrack && sel && (sel.kind === 'audio') === (c.kind === 'audio')) trackId = selectedTrackId!;
+      const t = doc.tracks[trackId];
+      if (!t || (t.kind === 'audio') !== (c.kind === 'audio')) continue;
+      const id = studioId();
+      const start = playhead + (c.start - anchor);
+      ids.push(id);
+      end = Math.max(end, start + c.length);
+      ops.push({ t: 'set', path: ['clips', id], value: { ...c, trackId, start } });
+    }
+    if (!ops.length) return;
+    edit(ops);
+    setSelection(ids);
+    // Like an insert marker: repeated pastes chain end to end.
+    setPlayhead(end);
+    engine?.seek(end);
+  };
+
+  const nudgeSelection = (delta: number) => {
+    if (!doc || !selection.length) return;
+    const clips = selection.map((id) => [id, doc.clips[id]] as const).filter(([, c]) => c);
+    const minStart = Math.min(...clips.map(([, c]) => c.start));
+    const d = Math.max(delta, -minStart);
+    if (d === 0) return;
+    edit(clips.map(([id, c]) => ({ t: 'set' as const, path: ['clips', id, 'start'], value: c.start + d })));
+  };
+
+  const selectAllClips = () => {
+    if (!doc) return;
+    const onTrack = selectedTrackId ? Object.keys(doc.clips).filter((id) => doc.clips[id].trackId === selectedTrackId) : [];
+    setSelection(onTrack.length ? onTrack : Object.keys(doc.clips));
+  };
+
+  const moveTrackSelection = (dir: 1 | -1) => {
+    if (!trackIds.length) return;
+    const i = selectedTrackId ? trackIds.indexOf(selectedTrackId) : -1;
+    const next = trackIds[Math.max(0, Math.min(trackIds.length - 1, i < 0 ? 0 : i + dir))];
+    setSelectedTrackId(next);
+    setSelection([]);
+  };
+
+  const toggleTrackField = (field: 'mute' | 'solo') => {
+    const t = selectedTrackId ? doc?.tracks[selectedTrackId] : undefined;
+    if (t) edit([{ t: 'set', path: ['tracks', selectedTrackId!, field], value: !t[field] }]);
+  };
+
+  // Automation recording reads the live playhead; only records while armed and playing.
+  useEffect(() => {
+    setAutomationContext({ armed: autoArm, beat: () => (engine?.isPlaying ? engine.getPositionBeats() : null) });
+    return () => setAutomationContext({ armed: false, beat: () => null });
+  }, [autoArm, engine]);
+
+  // ───────────── Computer MIDI keyboard ─────────────
+
+  /** Where live notes go: armed instrument tracks, else the selected one (auto-arm). */
+  const inputTargetIds = inputTargets(doc, armedTrackIds, selectedTrackId);
+  const inputLabel = inputTargetIds.length > 1 ? `${inputTargetIds.length} tracks` : inputTargetIds[0] ? doc?.tracks[inputTargetIds[0]].name : null;
+
+  const inputRef = useRef(input);
+  useEffect(() => { inputRef.current = input; });
+
+  const releaseHeldNotes = useCallback(() => {
+    heldKeys.current.clear();
+    inputRef.current.releaseAll();
+  }, []);
+
+  const toggleMidiKeys = () => {
+    if (midiKeys) releaseHeldNotes();
+    else if (!inputTargetIds.length) useToastStore.getState().addToast('Select or arm an instrument track to play it.', 'info');
+    setMidiKeys(!midiKeys);
+  };
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target) || document.querySelector('.modal-overlay')) return;
-      const mod = e.ctrlKey || e.metaKey;
-      if (e.code === 'Space') { e.preventDefault(); togglePlay(); return; }
-      if (!editable) return;
-      if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-      if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
-      if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelected(); return; }
-      if (mod) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelected(); return; }
-      if (e.key.toLowerCase() === 's') { e.preventDefault(); splitAtPlayhead(); return; }
-      if (e.key === 'Escape') setSelection([]);
-      if (e.key === 'Enter') seek(0);
+    const onUp = (e: KeyboardEvent) => {
+      const pitch = heldKeys.current.get(e.code);
+      if (pitch === undefined) return;
+      heldKeys.current.delete(e.code);
+      inputRef.current.noteOff(pitch);
     };
+    window.addEventListener('keyup', onUp);
+    window.addEventListener('blur', releaseHeldNotes);
+    return () => {
+      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('blur', releaseHeldNotes);
+      releaseHeldNotes();
+    };
+  }, [releaseHeldNotes]);
+
+  // Hardware MIDI → the same input router.
+  useEffect(() => {
+    void restoreMidi();
+    setMidiHandler((e) => {
+      const r = inputRef.current;
+      switch (e.type) {
+        case 'on': r.noteOn(e.pitch, e.vel); break;
+        case 'off': r.noteOff(e.pitch); break;
+        case 'sustain': r.sustain(e.down); break;
+        case 'bend': r.pitchBend(e.semis); break;
+        case 'modwheel': r.modWheel(e.value); break;
+      }
+    });
+    return () => setMidiHandler(null);
+  }, []);
+
+  // ───────────── Keyboard ─────────────
+
+  const handleKey = (e: KeyboardEvent) => {
+    if (keyBelongsToTarget(e) || document.querySelector('.modal-overlay')) return;
+    if (!doc) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const done = () => { e.preventDefault(); e.stopPropagation(); };
+    const bar = barBeats(doc.meta);
+    const step = e.shiftKey ? bar : (grid > 0 ? grid : 1);
+
+    // Computer MIDI keyboard (Ctrl+M toggles; Ctrl even on Mac, where Cmd+M minimises)
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.code === 'KeyM') { done(); toggleMidiKeys(); return; }
+    if (midiKeys && !mod && !e.altKey) {
+      if (e.code in MIDI_KEYS) {
+        done();
+        if (e.repeat || heldKeys.current.has(e.code)) return;
+        const pitch = Math.min(127, (midiOctave + 1) * 12 + MIDI_KEYS[e.code]);
+        heldKeys.current.set(e.code, pitch);
+        input.noteOn(pitch, midiVel / 127);
+        return;
+      }
+      if (e.code === 'KeyZ') { done(); setMidiOctave((o) => Math.max(0, o - 1)); return; }
+      if (e.code === 'KeyX') { done(); setMidiOctave((o) => Math.min(8, o + 1)); return; }
+      if (e.code === 'KeyC') { done(); setMidiVel((v) => Math.max(1, v - 20)); return; }
+      if (e.code === 'KeyV') { done(); setMidiVel((v) => Math.min(127, v + 20)); return; }
+      if (key === 'Escape') { done(); toggleMidiKeys(); return; }
+    }
+
+    // Available to everyone
+    if (e.code === 'Space') { done(); togglePlay(); return; }
+    if (key === '?' || key === 'F1') { done(); setShowShortcuts(true); return; }
+    if (key === 'Enter' && !mod) { done(); seek(0); return; }
+    if (!mod && !e.altKey && (key === '=' || key === '+')) { done(); setPxPerBeat((z) => Math.min(200, z * 1.25)); return; }
+    if (!mod && !e.altKey && key === '-') { done(); setPxPerBeat((z) => Math.max(4, z / 1.25)); return; }
+    if (key === 'Tab' && e.shiftKey) { done(); setPanelOpen((o) => !o); return; }
+    if (key === 'c' && !mod && !e.altKey) { done(); setMetronome((m) => !m); return; }
+    if (key === 'ArrowUp' && !mod) { done(); moveTrackSelection(-1); return; }
+    if (key === 'ArrowDown' && !mod) { done(); moveTrackSelection(1); return; }
+    if (key === 'e' && !mod && selection.length === 1 && doc.clips[selection[0]]?.kind === 'midi') { done(); openClip(selection[0]); return; }
+    if (key === 'Escape') { setSelection([]); return; }
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && !mod && !(editable && selection.length)) {
+      done();
+      seek(Math.max(0, playhead + (key === 'ArrowLeft' ? -step : step)));
+      return;
+    }
+    if (mod && key === 'c') { if (copySelection()) done(); return; }
+    if (mod && key === 'a') { done(); selectAllClips(); return; }
+
+    if (!editable) return;
+    if (mod && key === 'z') { done(); if (e.shiftKey) redo(); else undo(); return; }
+    if (mod && key === 'y') { done(); redo(); return; }
+    if (mod && key === 'd') {
+      done();
+      if (selection.length) duplicateSelected();
+      else if (selectedTrackId) duplicateTrack(selectedTrackId);
+      return;
+    }
+    if (mod && key === 'x') { if (copySelection()) { done(); deleteSelected(); } return; }
+    if (mod && key === 'v') { done(); paste(); return; }
+    if (mod && key === 'e') { done(); splitAtPlayhead(); return; }
+    if (e.altKey && !mod && e.code === 'KeyA') { done(); addTrack('audio'); return; }
+    if (e.altKey && !mod && e.code === 'KeyI') { done(); addTrack('instrument'); return; }
+    if (mod || e.altKey) return;
+    if (key === 'Delete' || key === 'Backspace') {
+      done();
+      if (selection.length) deleteSelected();
+      else if (selectedTrackId) setConfirmDeleteTrack(selectedTrackId);
+      return;
+    }
+    if (key === 'ArrowLeft' || key === 'ArrowRight') { done(); nudgeSelection(key === 'ArrowLeft' ? -step : step); return; }
+    if (key === 's' && e.shiftKey) { done(); toggleTrackField('solo'); return; }
+    if (key === 's') { done(); splitAtPlayhead(); return; }
+    if (key === 'm') { done(); toggleTrackField('mute'); return; }
+    if (key === 'l') { done(); edit([{ t: 'set', path: ['meta', 'loopEnabled'], value: !doc.meta.loopEnabled }]); return; }
+    if (key === 'r' && selectedTrackId) { done(); armTrack(selectedTrackId, false); return; }
+    if (key === 'F9' && e.shiftKey) { done(); setAutoArm((a) => !a); return; }
+    if (key === 'F9') { done(); void toggleRecord(); return; }
+  };
+
+  // Window listener reads the latest handler without re-subscribing every render.
+  const keyHandlerRef = useRef(handleKey);
+  useEffect(() => { keyHandlerRef.current = handleKey; });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandlerRef.current(e);
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [editable, togglePlay, undo, redo, duplicateSelected, deleteSelected, splitAtPlayhead, seek]);
+  }, []);
 
   // ───────────── Render ─────────────
 
@@ -398,10 +657,13 @@ export default function StudioView({ channelId, compact }: Props) {
   const editingTrack = editingClip ? doc.tracks[editingClip.trackId] : undefined;
   const inspectedTrack = selectedTrackId ? doc.tracks[selectedTrackId] : undefined;
   const others = users.filter((u) => u !== myId);
-  const recording = recorder.state === 'recording';
+  const recording = recorder.state === 'recording' || midiRecording;
 
   return (
-    <div className={`studio-view${compact ? ' compact' : ''}`}>
+    <div
+      className={`studio-view${compact ? ' compact' : ''}`}
+      onChange={(e) => { if (e.target instanceof HTMLSelectElement) e.target.blur(); }}
+    >
       <div className="studio-toolbar">
         <div className="studio-toolbar-group">
           <button className="studio-btn icon" onClick={() => seek(0)} title="Return to start (Enter)">⏮</button>
@@ -413,10 +675,17 @@ export default function StudioView({ channelId, compact }: Props) {
               className={`studio-btn icon record${recording ? ' on' : ''}`}
               onClick={() => void toggleRecord()}
               disabled={recorder.state === 'uploading'}
-              title={armedTrackId ? 'Record onto the armed track' : 'Arm an audio track to record'}
+              title={armedTrackIds.length || inputTargetIds.length ? 'Record (F9): MIDI onto armed instrument tracks, audio onto an armed audio track' : 'Arm a track (●) to record'}
             >
               {recorder.state === 'uploading' ? '…' : '⏺'}
             </button>
+          )}
+          {editable && (
+            <button
+              className={`studio-btn auto-arm${autoArm ? ' on' : ''}`}
+              onClick={() => setAutoArm((a) => !a)}
+              title="Automation arm (Shift+F9): while playing, moving volume, pan, effect or synth controls records automation"
+            >● Auto</button>
           )}
           <div className="studio-position" title="Bar.Beat.Sixteenth">{formatPosition(playhead, meta)}</div>
         </div>
@@ -474,7 +743,7 @@ export default function StudioView({ channelId, compact }: Props) {
               onChange={(e) => {
                 const v = e.target.value;
                 if (v === 'audio') addTrack('audio');
-                else if (v) addTrack('instrument', v as 'synth' | 'drums' | 'bass');
+                else if (v) addTrack('instrument', v as 'synth' | 'drums' | 'bass' | 'sampler');
               }}
               disabled={trackIds.length >= 32}
               title="Add track"
@@ -484,6 +753,7 @@ export default function StudioView({ channelId, compact }: Props) {
               <option value="synth">Synth</option>
               <option value="drums">Drums</option>
               <option value="bass">Bass</option>
+              <option value="sampler">Sampler</option>
             </select>
           </div>
         )}
@@ -495,6 +765,19 @@ export default function StudioView({ channelId, compact }: Props) {
             <input type="checkbox" checked={followTransport} onChange={(e) => setFollowTransport(e.target.checked)} />
             Sync playback
           </label>
+          <StudioMidiMenu
+            targetLabel={inputLabel ?? null}
+            recQuantize={recQuantize}
+            onRecQuantize={(q) => { setRecQuantize(q); try { localStorage.setItem('studio.recQuantize', String(q)); } catch { /* ignore */ } }}
+          />
+          <button
+            className={`studio-btn${midiKeys ? ' on' : ''}`}
+            onClick={toggleMidiKeys}
+            title="Play notes with your computer keyboard (Ctrl+M). A–L = white keys, W E T Y U O P = black keys, Z/X = octave, C/V = velocity"
+          >
+            🎹 {midiKeys ? `${NOTE_NAMES[0]}${midiOctave} · ${midiVel}${inputLabel ? ` → ${inputLabel}` : ''}` : 'Keys'}
+          </button>
+          <button className="studio-btn icon" onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)">⌨ ?</button>
           <button className="studio-btn" onClick={() => void exportWav()} disabled={exporting} title="Render the project to a WAV file">
             {exporting ? 'Rendering…' : '⤓ WAV'}
           </button>
@@ -532,8 +815,9 @@ export default function StudioView({ channelId, compact }: Props) {
         onSelectionChange={setSelection}
         selectedTrackId={selectedTrackId}
         onSelectTrack={setSelectedTrackId}
-        armedTrackId={armedTrackId}
-        onArmTrack={(id) => setArmedTrackId((a) => (a === id ? null : id))}
+        armedTrackIds={armedTrackIds}
+        recordingTakes={midiRecording ? input.liveTakes(playhead) : []}
+        onArmTrack={armTrack}
         levels={levels}
         peaksVersion={peaksVersion}
         presence={presence}
@@ -542,7 +826,29 @@ export default function StudioView({ channelId, compact }: Props) {
         onDeleteTrack={(id) => setConfirmDeleteTrack(id)}
       />
 
-      <div className={`studio-panel${panelOpen ? ' open' : ''}`}>
+      <div className={`studio-panel${panelOpen ? ' open' : ''}`} style={panelOpen ? { height: panelHeight } : undefined}>
+        {panelOpen && (
+          <div
+            className="studio-panel-resize"
+            title="Drag to resize · double-click to reset"
+            onDoubleClick={() => { setPanelHeight(340); try { localStorage.setItem(PANEL_HEIGHT_KEY, '340'); } catch { /* ignore */ } }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              const startY = e.clientY, startH = panelHeight;
+              const max = Math.max(PANEL_MIN, window.innerHeight * 0.8);
+              let h = startH;
+              const move = (ev: PointerEvent) => { h = Math.round(Math.min(max, Math.max(PANEL_MIN, startH + startY - ev.clientY))); setPanelHeight(h); };
+              const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                try { localStorage.setItem(PANEL_HEIGHT_KEY, String(h)); } catch { /* ignore */ }
+              };
+              window.addEventListener('pointermove', move);
+              window.addEventListener('pointerup', up);
+            }}
+          />
+        )}
         <div className="studio-panel-tabs">
           <button className={`studio-tab${panel === 'audio' && panelOpen ? ' active' : ''}`} onClick={() => { setPanel('audio'); setPanelOpen(true); }}>Audio</button>
           <button className={`studio-tab${panel === 'track' && panelOpen ? ' active' : ''}`} onClick={() => { setPanel('track'); setPanelOpen(true); }} disabled={!inspectedTrack}>
@@ -570,10 +876,19 @@ export default function StudioView({ channelId, compact }: Props) {
         {panelOpen && (
           <div className="studio-panel-body">
             {panel === 'audio' && (
-              <StudioAssetBin editable={editable} canManage={canManage} onAddToTimeline={addAssetAtPlayhead} />
+              <StudioAssetBin
+                editable={editable}
+                canManage={canManage}
+                onAddToTimeline={addAssetAtPlayhead}
+                onMakeSampler={(a) => {
+                  addTrack('instrument', 'sampler', { assetId: a.id, root: 60, mode: a.durationSec < 1.5 ? 'oneshot' : 'classic' }, a.name);
+                  setPanel('track');
+                  setPanelOpen(true);
+                }}
+              />
             )}
             {panel === 'track' && inspectedTrack && selectedTrackId && (
-              <StudioTrackInspector trackId={selectedTrackId} track={inspectedTrack} editable={editable} />
+              <StudioTrackInspector trackId={selectedTrackId} track={inspectedTrack} editable={editable} engine={engine} />
             )}
             {panel === 'track' && !inspectedTrack && <div className="studio-message small">Select a track to edit its instrument and effects.</div>}
             {panel === 'editor' && editingClip && editingTrack && editingClipId && (
@@ -595,6 +910,7 @@ export default function StudioView({ channelId, compact }: Props) {
         )}
       </div>
 
+      {showShortcuts && <StudioShortcutsModal onClose={() => setShowShortcuts(false)} />}
       {confirmDeleteTrack && doc.tracks[confirmDeleteTrack] && (
         <ConfirmModal
           title="Delete track"

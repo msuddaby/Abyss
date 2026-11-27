@@ -4,6 +4,7 @@ import type { StudioTrack } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import { INSTRUMENT_LABELS } from './engine/instruments';
 import CommitSlider from './CommitSlider';
+import { recordAutomation, finishAutomation } from './automation';
 
 interface Props {
   trackId: string;
@@ -14,8 +15,11 @@ interface Props {
   armed: boolean;
   levelDb: number;
   onSelect: () => void;
-  onArm: () => void;
+  onArm: (additive: boolean) => void;
   onDelete: () => void;
+  autoOpen: boolean;
+  hasAutomation: boolean;
+  onToggleAutomation: () => void;
 }
 
 /** Meter: −60 dB … +6 dB mapped to 0…100% */
@@ -24,7 +28,7 @@ function levelPct(db: number): number {
   return Math.max(0, Math.min(100, ((db + 60) / 66) * 100));
 }
 
-export default function StudioTrackHeader({ trackId, track, engine, editable, selected, armed, levelDb, onSelect, onArm, onDelete }: Props) {
+export default function StudioTrackHeader({ trackId, track, engine, editable, selected, armed, levelDb, onSelect, onArm, onDelete, autoOpen, hasAutomation, onToggleAutomation }: Props) {
   const edit = useStudioStore((s) => s.edit);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(track.name);
@@ -92,14 +96,17 @@ export default function StudioTrackHeader({ trackId, track, engine, editable, se
             disabled={!editable}
             onClick={() => set('solo', !track.solo)}
           >S</button>
-          {track.kind === 'audio' && (
-            <button
-              className={`studio-toggle arm${armed ? ' on' : ''}`}
-              title="Arm for recording"
-              disabled={!editable}
-              onClick={onArm}
-            >●</button>
-          )}
+          <button
+            className={`studio-toggle arm${armed ? ' on' : ''}`}
+            title={track.kind === 'audio' ? 'Arm for audio recording (Ctrl/⌘-click to arm several)' : 'Arm for MIDI recording and input (Ctrl/⌘-click to arm several)'}
+            disabled={!editable}
+            onClick={(e) => onArm(e.ctrlKey || e.metaKey)}
+          >●</button>
+          <button
+            className={`studio-toggle auto${autoOpen ? ' on' : ''}${hasAutomation ? ' has' : ''}`}
+            title={hasAutomation ? 'Automation (this track has automation)' : 'Show automation'}
+            onClick={onToggleAutomation}
+          >A</button>
           <div className="studio-track-meter" title={Number.isFinite(levelDb) ? `${levelDb.toFixed(1)} dB` : 'Silent'}>
             <div className="studio-track-meter-fill" style={{ width: `${levelPct(levelDb)}%` }} />
           </div>
@@ -112,8 +119,8 @@ export default function StudioTrackHeader({ trackId, track, engine, editable, se
             value={track.volume}
             resetValue={0}
             disabled={!editable}
-            onPreview={(v) => engine?.previewTrackVolume(trackId, v)}
-            onCommit={(v) => set('volume', v)}
+            onPreview={(v) => { engine?.previewTrackVolume(trackId, v); recordAutomation(trackId, 'vol', v); }}
+            onCommit={(v) => { if (!finishAutomation(trackId, 'vol')) set('volume', v); }}
           />
           <CommitSlider
             className="studio-slider pan"
@@ -122,8 +129,8 @@ export default function StudioTrackHeader({ trackId, track, engine, editable, se
             value={track.pan}
             resetValue={0}
             disabled={!editable}
-            onPreview={(v) => engine?.previewTrackPan(trackId, v)}
-            onCommit={(v) => set('pan', v)}
+            onPreview={(v) => { engine?.previewTrackPan(trackId, v); recordAutomation(trackId, 'pan', v); }}
+            onCommit={(v) => { if (!finishAutomation(trackId, 'pan')) set('pan', v); }}
           />
         </div>
       </div>

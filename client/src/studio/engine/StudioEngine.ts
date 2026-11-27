@@ -1,8 +1,11 @@
 import * as Tone from 'tone';
 import { beatsToSeconds } from '@abyss/shared';
-import type { StudioDoc, StudioTrack, StudioClip } from '@abyss/shared';
-import { createInstrument, createEffect, type PlayableInstrument } from './instruments';
+import type { StudioDoc, StudioTrack, StudioClip, StudioParams } from '@abyss/shared';
+import { createInstrument, samplerAssetId, LIVE_UPDATE_TYPES, type PlayableInstrument } from './instruments';
+import { ensureSynthWorklet, isSynthReady } from './wavetable/synthNode';
+import { EFFECT_DEFS, resolveParams, buildDevice, type FxDevice, type Resolved } from './effects';
 import { getBuffer } from './assetCache';
+import { valueAt } from './automationMath';
 
 // Renders a StudioDoc with Tone.js. `sync(doc)` diffs the doc against the
 // current audio graph by entity id and rebuilds only what changed, so remote
@@ -18,13 +21,15 @@ interface TrackNode {
   input: Tone.Gain;
   channel: Tone.Channel;
   meter: Tone.Meter | null;
-  effects: Tone.ToneAudioNode[];
-  fxKey: string;
+  /** Live effect devices by effect id (bypassed ones stay alive, unwired) */
+  devices: Map<string, { device: FxDevice; type: string; paramKey: string; params: Resolved }>;
+  /** Current wiring, so a rewire disconnects exactly what it connected */
+  wiring: [Tone.ToneAudioNode, Tone.ToneAudioNode][];
+  chainKey: string;
   instrument: PlayableInstrument | null;
   instKey: string;
-  /** bumps on every effect rebuild so stale async builds are discarded */
-  fxGen: number;
-  fxReady: Promise<void>;
+  instParamsKey: string;
+  autoKey: string;
 }
 
 interface ClipNode {
@@ -45,7 +50,9 @@ function midiClipKey(c: StudioClip, instKey: string): string {
 
 export class StudioEngine {
   readonly transport: ReturnType<typeof Tone.getTransport>;
-  private readonly master: Tone.Channel;
+  // A plain Volume, not a Channel: Tone's solo silences every non-soloed
+  // Channel, which would include the master bus.
+  private readonly master: Tone.Volume;
   private readonly masterMeter: Tone.Meter | null;
   private readonly tracks = new Map<string, TrackNode>();
   private readonly clips = new Map<string, ClipNode>();
@@ -55,13 +62,22 @@ export class StudioEngine {
   private click: Tone.Synth | null = null;
   private metronomeOn = false;
   private disposed = false;
+  private autoEvent = -1;
 
   constructor(opts: { meters?: boolean } = {}) {
     this.withMeters = opts.meters ?? true;
     this.transport = Tone.getTransport();
-    this.master = new Tone.Channel({ volume: 0 }).toDestination();
+    this.master = new Tone.Volume(0).toDestination();
     this.masterMeter = this.withMeters ? new Tone.Meter({ smoothing: 0.85 }) : null;
     if (this.masterMeter) this.master.connect(this.masterMeter);
+    // Automation runs on the transport clock (works offline for export too).
+    this.autoEvent = this.transport.scheduleRepeat((time) => this.applyAutomation(time), '64n', 0);
+    // Wavetable synth tracks are silent until the worklet loads, then rebuilt.
+    if (!isSynthReady()) {
+      ensureSynthWorklet()
+        .then(() => { if (!this.disposed) this.refresh(); })
+        .catch((e) => console.warn('[studio] wavetable synth unavailable', e));
+    }
   }
 
   // ───────────────────────── Doc sync ─────────────────────────
@@ -113,54 +129,110 @@ export class StudioEngine {
       const meter = this.withMeters ? new Tone.Meter({ smoothing: 0.8 }) : null;
       if (meter) channel.connect(meter);
       input.connect(channel);
-      node = { input, channel, meter, effects: [], fxKey: '[]', instrument: null, instKey: '', fxGen: 0, fxReady: Promise.resolve() };
+      node = { input, channel, meter, devices: new Map(), wiring: [[input, channel]], chainKey: '', instrument: null, instKey: '', instParamsKey: '', autoKey: '{}' };
       this.tracks.set(id, node);
     }
 
     const ch = node.channel;
-    if (ch.volume.value !== track.volume) ch.volume.rampTo(track.volume, 0.02);
-    if (ch.pan.value !== track.pan) ch.pan.rampTo(track.pan, 0.02);
+    // Automated volume/pan are driven by applyAutomation instead.
+    if (!track.automation?.vol?.length && ch.volume.value !== track.volume) ch.volume.rampTo(track.volume, 0.02);
+    if (!track.automation?.pan?.length && ch.pan.value !== track.pan) ch.pan.rampTo(track.pan, 0.02);
+    // When a track's automation changes, re-apply base values so removed lanes don't stick.
+    const autoKey = JSON.stringify(track.automation ?? {});
+    if (autoKey !== node.autoKey) {
+      node.autoKey = autoKey;
+      for (const d of node.devices.values()) d.paramKey = '';
+      node.instParamsKey = '';
+    }
     if (ch.mute !== track.mute) ch.mute = track.mute;
     if (ch.solo !== track.solo) ch.solo = track.solo;
 
-    // Instrument
-    const instKey = track.kind === 'instrument' ? JSON.stringify(track.instrument ?? { type: 'synth' }) : '';
-    if (instKey !== node.instKey) {
-      node.instrument?.releaseAll();
-      node.instrument?.dispose();
-      node.instrument = null;
-      node.instKey = instKey;
-      if (track.kind === 'instrument') {
-        node.instrument = createInstrument(track.instrument);
+    // Instrument. The type key decides when to rebuild; live-updatable
+    // instruments (the wavetable synth) take param changes via update().
+    if (track.kind === 'instrument') {
+      const inst = track.instrument ?? { type: 'synth' as const };
+      const sample = samplerAssetId(inst);
+      const live = LIVE_UPDATE_TYPES.has(inst.type);
+      const paramsKey = JSON.stringify(inst.params ?? {});
+      const typeKey = inst.type
+        + (sample ? `|${sample}|${!!getBuffer(sample)}` : '')
+        + (inst.type === 'synth' ? `|${isSynthReady()}` : '')
+        + (live ? '' : `|${paramsKey}`);
+      if (typeKey !== node.instKey) {
+        node.instrument?.releaseAll();
+        node.instrument?.dispose();
+        node.instKey = typeKey;
+        node.instrument = createInstrument(inst);
         node.instrument.output.connect(node.input);
+        node.instParamsKey = paramsKey;
+        // MIDI parts close over the instrument; their key includes instKey so they rebuild.
+      } else if (paramsKey !== node.instParamsKey) {
+        node.instParamsKey = paramsKey;
+        node.instrument?.update?.(inst.params ?? {});
       }
-      // MIDI parts hold a reference to the old instrument via the closure key.
-      for (const [clipId, clip] of Object.entries(this.doc?.clips ?? {})) {
-        if (clip.trackId === id && clip.kind === 'midi') this.disposeClip(clipId);
-      }
+      node.instrument?.setBpm?.(bpm);
+    } else if (node.instrument) {
+      node.instrument.dispose();
+      node.instrument = null;
+      node.instKey = '';
     }
 
-    // Effects (delay time depends on tempo)
-    const fxKey = JSON.stringify(track.effects ?? []) + (track.effects?.some((f) => f.type === 'delay') ? `@${bpm}` : '');
-    if (fxKey !== node.fxKey) {
-      node.fxKey = fxKey;
-      node.fxReady = this.rebuildEffects(node, track, bpm);
+    this.syncEffects(node, track, bpm);
+  }
+
+  private syncEffects(node: TrackNode, track: StudioTrack, bpm: number) {
+    const list = (track.effects ?? []).filter((fx) => EFFECT_DEFS[fx.type]);
+    let rewire = false;
+    const seen = new Set<string>();
+    for (const fx of list) {
+      seen.add(fx.id);
+      const p = resolveParams(fx.type, fx.params);
+      const structKey = EFFECT_DEFS[fx.type].structKey(p);
+      const paramKey = `${JSON.stringify(p)}@${bpm}`;
+      const entry = node.devices.get(fx.id);
+      if (!entry || entry.type !== fx.type || entry.device.structKey !== structKey) {
+        if (entry) { this.unwire(node); entry.device.dispose(); rewire = true; }
+        node.devices.set(fx.id, { device: buildDevice(fx.type, p, bpm), type: fx.type, paramKey, params: p });
+        rewire = true;
+      } else if (entry.paramKey !== paramKey) {
+        entry.device.update(p, bpm);
+        entry.paramKey = paramKey;
+        entry.params = p;
+      }
+    }
+    for (const [id, entry] of node.devices) {
+      if (!seen.has(id)) {
+        this.unwire(node);
+        entry.device.dispose();
+        node.devices.delete(id);
+        rewire = true;
+      }
+    }
+    const chainKey = list.filter((fx) => !fx.bypass).map((fx) => `${fx.id}:${node.devices.get(fx.id)!.device.structKey}`).join('|');
+    if (rewire || chainKey !== node.chainKey) {
+      node.chainKey = chainKey;
+      this.unwire(node);
+      const chain: Tone.ToneAudioNode[] = [node.input];
+      for (const fx of list) {
+        if (fx.bypass) continue;
+        const d = node.devices.get(fx.id)!.device;
+        chain.push(d.input);
+        // input→output is internal to the device; wire output to the next stage
+        chain.push(d.output);
+      }
+      chain.push(node.channel);
+      for (let i = 0; i < chain.length - 1; i += 2) {
+        chain[i].connect(chain[i + 1]);
+        node.wiring.push([chain[i], chain[i + 1]]);
+      }
     }
   }
 
-  private async rebuildEffects(node: TrackNode, track: StudioTrack, bpm: number) {
-    const gen = ++node.fxGen;
-    const active = (track.effects ?? []).filter((f) => !f.bypass);
-    const built = await Promise.all(active.map((fx) => createEffect(fx, bpm)));
-    if (gen !== node.fxGen || this.disposed) {
-      for (const fx of built) fx.dispose();
-      return;
+  private unwire(node: TrackNode) {
+    for (const [from, to] of node.wiring) {
+      try { from.disconnect(to); } catch { /* already disconnected */ }
     }
-    node.input.disconnect();
-    for (const fx of node.effects) fx.dispose();
-    node.effects = built;
-    const chain: Tone.ToneAudioNode[] = [node.input, ...built, node.channel];
-    for (let i = 0; i < chain.length - 1; i++) chain[i].connect(chain[i + 1]);
+    node.wiring = [];
   }
 
   private syncAudioClip(id: string, clip: StudioClip, bpm: number) {
@@ -235,18 +307,47 @@ export class StudioEngine {
     for (const [clipId] of this.clips) {
       if (this.doc?.clips[clipId]?.trackId === id || !this.doc?.clips[clipId]) this.disposeClip(clipId);
     }
-    node.fxGen++;
+    this.unwire(node);
     node.instrument?.dispose();
-    for (const fx of node.effects) fx.dispose();
+    for (const { device } of node.devices.values()) device.dispose();
     node.meter?.dispose();
     node.input.dispose();
     node.channel.dispose();
     this.tracks.delete(id);
   }
 
+  private applyAutomation(time: number) {
+    const doc = this.doc;
+    if (!doc || this.disposed) return;
+    const beat = this.transport.getTicksAtTime(time) / this.transport.PPQ;
+    const step = (60 / doc.meta.bpm) / 16;
+    for (const [trackId, node] of this.tracks) {
+      const lanes = doc.tracks[trackId]?.automation;
+      if (!lanes) continue;
+      for (const [lane, points] of Object.entries(lanes)) {
+        if (!points.length) continue;
+        const v = valueAt(points, beat);
+        if (lane === 'vol') node.channel.volume.rampTo(v, step, time);
+        else if (lane === 'pan') node.channel.pan.rampTo(Math.max(-1, Math.min(1, v)), step, time);
+        else if (lane.startsWith('fx:')) {
+          const sep = lane.indexOf(':', 3);
+          const entry = node.devices.get(lane.slice(3, sep));
+          const param = lane.slice(sep + 1);
+          if (entry && entry.params[param] !== v) {
+            entry.params = { ...entry.params, [param]: v };
+            entry.device.update(entry.params, doc.meta.bpm);
+            entry.paramKey = ''; // next sync restores/merges base values
+          }
+        } else if (lane.startsWith('inst:')) {
+          node.instrument?.setParam?.(lane.slice(5), v);
+        }
+      }
+    }
+  }
+
   /** Resolves when every track's effect chain is built (needed before offline render). */
   async ready() {
-    await Promise.all([...this.tracks.values()].map((t) => t.fxReady));
+    await Promise.all([...this.tracks.values()].flatMap((t) => [...t.devices.values()].map((d) => d.device.ready)));
   }
 
   // ───────────────────────── Transport ─────────────────────────
@@ -317,6 +418,36 @@ export class StudioEngine {
     this.tracks.get(trackId)?.instrument?.play(pitch, 0.3, Tone.now(), velocity);
   }
 
+  /**
+   * Playhead at the moment being heard. transport.ticks reads ahead by the
+   * scheduling look-ahead; live input should be stamped at the audible time.
+   */
+  getAudiblePositionBeats(): number {
+    return this.transport.getTicksAtTime(Tone.immediate()) / this.transport.PPQ;
+  }
+
+  pitchBend(trackId: string, semis: number) {
+    this.tracks.get(trackId)?.instrument?.setPitchBend?.(semis);
+  }
+
+  modWheel(trackId: string, value: number) {
+    this.tracks.get(trackId)?.instrument?.setModWheel?.(value);
+  }
+
+  /** Held note from live input (computer keyboard). */
+  async noteOn(trackId: string, pitch: number, velocity: number) {
+    await Tone.start();
+    const inst = this.tracks.get(trackId)?.instrument;
+    if (!inst) return;
+    const now = Tone.immediate();
+    if (inst.noteOn) inst.noteOn(pitch, velocity, now);
+    else inst.play(pitch, 0.4, now, velocity);
+  }
+
+  noteOff(trackId: string, pitch: number) {
+    this.tracks.get(trackId)?.instrument?.noteOff?.(pitch, Tone.immediate());
+  }
+
   /** Current level per track in dB (−Infinity when silent). */
   getLevels(): { master: number; tracks: Record<string, number> } {
     const tracks: Record<string, number> = {};
@@ -337,6 +468,38 @@ export class StudioEngine {
     this.tracks.get(trackId)?.channel.pan.rampTo(pan, 0.02);
   }
 
+  /** Live knob feedback for instruments that support update(). */
+  previewInstrument(trackId: string, params: StudioParams) {
+    const node = this.tracks.get(trackId);
+    if (!node?.instrument?.update) return;
+    node.instrument.update(params);
+    node.instParamsKey = '';
+  }
+
+  getInstrumentAnalyser(trackId: string): Tone.Analyser | undefined {
+    return this.tracks.get(trackId)?.instrument?.analyser;
+  }
+
+  getEffectAnalyser(trackId: string, fxId: string): Tone.Analyser | undefined {
+    return this.tracks.get(trackId)?.devices.get(fxId)?.device.analyser;
+  }
+
+  getEffectReduction(trackId: string, fxId: string): number {
+    return this.tracks.get(trackId)?.devices.get(fxId)?.device.getReduction?.() ?? 0;
+  }
+
+  /** Live knob feedback before the value is committed to the doc. */
+  previewEffect(trackId: string, fxId: string, params: Resolved) {
+    const entry = this.tracks.get(trackId)?.devices.get(fxId);
+    if (!entry) return;
+    entry.device.update(params, this.bpm);
+    entry.paramKey = '';
+  }
+
+  get sampleRate(): number {
+    return Tone.getContext().sampleRate;
+  }
+
   setMasterVolume(db: number) {
     this.master.volume.rampTo(db, 0.02);
   }
@@ -347,6 +510,7 @@ export class StudioEngine {
     this.disposed = true;
     for (const id of [...this.clips.keys()]) this.disposeClip(id);
     for (const id of [...this.tracks.keys()]) this.disposeTrack(id);
+    this.transport.clear(this.autoEvent);
     this.metronome?.dispose();
     this.click?.dispose();
     this.masterMeter?.dispose();

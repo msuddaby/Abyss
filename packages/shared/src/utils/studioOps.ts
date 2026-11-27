@@ -24,8 +24,13 @@ function setIn(node: unknown, path: string[], i: number, value: unknown, del: bo
     else obj[key] = value;
     return obj;
   }
-  // Field set on a missing entity is a no-op (matches server rejection).
-  if (obj[key] == null || typeof obj[key] !== 'object') return node;
+  if (obj[key] == null || typeof obj[key] !== 'object') {
+    // Field set on a missing entity is a no-op (matches server rejection);
+    // missing containers inside an entity (e.g. a track's automation map)
+    // are created, like the server does.
+    if (del || i < 2) return node;
+    obj[key] = {};
+  }
   obj[key] = setIn(obj[key], path, i + 1, value, del);
   return obj;
 }

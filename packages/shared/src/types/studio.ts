@@ -3,8 +3,8 @@
 
 export type StudioTrackKind = 'audio' | 'instrument';
 export type StudioClipKind = 'audio' | 'midi';
-export type StudioInstrumentType = 'synth' | 'fm' | 'am' | 'mono' | 'pluck' | 'drums' | 'bass';
-export type StudioEffectType = 'reverb' | 'delay' | 'eq' | 'compressor' | 'distortion' | 'chorus';
+export type StudioInstrumentType = 'synth' | 'fm' | 'am' | 'mono' | 'pluck' | 'drums' | 'bass' | 'sampler';
+export type StudioEffectType = 'reverb' | 'delay' | 'eq' | 'compressor' | 'distortion' | 'chorus' | 'filter';
 export type StudioParams = Record<string, number | string | boolean>;
 
 export interface StudioMeta {
@@ -43,6 +43,11 @@ export interface StudioTrack {
   solo: boolean;
   instrument?: StudioInstrument;
   effects?: StudioEffect[];
+  /**
+   * Automation lanes: laneKey → [beat, value] breakpoints (sorted, linear).
+   * Keys: 'vol', 'pan', 'fx:{effectId}:{param}', 'inst:{param}'.
+   */
+  automation?: Record<string, [number, number][]>;
 }
 
 export interface StudioNote {

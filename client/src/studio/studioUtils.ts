@@ -1,5 +1,5 @@
 import { useServerStore, useStudioStore, useToastStore, studioId, secondsToBeats } from '@abyss/shared';
-import type { StudioAsset, StudioDoc, StudioClip, StudioMeta } from '@abyss/shared';
+import type { StudioAsset, StudioDoc, StudioClip, StudioMeta, StudioOp } from '@abyss/shared';
 import { decodeBlob, putBuffer } from './engine/assetCache';
 
 export const HEADER_WIDTH = 220;
@@ -75,9 +75,32 @@ export function nextTrackColor(doc: StudioDoc): string {
   return TRACK_COLORS[Object.keys(doc.tracks).length % TRACK_COLORS.length];
 }
 
+const NON_TEXT_INPUTS = new Set(['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file']);
+
+const NAV_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+
+/**
+ * True when this key press belongs to the focused control rather than to
+ * studio shortcuts: anything typed into text fields, navigation/typeahead in
+ * a dropdown, and arrows on a slider. Space, modifier combos and other keys
+ * still reach the shortcuts.
+ */
+export function keyBelongsToTarget(e: KeyboardEvent | React.KeyboardEvent): boolean {
+  const el = e.target;
+  if (isTypingTarget(el) && !(el instanceof HTMLSelectElement)) return true;
+  if (el instanceof HTMLSelectElement) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.key === ' ' || e.key === 'Escape' || e.key.startsWith('F')) return false;
+    return NAV_KEYS.has(e.key) || e.key === 'Enter' || e.key.length === 1;
+  }
+  if (el instanceof HTMLInputElement && el.type === 'range') return NAV_KEYS.has(e.key);
+  return false;
+}
+
+/** True when keystrokes should go to a text field rather than shortcuts. */
 export function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
-  return el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName);
+  if (el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') return true;
+  return el instanceof HTMLInputElement && !NON_TEXT_INPUTS.has(el.type);
 }
 
 /**
@@ -118,4 +141,41 @@ export function audioClipOp(asset: StudioAsset, trackId: string, startBeats: num
     name: asset.name,
   };
   return { t: 'set' as const, path: ['clips', studioId()], value: clip };
+}
+
+/**
+ * Ops that clear [start, end) on a track, like Ableton's arrangement record:
+ * clips fully inside are deleted, clips crossing an edge are trimmed, and a
+ * clip spanning the whole range is split around it.
+ */
+export function carveRangeOps(doc: StudioDoc, trackId: string, start: number, end: number): StudioOp[] {
+  const ops: StudioOp[] = [];
+  const bpm = doc.meta.bpm;
+  /** The part of clip `c` between clip-relative beats [from, to) */
+  const slice = (c: StudioClip, from: number, to: number): StudioClip => {
+    const out: StudioClip = { ...c, start: c.start + from, length: to - from };
+    if (c.kind === 'audio') out.offset = (c.offset ?? 0) + (from * 60) / bpm;
+    else {
+      const notes: NonNullable<StudioClip['notes']> = {};
+      for (const [id, n] of Object.entries(c.notes ?? {})) {
+        if (n.start >= from && n.start < to) notes[id] = { ...n, start: n.start - from, len: Math.min(n.len, to - n.start) };
+      }
+      out.notes = notes;
+    }
+    return out;
+  };
+  for (const [id, c] of Object.entries(doc.clips)) {
+    if (c.trackId !== trackId) continue;
+    const cEnd = c.start + c.length;
+    if (cEnd <= start + 1e-9 || c.start >= end - 1e-9) continue;
+    const keepLeft = c.start < start - 1e-9;
+    const keepRight = cEnd > end + 1e-9;
+    if (!keepLeft && !keepRight) { ops.push({ t: 'del', path: ['clips', id] }); continue; }
+    if (keepLeft) ops.push({ t: 'set', path: ['clips', id], value: slice(c, 0, start - c.start) });
+    if (keepRight) {
+      const right = slice(c, end - c.start, c.length);
+      ops.push(keepLeft ? { t: 'set', path: ['clips', studioId()], value: right } : { t: 'set', path: ['clips', id], value: right });
+    }
+  }
+  return ops;
 }

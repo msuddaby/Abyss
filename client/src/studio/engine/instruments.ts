@@ -1,5 +1,7 @@
 import * as Tone from 'tone';
-import type { StudioInstrument, StudioInstrumentType, StudioEffect, StudioEffectType, StudioParams } from '@abyss/shared';
+import type { StudioDoc, StudioInstrument, StudioInstrumentType, StudioParams } from '@abyss/shared';
+import { getBuffer } from './assetCache';
+import { createWavetableSynth } from './wavetable/synthNode';
 
 // Built-in instruments and effects. Everything here is constructed against the
 // *current* Tone context so the same factories work for offline export.
@@ -9,16 +11,34 @@ export interface PlayableInstrument {
   play: (pitch: number, durationSec: number, time: number, velocity: number) => void;
   releaseAll: () => void;
   dispose: () => void;
+  /** Live param change without a rebuild (keeps ringing notes). */
+  update?: (params: StudioParams) => void;
+  setBpm?: (bpm: number) => void;
+  /** Output waveform tap for the device scope */
+  analyser?: Tone.Analyser;
+  /** Held notes (computer keyboard / live input). Falls back to play() when absent. */
+  noteOn?: (pitch: number, velocity: number, time: number) => void;
+  noteOff?: (pitch: number, time: number) => void;
+  /** Set one numeric param without a full update (automation). */
+  setParam?: (key: string, value: number) => void;
+  /** Pitch bend in semitones (live input) */
+  setPitchBend?: (semis: number) => void;
+  /** Mod wheel 0..1 (live input) */
+  setModWheel?: (value: number) => void;
 }
 
+/** Instrument types that take param changes live via update(). */
+export const LIVE_UPDATE_TYPES = new Set<StudioInstrumentType>(['synth']);
+
 export const INSTRUMENT_LABELS: Record<StudioInstrumentType, string> = {
-  synth: 'Poly Synth',
+  synth: 'Wavetable',
   fm: 'FM Keys',
   am: 'AM Pad',
   mono: 'Mono Lead',
   pluck: 'Pluck',
   bass: 'Bass',
   drums: 'Drum Kit',
+  sampler: 'Sampler',
 };
 
 export const OSC_TYPES = ['sine', 'triangle', 'sawtooth', 'square'] as const;
@@ -58,9 +78,13 @@ function envelope(params: StudioParams | undefined, d: { attack: number; decay: 
 
 function polyInstrument(synth: Tone.PolySynth): PlayableInstrument {
   synth.maxPolyphony = 24;
+  const hz = (pitch: number) => Tone.Frequency(pitch, 'midi').toFrequency();
   return {
     output: synth,
-    play: (pitch, dur, time, vel) => synth.triggerAttackRelease(Tone.Frequency(pitch, 'midi').toFrequency(), dur, time, vel),
+    play: (pitch, dur, time, vel) => synth.triggerAttackRelease(hz(pitch), dur, time, vel),
+    noteOn: (pitch, vel, time) => synth.triggerAttack(hz(pitch), time, vel),
+    noteOff: (pitch, time) => synth.triggerRelease(hz(pitch), time),
+    setPitchBend: (semis) => synth.set({ detune: semis * 100 }),
     releaseAll: () => synth.releaseAll(),
     dispose: () => synth.dispose(),
   };
@@ -82,32 +106,142 @@ function drumKit(): PlayableInstrument {
   const nodes = [kick, tom, snare, snareBody, clap, hat, openHat, cymbal, snareFilter, hatFilter];
 
   const tomFreq: Record<number, number> = { 41: 80, 43: 95, 45: 110, 47: 130, 48: 150, 50: 180 };
+  // Drum voices are monophonic; Tone throws if one is retriggered at the same
+  // (or an earlier) time, which happens at loop wraps and with stacked notes.
+  const last = new Map<object, number>();
+  const at = (voice: object, time: number) => {
+    const prev = last.get(voice) ?? -Infinity;
+    const t = time > prev ? time : prev + 0.001;
+    last.set(voice, t);
+    return t;
+  };
 
   return {
     output: out,
     play: (pitch, _dur, time, vel) => {
-      // Mono drum voices throw if retriggered at the exact same time; nudge.
-      const t = time;
       switch (pitch) {
-        case 35: case 36: kick.triggerAttackRelease('C1', 0.3, t, vel); break;
+        case 35: case 36: kick.triggerAttackRelease('C1', 0.3, at(kick, time), vel); break;
         case 37: case 38: case 40:
-          snare.triggerAttackRelease(0.18, t, vel);
-          snareBody.triggerAttackRelease(180, 0.08, t, vel * 0.6);
+          snare.triggerAttackRelease(0.18, at(snare, time), vel);
+          snareBody.triggerAttackRelease(180, 0.08, at(snareBody, time), vel * 0.6);
           break;
-        case 39: clap.triggerAttackRelease(0.12, t, vel); break;
-        case 42: case 44: hat.triggerAttackRelease(0.05, t, vel * 0.7); break;
-        case 46: openHat.triggerAttackRelease(0.35, t, vel * 0.7); break;
+        case 39: clap.triggerAttackRelease(0.12, at(clap, time), vel); break;
+        case 42: case 44: hat.triggerAttackRelease(0.05, at(hat, time), vel * 0.7); break;
+        case 46: openHat.triggerAttackRelease(0.35, at(openHat, time), vel * 0.7); break;
         case 49: case 51: case 52: case 55: case 57: case 59:
-          cymbal.triggerAttackRelease(pitch === 51 || pitch === 59 ? 400 : 300, 0.6, t, vel);
+          cymbal.triggerAttackRelease(pitch === 51 || pitch === 59 ? 400 : 300, 0.6, at(cymbal, time), vel);
           break;
         default: {
           const f = tomFreq[pitch] ?? Tone.Frequency(pitch, 'midi').toFrequency();
-          tom.triggerAttackRelease(f, 0.25, t, vel);
+          tom.triggerAttackRelease(f, 0.25, at(tom, time), vel);
         }
       }
     },
     releaseAll: () => {},
     dispose: () => { for (const n of nodes) n.dispose(); out.dispose(); },
+  };
+}
+
+/** Asset id of a sampler instrument's sample, if any. */
+export function samplerAssetId(inst: StudioInstrument | undefined): string | undefined {
+  const id = inst?.type === 'sampler' ? inst.params?.assetId : undefined;
+  return typeof id === 'string' && id ? id : undefined;
+}
+
+/** Every asset the arrangement needs decoded: clip audio plus sampler samples. */
+export function usedAssetIds(doc: StudioDoc): Set<string> {
+  const ids = new Set<string>();
+  for (const c of Object.values(doc.clips)) if (c.assetId) ids.add(c.assetId);
+  for (const t of Object.values(doc.tracks)) {
+    const id = samplerAssetId(t.instrument);
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+export const SAMPLER_DEFAULTS = { root: 60, tune: 0, start: 0, attack: 0.002, release: 0.08, cutoff: 20000, res: 0.7, volume: 0 };
+
+/**
+ * Simpler-style single-sample instrument. Each note gets its own buffer
+ * source repitched relative to the root note. Classic mode holds for the note
+ * length; one-shot plays the whole sample (good for drum hits).
+ */
+function sampler(p: StudioParams | undefined): PlayableInstrument {
+  const assetId = typeof p?.assetId === 'string' ? p.assetId : '';
+  const raw = assetId ? getBuffer(assetId) : undefined;
+  const buffer = raw ? new Tone.ToneAudioBuffer(raw) : null;
+  const d = SAMPLER_DEFAULTS;
+  const root = num(p, 'root', d.root);
+  const tune = num(p, 'tune', d.tune);
+  const startFrac = Math.min(0.99, Math.max(0, num(p, 'start', d.start)));
+  const attack = Math.max(0.001, num(p, 'attack', d.attack));
+  const release = Math.max(0.005, num(p, 'release', d.release));
+  const oneShot = p?.mode === 'oneshot';
+
+  const out = new Tone.Gain(Tone.dbToGain(num(p, 'volume', d.volume)));
+  const filter = new Tone.Filter({ type: 'lowpass', frequency: num(p, 'cutoff', d.cutoff), Q: num(p, 'res', d.res), rolloff: -24 });
+  filter.connect(out);
+  const context = filter.context;
+  const voices = new Set<{ src: Tone.ToneBufferSource; amp: Tone.Gain }>();
+
+  const free = (v: { src: Tone.ToneBufferSource; amp: Tone.Gain }) => {
+    if (!voices.delete(v)) return;
+    v.src.dispose();
+    v.amp.dispose();
+  };
+
+  const held = new Map<number, { src: Tone.ToneBufferSource; amp: Tone.Gain }>();
+  const startVoice = (pitch: number, time: number, vel: number) => {
+    if (!buffer) return null;
+    const rate = Math.pow(2, (pitch - root + tune) / 12);
+    const src = new Tone.ToneBufferSource({ context, url: buffer, playbackRate: rate, fadeIn: attack, fadeOut: release, curve: 'exponential' });
+    const amp = new Tone.Gain({ context, gain: vel });
+    src.connect(amp);
+    amp.connect(filter);
+    const v = { src, amp };
+    voices.add(v);
+    src.onended = () => free(v);
+    src.start(time, startFrac * buffer.duration);
+    return v;
+  };
+
+  return {
+    output: out,
+    noteOn: (pitch, vel, time) => {
+      const v = startVoice(pitch, time, vel);
+      if (v && !oneShot) held.set(pitch, v);
+    },
+    noteOff: (pitch, time) => {
+      const v = held.get(pitch);
+      held.delete(pitch);
+      if (v) { try { v.src.stop(time); } catch { /* already stopped */ } }
+    },
+    play: (pitch, dur, time, vel) => {
+      if (!buffer) return;
+      const rate = Math.pow(2, (pitch - root + tune) / 12);
+      const offset = startFrac * buffer.duration;
+      // Voices are created at play time; during an offline export that is after
+      // Tone has switched back to the live context, so pin the instrument's own.
+      const src = new Tone.ToneBufferSource({ context, url: buffer, playbackRate: rate, fadeIn: attack, fadeOut: release, curve: 'exponential' });
+      const amp = new Tone.Gain({ context, gain: vel });
+      src.connect(amp);
+      amp.connect(filter);
+      const v = { src, amp };
+      voices.add(v);
+      src.onended = () => free(v);
+      src.start(time, offset);
+      if (!oneShot) src.stop(time + Math.max(dur, attack));
+    },
+    releaseAll: () => {
+      for (const v of voices) {
+        try { v.src.stop(); } catch { /* not started yet */ }
+      }
+    },
+    dispose: () => {
+      for (const v of [...voices]) free(v);
+      filter.dispose();
+      out.dispose();
+    },
   };
 }
 
@@ -144,78 +278,10 @@ export function createInstrument(inst: StudioInstrument | undefined): PlayableIn
       }));
     case 'drums':
       return drumKit();
+    case 'sampler':
+      return sampler(p);
     case 'synth':
     default:
-      return polyInstrument(new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: osc(p, 'sawtooth') as OscillatorType },
-        envelope: envelope(p, { attack: 0.02, decay: 0.2, sustain: 0.5, release: 0.6 }),
-      }));
-  }
-}
-
-// ───────────────────────── Effects ─────────────────────────
-
-export interface EffectParamSpec {
-  key: string;
-  label: string;
-  min: number;
-  max: number;
-  step: number;
-  default: number;
-}
-
-export const EFFECT_SPECS: Record<StudioEffectType, { label: string; params: EffectParamSpec[] }> = {
-  reverb: { label: 'Reverb', params: [
-    { key: 'decay', label: 'Decay', min: 0.2, max: 10, step: 0.1, default: 2.5 },
-    { key: 'wet', label: 'Mix', min: 0, max: 1, step: 0.01, default: 0.3 },
-  ] },
-  delay: { label: 'Delay', params: [
-    { key: 'time', label: 'Time (beats)', min: 0.125, max: 2, step: 0.125, default: 0.5 },
-    { key: 'feedback', label: 'Feedback', min: 0, max: 0.9, step: 0.01, default: 0.35 },
-    { key: 'wet', label: 'Mix', min: 0, max: 1, step: 0.01, default: 0.25 },
-  ] },
-  eq: { label: 'EQ', params: [
-    { key: 'low', label: 'Low (dB)', min: -24, max: 12, step: 0.5, default: 0 },
-    { key: 'mid', label: 'Mid (dB)', min: -24, max: 12, step: 0.5, default: 0 },
-    { key: 'high', label: 'High (dB)', min: -24, max: 12, step: 0.5, default: 0 },
-  ] },
-  compressor: { label: 'Compressor', params: [
-    { key: 'threshold', label: 'Threshold (dB)', min: -60, max: 0, step: 1, default: -24 },
-    { key: 'ratio', label: 'Ratio', min: 1, max: 20, step: 0.5, default: 4 },
-  ] },
-  distortion: { label: 'Distortion', params: [
-    { key: 'amount', label: 'Drive', min: 0, max: 1, step: 0.01, default: 0.4 },
-    { key: 'wet', label: 'Mix', min: 0, max: 1, step: 0.01, default: 1 },
-  ] },
-  chorus: { label: 'Chorus', params: [
-    { key: 'frequency', label: 'Rate (Hz)', min: 0.1, max: 8, step: 0.1, default: 1.5 },
-    { key: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, default: 0.6 },
-    { key: 'wet', label: 'Mix', min: 0, max: 1, step: 0.01, default: 0.5 },
-  ] },
-};
-
-export function defaultEffectParams(type: StudioEffectType): StudioParams {
-  return Object.fromEntries(EFFECT_SPECS[type].params.map((p) => [p.key, p.default]));
-}
-
-export async function createEffect(fx: StudioEffect, bpm: number): Promise<Tone.ToneAudioNode> {
-  const p = { ...defaultEffectParams(fx.type), ...fx.params };
-  const n = (k: string) => Number(p[k]);
-  switch (fx.type) {
-    case 'reverb': {
-      const r = new Tone.Reverb({ decay: n('decay'), wet: n('wet') });
-      await r.ready;
-      return r;
-    }
-    case 'delay':
-      return new Tone.FeedbackDelay({ delayTime: (n('time') * 60) / bpm, feedback: n('feedback'), wet: n('wet') });
-    case 'eq':
-      return new Tone.EQ3({ low: n('low'), mid: n('mid'), high: n('high') });
-    case 'compressor':
-      return new Tone.Compressor({ threshold: n('threshold'), ratio: n('ratio') });
-    case 'distortion':
-      return new Tone.Distortion({ distortion: n('amount'), wet: n('wet') });
-    case 'chorus':
-      return new Tone.Chorus({ frequency: n('frequency'), depth: n('depth'), wet: n('wet') }).start();
+      return createWavetableSynth(p);
   }
 }

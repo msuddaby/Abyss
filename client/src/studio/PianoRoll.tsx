@@ -3,7 +3,7 @@ import { useStudioStore, studioId } from '@abyss/shared';
 import type { StudioClip, StudioNote, StudioOp, StudioTrack, StudioMeta } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import { DRUM_MAP } from './engine/instruments';
-import { barBeats, snapBeats, floorBeats, MIN_CLIP_BEATS, isTypingTarget } from './studioUtils';
+import { barBeats, snapBeats, floorBeats, MIN_CLIP_BEATS, keyBelongsToTarget } from './studioUtils';
 
 interface Props {
   clipId: string;
@@ -18,6 +18,9 @@ interface Props {
   playheadInClip: number | null;
   onClose: () => void;
 }
+
+/** Note clipboard, shared across clips in this session. */
+let noteClipboard: StudioNote[] | null = null;
 
 const ROW_H = 14;
 const RULER_H = 20;
@@ -48,6 +51,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
   const previewRef = useRef<Record<string, StudioNote> | null>(null);
   const setPreview = (p: Record<string, StudioNote> | null) => { previewRef.current = p; setPreviewState(p); };
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const grid = snapGrid > 0 ? snapGrid : 0.25;
   const lastLen = useRef(grid);
@@ -148,6 +152,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
 
   const onGridPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
+    rootRef.current?.focus({ preventScroll: true });
     if (!editable) return;
     const { beats, pitch } = posFromEvent(e.clientX, e.clientY);
     const id = studioId();
@@ -160,6 +165,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
 
   const onNotePointerDown = (e: React.PointerEvent, id: string) => {
     e.stopPropagation();
+    rootRef.current?.focus({ preventScroll: true });
     if (e.button === 2) return;
     const note = notes[id];
     if (!note) return;
@@ -186,21 +192,82 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
     setSelected((s) => s.filter((x) => !ids.includes(x)));
   };
 
-  // Delete / select-all / velocity nudges while the roll has focus.
+  const transformSelected = (fn: (n: StudioNote) => StudioNote | null) => {
+    const ops: StudioOp[] = [];
+    for (const id of selected) {
+      const n = notes[id];
+      if (!n) continue;
+      const next = fn(n);
+      if (!next) return; // a note would leave the valid range — do nothing
+      for (const f of ['start', 'pitch'] as const) {
+        if (next[f] !== n[f]) ops.push({ t: 'set', path: ['clips', clipId, 'notes', id, f], value: next[f] });
+      }
+    }
+    if (ops.length) edit(ops);
+  };
+
+  const pasteNotes = (list: StudioNote[], at: number) => {
+    if (!list.length) return;
+    const anchor = Math.min(...list.map((n) => n.start));
+    const ids: string[] = [];
+    const ops: StudioOp[] = list.map((n) => {
+      const id = studioId();
+      ids.push(id);
+      return { t: 'set', path: ['clips', clipId, 'notes', id], value: { ...n, start: Math.max(0, at + n.start - anchor) } };
+    });
+    edit(ops);
+    setSelected(ids);
+  };
+
+  // Note-editing shortcuts while the roll has focus. Handled keys stop here so
+  // the arrange view's shortcuts don't also fire.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (isTypingTarget(e.target)) return;
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length) {
-      e.preventDefault();
-      e.stopPropagation();
-      deleteNotes(selected);
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-      e.preventDefault();
-      e.stopPropagation();
-      setSelected(Object.keys(notes));
-    } else if (e.key === 'Escape') {
-      e.stopPropagation();
-      if (selected.length) setSelected([]);
-      else onClose();
+    if (keyBelongsToTarget(e)) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const done = () => { e.preventDefault(); e.stopPropagation(); };
+    const sel = selected.filter((id) => notes[id]);
+    const perBar = barBeats(meta);
+
+    if (mod && key === 'a') { done(); setSelected(Object.keys(notes)); return; }
+    if (mod && key === 'c' && sel.length) { done(); noteClipboard = sel.map((id) => notes[id]); return; }
+    if (key === 'Escape') { done(); if (selected.length) setSelected([]); else onClose(); return; }
+    if (!editable) return;
+    if ((key === 'Delete' || key === 'Backspace') && sel.length) { done(); deleteNotes(sel); return; }
+    if (mod && key === 'x' && sel.length) { done(); noteClipboard = sel.map((id) => notes[id]); deleteNotes(sel); return; }
+    if (mod && key === 'v' && noteClipboard?.length) {
+      done();
+      pasteNotes(noteClipboard, playheadInClip ?? 0);
+      return;
+    }
+    if (mod && key === 'd' && sel.length) {
+      done();
+      const list = sel.map((id) => notes[id]);
+      const start = Math.min(...list.map((n) => n.start));
+      const end = Math.max(...list.map((n) => n.start + n.len));
+      pasteNotes(list, start + Math.max(grid, end - start));
+      return;
+    }
+    if (mod) return;
+    if ((key === 'ArrowUp' || key === 'ArrowDown') && sel.length) {
+      done();
+      const d = (key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 12 : 1);
+      if (isDrums) {
+        // Step between the kit's rows rather than semitones.
+        transformSelected((n) => {
+          const row = (rowOf.get(n.pitch) ?? 0) - Math.sign(d);
+          return row >= 0 && row < pitches.length ? { ...n, pitch: pitches[row] } : null;
+        });
+      } else {
+        transformSelected((n) => (n.pitch + d >= 0 && n.pitch + d <= 127 ? { ...n, pitch: n.pitch + d } : null));
+      }
+      return;
+    }
+    if ((key === 'ArrowLeft' || key === 'ArrowRight') && sel.length) {
+      done();
+      const d = (key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? perBar : grid);
+      transformSelected((n) => (n.start + d >= 0 ? { ...n, start: n.start + d } : null));
+      return;
     }
   };
 
@@ -249,7 +316,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
   }
 
   return (
-    <div className="studio-piano-roll" tabIndex={0} onKeyDown={onKeyDown}>
+    <div className="studio-piano-roll" ref={rootRef} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="studio-panel-toolbar">
         <span className="studio-panel-title">🎹 {clip.name || 'MIDI clip'}</span>
         <span className="studio-muted">{Object.keys(notes).length} notes</span>

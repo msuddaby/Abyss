@@ -53,8 +53,8 @@ public class StudioSessionService
     private static readonly TimeSpan EvictAfter = TimeSpan.FromMinutes(10);
 
     private static readonly Regex IdRegex = new(@"^[A-Za-z0-9_-]{1,40}$", RegexOptions.Compiled);
-    private static readonly HashSet<string> InstrumentTypes = new() { "synth", "fm", "am", "mono", "pluck", "drums", "bass" };
-    private static readonly HashSet<string> EffectTypes = new() { "reverb", "delay", "eq", "compressor", "distortion", "chorus" };
+    private static readonly HashSet<string> InstrumentTypes = new() { "synth", "fm", "am", "mono", "pluck", "drums", "bass", "sampler" };
+    private static readonly HashSet<string> EffectTypes = new() { "reverb", "delay", "eq", "compressor", "distortion", "chorus", "filter" };
 
     private readonly ConcurrentDictionary<Guid, StudioSession> _sessions = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _loadLocks = new();
@@ -220,7 +220,13 @@ public class StudioSessionService
         lock (session.Lock)
         {
             var clips = session.Doc["clips"] as JsonObject;
-            return clips != null && clips.Any(kv => kv.Value is JsonObject c && c["assetId"]?.GetValue<string>() == assetId);
+            if (clips != null && clips.Any(kv => kv.Value is JsonObject c && c["assetId"]?.GetValue<string>() == assetId))
+                return true;
+            // Sampler instruments reference their sample by asset id too.
+            var tracks = session.Doc["tracks"] as JsonObject;
+            return tracks != null && tracks.Any(kv =>
+                (kv.Value as JsonObject)?["instrument"]?["params"]?["assetId"] is JsonValue v &&
+                v.TryGetValue<string>(out var id) && id == assetId);
         }
     }
 
@@ -335,6 +341,21 @@ public class StudioSessionService
                     value = ValidateTrackField(path[2], op.Value!.Value, track["kind"]?.GetValue<string>());
                     if (value == null) return null;
                     track[path[2]] = value;
+                }
+                else if (path.Count == 4 && path[2] == "automation")
+                {
+                    // ["tracks", id, "automation", laneKey] — one lane's breakpoints
+                    if (tracks[id] is not JsonObject track || !LaneKeyRegex.IsMatch(path[3])) return null;
+                    var lanes = track["automation"] as JsonObject;
+                    if (isSet)
+                    {
+                        value = ValidateLane(op.Value!.Value);
+                        if (value == null) return null;
+                        if (lanes == null) { lanes = new JsonObject(); track["automation"] = lanes; }
+                        if (!lanes.ContainsKey(path[3]) && lanes.Count >= MaxLanes) return null;
+                        lanes[path[3]] = value;
+                    }
+                    else if (lanes == null || !lanes.Remove(path[3])) return null;
                 }
                 else return null;
                 break;
@@ -486,8 +507,45 @@ public class StudioSessionService
         "mute" or "solo" => Bool(v) is { } b ? JsonValue.Create(b) : null,
         "instrument" => kind == "instrument" ? ValidateInstrument(v) : null,
         "effects" => ValidateEffects(v),
+        "automation" => ValidateAutomation(v),
         _ => null,
     };
+
+    public const int MaxLanes = 48;
+    public const int MaxLanePoints = 4000;
+    private static readonly Regex LaneKeyRegex = new(@"^[A-Za-z0-9:_-]{1,80}$", RegexOptions.Compiled);
+
+    /// Automation lanes: { laneKey: [[beat, value], ...] }
+    private static JsonObject? ValidateAutomation(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) return null;
+        var result = new JsonObject();
+        foreach (var prop in v.EnumerateObject())
+        {
+            if (result.Count >= MaxLanes || !LaneKeyRegex.IsMatch(prop.Name)) return null;
+            var lane = ValidateLane(prop.Value);
+            if (lane == null) return null;
+            result[prop.Name] = lane;
+        }
+        return result;
+    }
+
+    /// One lane: up to MaxLanePoints [beat, value] pairs, returned sorted by beat.
+    private static JsonArray? ValidateLane(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Array || v.GetArrayLength() > MaxLanePoints) return null;
+        var points = new List<(double Beat, double Value)>();
+        foreach (var pt in v.EnumerateArray())
+        {
+            if (pt.ValueKind != JsonValueKind.Array || pt.GetArrayLength() != 2) return null;
+            if (Num(pt[0], 0, 100000) is not { } beat || Num(pt[1], -1e6, 1e6) is not { } val) return null;
+            points.Add((beat, val));
+        }
+        var arr = new JsonArray();
+        foreach (var (beat, val) in points.OrderBy(p => p.Beat))
+            arr.Add(new JsonArray(JsonValue.Create(beat), JsonValue.Create(val)));
+        return arr;
+    }
 
     private static JsonObject? ValidateInstrument(JsonElement v)
     {
@@ -503,7 +561,7 @@ public class StudioSessionService
         return inst;
     }
 
-    /// Flat map of up to 24 numeric/string/bool params (synth envelope, oscillator type, etc.).
+    /// Flat map of up to 128 numeric/string/bool params (EQ Eight bands, wavetable synth + mod matrix).
     private static JsonObject? ValidateParams(JsonElement v)
     {
         if (v.ValueKind != JsonValueKind.Object) return null;
@@ -511,11 +569,13 @@ public class StudioSessionService
         var count = 0;
         foreach (var prop in v.EnumerateObject())
         {
-            if (++count > 24 || prop.Name.Length > 32) return null;
+            // EQ Eight carries 8 bands x 5 params plus globals.
+            if (++count > 128 || prop.Name.Length > 32) return null;
             JsonNode? node = prop.Value.ValueKind switch
             {
                 JsonValueKind.Number => Num(prop.Value, -1e6, 1e6) is { } d ? JsonValue.Create(d) : null,
-                JsonValueKind.String => Str(prop.Value, 32, allowEmpty: true) is { } s ? JsonValue.Create(s) : null,
+                // 40 fits an asset id (GUID) for the sampler
+                JsonValueKind.String => Str(prop.Value, 40, allowEmpty: true) is { } s ? JsonValue.Create(s) : null,
                 JsonValueKind.True or JsonValueKind.False => JsonValue.Create(prop.Value.GetBoolean()),
                 _ => null,
             };

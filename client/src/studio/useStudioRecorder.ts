@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { useStudioStore, studioId, secondsToBeats } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import { decodeBlob, putBuffer } from './engine/assetCache';
+import { carveRangeOps } from './studioUtils';
 
 const LATENCY_KEY = 'studio.recordLatencyMs';
 
@@ -91,14 +92,16 @@ export function useStudioRecorder(engine: StudioEngine | null) {
       if (!doc?.tracks[rec.trackId]) return;
       const latency = getRecordLatencyMs() / 1000;
       const usable = Math.max(0.05, buffer.duration - latency);
-      useStudioStore.getState().edit([{
+      const length = secondsToBeats(usable, doc.meta.bpm);
+      // Arrangement record replaces whatever was under the take.
+      useStudioStore.getState().edit([...carveRangeOps(doc, rec.trackId, rec.startBeats, rec.startBeats + length), {
         t: 'set',
         path: ['clips', studioId()],
         value: {
           trackId: rec.trackId,
           kind: 'audio',
           start: rec.startBeats,
-          length: secondsToBeats(usable, doc.meta.bpm),
+          length,
           assetId: asset.id,
           offset: Math.min(latency, buffer.duration - 0.05),
           gain: 0,

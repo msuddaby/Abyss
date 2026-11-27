@@ -3,11 +3,13 @@ import { arrangementEnd, beatsToSeconds } from '@abyss/shared';
 import type { StudioDoc, StudioAsset } from '@abyss/shared';
 import { StudioEngine } from './StudioEngine';
 import { loadAsset } from './assetCache';
+import { usedAssetIds } from './instruments';
+import { ensureSynthWorklet } from './wavetable/synthNode';
 
 /** Renders the whole arrangement offline and returns a 16-bit WAV blob. */
 export async function renderProjectToWav(doc: StudioDoc, assets: StudioAsset[], tailSec = 2): Promise<Blob> {
   // Make sure every referenced asset is decoded before entering the offline context.
-  const used = new Set(Object.values(doc.clips).map((c) => c.assetId).filter(Boolean) as string[]);
+  const used = usedAssetIds(doc);
   await Promise.all(assets.filter((a) => used.has(a.id)).map((a) => loadAsset(a.id, a.url)));
 
   const endBeats = arrangementEnd(doc, 1);
@@ -15,7 +17,10 @@ export async function renderProjectToWav(doc: StudioDoc, assets: StudioAsset[], 
   // Export renders straight through; looping is a playback convenience.
   const exportDoc: StudioDoc = { ...doc, meta: { ...doc.meta, loopEnabled: false } };
 
-  const rendered = await Tone.Offline(async ({ transport }) => {
+  const rendered = await Tone.Offline(async (context) => {
+    // The offline context needs its own copy of the synth worklet.
+    await ensureSynthWorklet(context).catch(() => {});
+    const { transport } = context;
     const engine = new StudioEngine({ meters: false });
     engine.sync(exportDoc);
     await engine.ready();

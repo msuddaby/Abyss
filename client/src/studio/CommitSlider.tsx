@@ -33,6 +33,9 @@ export default function CommitSlider({ value, min, max, step, disabled, classNam
     if (!dragging.current) return;
     dragging.current = false;
     setActive(false);
+    // Show the stored value again; if the commit changes it, the new value is
+    // adopted on the next render. (Automation recording leaves it unchanged.)
+    setLocal(value);
     if (local !== value) onCommit(local);
   };
 
