@@ -20,6 +20,7 @@ interface Props {
 }
 
 const ROW_H = 14;
+const RULER_H = 20;
 const KEY_W = 64;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const BLACK = new Set([1, 3, 6, 8, 10]);
@@ -235,9 +236,17 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
   };
 
   const perBar = barBeats(meta);
+  // Align bar lines with the song's bars, not the clip start.
+  const barOffsetPx = -((clip.start % perBar) * pxPerBeat);
   const gridBg = {
     backgroundSize: `${pxPerBeat * perBar}px 100%, ${pxPerBeat}px 100%, ${pxPerBeat * grid}px 100%`,
+    backgroundPosition: `${barOffsetPx}px 0, 0 0, 0 0`,
   };
+  // Song bar numbers that fall within the visible range (clip-relative beats).
+  const rulerBars: { bar: number; at: number }[] = [];
+  for (let b = Math.ceil(clip.start / perBar - 1e-9); b * perBar < clip.start + viewBeats; b++) {
+    rulerBars.push({ bar: b + 1, at: b * perBar - clip.start });
+  }
 
   return (
     <div className="studio-piano-roll" tabIndex={0} onKeyDown={onKeyDown}>
@@ -253,7 +262,16 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
         <button className="studio-btn small" onClick={onClose} title="Close editor">✕</button>
       </div>
       <div className="studio-roll-scroll" ref={scrollRef}>
-        <div className="studio-roll-inner" style={{ width: KEY_W + width, height: pitches.length * ROW_H }}>
+        <div className="studio-roll-inner" style={{ width: KEY_W + width, height: RULER_H + pitches.length * ROW_H }}>
+          <div className="studio-roll-ruler" style={{ height: RULER_H, width: KEY_W + width }}>
+            <div className="studio-roll-ruler-corner" style={{ width: KEY_W }} />
+            <div className="studio-roll-ruler-clip" style={{ left: KEY_W, width: clip.length * pxPerBeat, ['--track-color' as string]: track.color ?? '#5865f2' }}>
+              {clip.name || 'Clip'}
+            </div>
+            {rulerBars.map(({ bar, at }) => (
+              <div key={bar} className="studio-roll-ruler-bar" style={{ left: KEY_W + at * pxPerBeat }}>{bar}</div>
+            ))}
+          </div>
           <div className="studio-roll-keys" style={{ width: KEY_W }}>
             {pitches.map((p) => (
               <div
@@ -269,14 +287,15 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
           <div
             className="studio-roll-grid"
             ref={gridRef}
-            style={{ left: KEY_W, width, height: pitches.length * ROW_H, ...gridBg }}
+            style={{ left: KEY_W, top: RULER_H, width, height: pitches.length * ROW_H, ...gridBg }}
             onPointerDown={onGridPointerDown}
             onContextMenu={(e) => e.preventDefault()}
           >
             {!isDrums && pitches.map((p, i) => BLACK.has(p % 12) && (
               <div key={p} className="studio-roll-row-black" style={{ top: i * ROW_H, height: ROW_H }} />
             ))}
-            <div className="studio-roll-outside" style={{ left: clip.length * pxPerBeat }} />
+            <div className="studio-roll-inside" style={{ width: clip.length * pxPerBeat, ['--track-color' as string]: track.color ?? '#5865f2' }} />
+            <div className="studio-roll-outside" style={{ left: clip.length * pxPerBeat }} title="Outside the clip — notes here won't play" />
             {Object.entries(shown).map(([id, n]) => {
               const row = rowOf.get(n.pitch);
               if (row === undefined) return null;

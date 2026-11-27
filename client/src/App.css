@@ -13263,7 +13263,7 @@ label.has-error select:focus {
 .studio-piano-roll { flex: 1; min-height: 0; display: flex; flex-direction: column; outline: none; }
 .studio-roll-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--studio-lane); }
 .studio-roll-inner { position: relative; }
-.studio-roll-keys { position: sticky; left: 0; z-index: 3; background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
+.studio-roll-keys { position: sticky; left: 0; z-index: 3; top: auto; background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
 .studio-roll-key {
   box-sizing: border-box;
   font-size: 9px;
@@ -13291,7 +13291,19 @@ label.has-error select:focus {
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
 }
 .studio-roll-row-black { position: absolute; left: 0; right: 0; background: rgba(0, 0, 0, 0.18); pointer-events: none; }
-.studio-roll-outside { position: absolute; top: 0; bottom: 0; right: 0; background: rgba(0, 0, 0, 0.35); pointer-events: none; }
+.studio-roll-inside { position: absolute; top: 0; bottom: 0; left: 0; background: color-mix(in srgb, var(--track-color) 12%, transparent); pointer-events: none; }
+.studio-roll-outside {
+  position: absolute; top: 0; bottom: 0; right: 0; pointer-events: none;
+  background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.45) 0 6px, rgba(0, 0, 0, 0.3) 6px 12px);
+}
+.studio-roll-ruler { position: sticky; top: 0; z-index: 4; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); }
+.studio-roll-ruler-corner { position: sticky; left: 0; z-index: 1; height: 100%; background: var(--bg-secondary); border-right: 1px solid var(--border-color); }
+.studio-roll-ruler-clip {
+  position: absolute; top: 2px; bottom: 2px; border-radius: 3px; padding: 0 6px;
+  background: color-mix(in srgb, var(--track-color) 55%, transparent); color: #fff;
+  font-size: 11px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+}
+.studio-roll-ruler-bar { position: absolute; top: 0; bottom: 0; padding-left: 3px; border-left: 1px solid rgba(255, 255, 255, 0.25); font-size: 10px; line-height: 20px; color: var(--text-muted); pointer-events: none; }
 .studio-roll-end { position: absolute; top: 0; bottom: 0; width: 6px; margin-left: -3px; cursor: ew-resize; background: var(--brand-color); opacity: 0.6; z-index: 2; }
 .studio-roll-end:hover { opacity: 1; }
 .studio-note {
