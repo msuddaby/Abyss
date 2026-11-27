@@ -1,11 +1,12 @@
 import { Component, useRef, useEffect, useState, useCallback } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
-import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, resilientInvoke } from '@abyss/shared';
+import { useServerStore, useVoiceStore, useAuthStore, useVoiceChatStore, useWatchPartyStore, useStudioStore, getConnection, getApiBase, hasChannelPermission, hasPermission, Permission, canActOn, resilientInvoke } from '@abyss/shared';
 import ScreenShareView from './ScreenShareView';
 import { useWebRTC, getCameraVideoTrack, getLocalCameraTrack, requestWatch } from '../hooks/useWebRTC';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { isMobile } from '../stores/mobileStore';
 import QualityPopover from './QualityPopover';
+import StudioView from '../studio/StudioView';
 import { Capacitor } from '@capacitor/core';
 
 class VoiceErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -87,6 +88,9 @@ function VoiceChannelViewInner() {
   const isJoiningVoice = useVoiceStore((s) => s.isJoiningVoice);
 
   const ttsUsers = useVoiceChatStore((s) => s.ttsUsers);
+  const allChannels = useServerStore((s) => s.channels);
+  const studioLinks = useStudioStore((s) => s.voiceLinks);
+  const [studioHidden, setStudioHidden] = useState(false);
   const openContextMenu = useContextMenuStore((s) => s.open);
 
   const handleContextMenu = (userId: string, e: React.MouseEvent) => {
@@ -146,6 +150,21 @@ function VoiceChannelViewInner() {
   const focusedEntry = isFocused ? participantEntries.find(([uid]) => uid === focusedUserId) : null;
   const [showParticipants, setShowParticipants] = useState(true);
 
+  const linkedStudioId = activeChannel ? studioLinks[activeChannel.id] : undefined;
+  const linkedStudio = linkedStudioId ? allChannels.find((c) => c.id === linkedStudioId) : undefined;
+  const studioChannels = allChannels.filter((c) => c.type === 'Studio' && hasChannelPermission(c.permissions, Permission.ViewChannel));
+  const showStudio = isConnected && !!linkedStudio && !studioHidden;
+
+  const openStudio = (studioChannelId: string) => {
+    if (!activeChannel) return;
+    setStudioHidden(false);
+    getConnection().invoke('OpenStudioInVoice', activeChannel.id, studioChannelId).catch(console.error);
+  };
+  const closeStudio = () => {
+    if (!activeChannel) return;
+    getConnection().invoke('CloseStudioInVoice', activeChannel.id).catch(console.error);
+  };
+
   return (
     <div className="vcv-container">
       {activeChannel?.userLimit ? (
@@ -156,7 +175,26 @@ function VoiceChannelViewInner() {
       {isConnected && connectionState === 'reconnecting' && (
         <div className="vcv-reconnecting-banner">Connection lost — Reconnecting...</div>
       )}
-      {isWatching ? (
+      {showStudio && linkedStudio ? (
+        <div className="voice-studio-stage">
+          <div className="voice-studio-bar">
+            <span>🎛️ <strong>{linkedStudio.name}</strong> is open in this call</span>
+            <div className="vcv-studio-speakers">
+              {participantEntries.map(([userId, state]) => (
+                <span key={userId} className={`vcv-studio-speaker${speakingUsers.has(userId) ? ' speaking' : ''}`} title={state.displayName}>
+                  {getMemberAvatar(userId)
+                    ? <img src={getMemberAvatar(userId)!} alt={state.displayName} />
+                    : state.displayName.slice(0, 1).toUpperCase()}
+                </span>
+              ))}
+            </div>
+            <div className="studio-spacer" />
+            <button className="studio-btn small" onClick={() => setStudioHidden(true)}>Show call</button>
+            <button className="studio-btn small" onClick={closeStudio}>Close studio</button>
+          </div>
+          <StudioView channelId={linkedStudio.id} compact />
+        </div>
+      ) : isWatching ? (
         <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>
           <div className="vcv-watching-main">
             <ScreenShareView />
@@ -298,6 +336,25 @@ function VoiceChannelViewInner() {
               </svg>
               <span className="wp-tune-in-title">{activeParty.itemTitle}</span>
               <button className="wp-tune-in-btn" onClick={() => setTunedIn(true)}>Tune In</button>
+            </div>
+          )}
+          {isConnected && linkedStudio && studioHidden && (
+            <div className="wp-tune-in-bar">
+              <span className="wp-tune-in-title">🎛️ {linkedStudio.name} is open in this call</span>
+              <button className="wp-tune-in-btn" onClick={() => setStudioHidden(false)}>Open Studio</button>
+            </div>
+          )}
+          {isConnected && !linkedStudio && studioChannels.length > 0 && (
+            <div className="voice-studio-open">
+              <select
+                className="studio-select"
+                value=""
+                onChange={(e) => { if (e.target.value) openStudio(e.target.value); }}
+                title="Work on a studio project together in this call"
+              >
+                <option value="">🎛️ Open a studio in this call…</option>
+                {studioChannels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
             </div>
           )}
           {isConnected && activeSharers.size > 0 && (

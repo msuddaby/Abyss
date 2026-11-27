@@ -7,7 +7,8 @@ public class HubRateLimiter
     private enum Category
     {
         Message, Edit, Reaction, Pin, Typing, Presence,
-        VoiceState, Streaming, WatchParty, Soundboard, Query, Navigation
+        VoiceState, Streaming, WatchParty, Soundboard, Query, Navigation,
+        StudioEdit, StudioPresence
     }
 
     private readonly record struct Limit(int MaxCount, TimeSpan Window);
@@ -26,6 +27,8 @@ public class HubRateLimiter
         [Category.Soundboard] = new(20,  TimeSpan.FromSeconds(5)),
         [Category.Query]      = new(100, TimeSpan.FromSeconds(10)),
         [Category.Navigation] = new(50, TimeSpan.FromSeconds(5)),
+        [Category.StudioEdit] = new(60, TimeSpan.FromSeconds(5)),
+        [Category.StudioPresence] = new(60, TimeSpan.FromSeconds(5)),
     };
 
     private static readonly Dictionary<string, Category> MethodCategories = new()
@@ -63,6 +66,14 @@ public class HubRateLimiter
         ["JoinChannel"]              = Category.Navigation,
         ["LeaveChannel"]             = Category.Navigation,
         ["JoinServerGroup"]          = Category.Navigation,
+        ["JoinStudio"]               = Category.Navigation,
+        ["LeaveStudio"]              = Category.Navigation,
+        ["StudioApplyOps"]           = Category.StudioEdit,
+        ["StudioTransport"]          = Category.StudioEdit,
+        ["OpenStudioInVoice"]        = Category.StudioEdit,
+        ["CloseStudioInVoice"]       = Category.StudioEdit,
+        ["StudioPresence"]           = Category.StudioPresence,
+        ["GetServerVoiceStudios"]    = Category.Query,
     };
 
     // Exempt methods that should never be rate-limited
@@ -75,7 +86,7 @@ public class HubRateLimiter
     // Silent categories — don't show error toasts (background actions)
     private static readonly HashSet<Category> SilentCategories = new()
     {
-        Category.Typing, Category.Presence
+        Category.Typing, Category.Presence, Category.StudioPresence
     };
 
     private readonly ConcurrentDictionary<string, SlidingWindow> _windows = new();

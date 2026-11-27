@@ -30,4 +30,6 @@ public enum Permission : long
     CreateForumTopic = 1L << 24,
     UploadToArchive = 1L << 25,
     ManageArchive = 1L << 26,
+    EditStudio = 1L << 27,
+    ManageStudio = 1L << 28,
 }

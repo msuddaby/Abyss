@@ -11,7 +11,7 @@ using Abyss.Api.Services;
 namespace Abyss.Api.Hubs;
 
 [Authorize]
-public class ChatHub : Hub
+public partial class ChatHub : Hub
 {
     private readonly AppDbContext _db;
     private readonly VoiceStateService _voiceState;
@@ -20,6 +20,7 @@ public class ChatHub : Hub
     private readonly WatchPartyService _watchPartyService;
     private readonly CosmeticService _cosmetics;
     private readonly HubRateLimiter _rateLimiter;
+    private readonly StudioSessionService _studio;
 
     private const int DefaultMaxMessageLength = 4000;
     private const int MaxMessageLengthUpperBound = 10000;
@@ -53,7 +54,7 @@ public class ChatHub : Hub
         public CancellationTokenSource Cancellation { get; } = new();
     }
 
-    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics, HubRateLimiter rateLimiter)
+    public ChatHub(AppDbContext db, VoiceStateService voiceState, PermissionService perms, NotificationService notifications, WatchPartyService watchPartyService, CosmeticService cosmetics, HubRateLimiter rateLimiter, StudioSessionService studio)
     {
         _db = db;
         _voiceState = voiceState;
@@ -62,6 +63,7 @@ public class ChatHub : Hub
         _watchPartyService = watchPartyService;
         _cosmetics = cosmetics;
         _rateLimiter = rateLimiter;
+        _studio = studio;
     }
 
     private string UserId => Context.User!.FindFirstValue(ClaimTypes.NameIdentifier)!;
@@ -367,6 +369,9 @@ public class ChatHub : Hub
             // Enqueue offline replay for deferred push delivery
             NotificationDispatchService.EnqueueOfflineReplay(UserId);
         }
+
+        // Studio presence is per-connection and independent of voice reconnection.
+        await HandleStudioDisconnect();
 
         // Leave voice if this was the voice connection (or user is fully offline).
         // Voice is tied to a specific connection (WebRTC peers), so clean up
@@ -1618,6 +1623,8 @@ public class ChatHub : Hub
     private async Task CleanupVoiceChatIfEmpty(Guid channelId)
     {
         if (!_voiceState.IsChannelEmpty(channelId)) return;
+
+        await CloseVoiceStudioLink(channelId);
 
         // Clean up watch party if channel is empty
         if (_watchPartyService.IsActive(channelId))

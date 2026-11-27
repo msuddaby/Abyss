@@ -164,3 +164,4 @@ public record UpdateArchiveItemRequest(string? Title, string? Description, Guid?
 public record SaveAttachmentToArchiveRequest(Guid? AlbumId, string? Title);
 public record GalleryItemDto(Guid AttachmentId, Guid MessageId, Guid ChannelId, string ChannelName, UserDto Author, string FileName, string FilePath, string? PosterPath, string ContentType, long Size, int? Width, int? Height, DateTime CreatedAt);
 public record GalleryPageDto(List<GalleryItemDto> Items, string? NextCursor);
+public record StudioAssetDto(Guid Id, string Name, string Url, double DurationSec, long FileSize, string UploadedById, DateTime CreatedAt);

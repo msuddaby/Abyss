@@ -30,9 +30,9 @@ interface ServerState {
   setActiveChannel: (channel: Channel | null) => void;
   createServer: (name: string) => Promise<Server>;
   updateServer: (serverId: string, data: { name?: string; icon?: UploadFile; removeIcon?: boolean; joinLeaveMessagesEnabled?: boolean; joinLeaveChannelId?: string | null }) => Promise<Server>;
-  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice' | 'RssFeed', userLimit?: number | null, rssFeedUrl?: string | null, rssRefreshIntervalMinutes?: number | null) => Promise<Channel>;
+  createChannel: (serverId: string, name: string, type: 'Text' | 'Voice' | 'RssFeed' | 'Studio', userLimit?: number | null, rssFeedUrl?: string | null, rssRefreshIntervalMinutes?: number | null) => Promise<Channel>;
   renameChannel: (serverId: string, channelId: string, name: string, persistentChat?: boolean, userLimit?: number | null, rssFeedUrl?: string | null, rssRefreshIntervalMinutes?: number | null) => Promise<Channel>;
-  reorderChannels: (serverId: string, type: 'Text' | 'Voice' | 'RssFeed', channelIds: string[]) => Promise<void>;
+  reorderChannels: (serverId: string, type: 'Text' | 'Voice' | 'RssFeed' | 'Studio', channelIds: string[]) => Promise<void>;
   joinServer: (code: string) => Promise<void>;
   fetchMembers: (serverId: string) => Promise<void>;
   fetchRoles: (serverId: string) => Promise<void>;

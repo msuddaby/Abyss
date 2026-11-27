@@ -144,6 +144,7 @@ builder.Services.AddDataProtection()
 builder.Services.AddSingleton<ProviderConfigProtector>();
 builder.Services.AddScoped<MediaProviderFactory>();
 builder.Services.AddSingleton<WatchPartyService>();
+builder.Services.AddSingleton<StudioSessionService>();
 builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddMemoryCache(opt => opt.SizeLimit = 2000); // ~2000 cached thumbnails
 builder.Services.AddHttpClient<PlexMediaProvider>();
@@ -225,6 +226,7 @@ builder.Services.AddHostedService<PresenceMonitorService>();
 
 // Periodic RSS feed refresher
 builder.Services.AddHostedService<RssFeedRefresher>();
+builder.Services.AddHostedService<StudioFlushService>();
 
 // Firebase Cloud Messaging for push notifications
 var firebaseCredEnv = Environment.GetEnvironmentVariable("FIREBASE_SERVICE_ACCOUNT_PATH");
@@ -398,6 +400,28 @@ app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(soundboardDir),
     RequestPath = "/uploads/soundboard",
+    OnPrepareResponse = ctx =>
+    {
+        ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+        var origin = ctx.Context.Request.Headers.Origin.FirstOrDefault();
+        if (origin != null && allowedOrigins.Contains(origin))
+        {
+            ctx.Context.Response.Headers["Access-Control-Allow-Origin"] = origin;
+        }
+    }
+});
+
+// Studio (DAW) audio assets — fetched + decoded by the Web Audio engine, so CORS matters.
+var studioDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "studio");
+Directory.CreateDirectory(studioDir);
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(studioDir),
+    RequestPath = "/uploads/studio",
+    ContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider
+    {
+        Mappings = { [".webm"] = "audio/webm", [".m4a"] = "audio/mp4", [".flac"] = "audio/flac" },
+    },
     OnPrepareResponse = ctx =>
     {
         ctx.Context.Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";

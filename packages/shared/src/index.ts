@@ -42,6 +42,7 @@ export { useRateLimitStore } from './stores/rateLimitStore.js';
 export { useRssFeedStore } from './stores/rssFeedStore.js';
 export { useXenForoStore } from './stores/xenForoStore.js';
 export { useArchiveStore } from './stores/archiveStore.js';
+export { useStudioStore } from './stores/studioStore.js';
 export type { ArchiveTab, ArchiveSort, ArchiveUpload } from './stores/archiveStore.js';
 
 // Hooks
@@ -63,3 +64,4 @@ export {
 } from './utils/soundboardFx.js';
 export type { SoundboardFx, SoundboardFxPreset } from './utils/soundboardFx.js';
 export { parseValidationErrors, getFieldError, getGeneralError, hasFieldError } from './utils/validation.js';
+export { applyOp, applyOps, invertOps, getAt, studioId, sortedTrackIds, beatsToSeconds, secondsToBeats, arrangementEnd } from './utils/studioOps.js';

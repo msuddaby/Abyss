@@ -20,6 +20,8 @@ import { useSoundboardStore } from '../stores/soundboardStore.js';
 import { useArchiveStore } from '../stores/archiveStore.js';
 import { useRateLimitStore } from '../stores/rateLimitStore.js';
 import { useRssFeedStore } from '../stores/rssFeedStore.js';
+import { useStudioStore } from '../stores/studioStore.js';
+import type { StudioOpsBroadcast, StudioPresence, StudioTransport, StudioAsset, StudioDoc } from '../types/studio.js';
 import type { RssFeedState } from '../types/index.js';
 import { showDesktopNotification, isElectron } from '../services/electronNotifications.js';
 import { getApiBase } from '../services/api.js';
@@ -209,6 +211,10 @@ export function fetchServerState(conn: SignalRConnection, serverId: string) {
     if (data) useServerStore.getState().setVoiceChannelWatchParties(data as Record<string, string>);
   });
 
+  delayedInvoke(conn, 300, 'GetServerVoiceStudios', serverId).then((data) => {
+    if (data) useStudioStore.getState().setVoiceLinks(data as Record<string, string>);
+  });
+
   delayedInvoke(conn, 300, 'GetOnlineUsers', serverId).then((data) => {
     if (!data) return;
     const typed = data as Record<string, number>;
@@ -307,6 +313,9 @@ export function useSignalRListeners() {
         'MediaProviderLinked', 'MediaProviderUnlinked',
         'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
         'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
+        'StudioOps', 'StudioPresence', 'StudioTransportChanged', 'StudioUserJoined', 'StudioUserLeft',
+        'StudioAssetAdded', 'StudioAssetRemoved', 'StudioReset',
+        'VoiceStudioOpened', 'VoiceStudioClosed', 'VoiceStudioLinkChanged',
       ];
       for (const e of events) conn.off(e);
 
@@ -796,6 +805,20 @@ export function useSignalRListeners() {
         useArchiveStore.getState().refreshCounts(serverId);
       });
 
+      // Studio (collaborative DAW)
+      const studio = () => useStudioStore.getState();
+      conn.on('StudioOps', (payload: StudioOpsBroadcast) => studio().receiveOps(payload));
+      conn.on('StudioPresence', (channelId: string, userId: string, presence: StudioPresence) => studio().receivePresence(channelId, userId, presence));
+      conn.on('StudioTransportChanged', (channelId: string, transport: StudioTransport) => studio().receiveTransport(channelId, transport));
+      conn.on('StudioUserJoined', (channelId: string, userId: string) => studio().receiveUserJoined(channelId, userId));
+      conn.on('StudioUserLeft', (channelId: string, userId: string) => studio().receiveUserLeft(channelId, userId));
+      conn.on('StudioAssetAdded', (channelId: string, asset: StudioAsset) => studio().receiveAssetAdded(channelId, asset));
+      conn.on('StudioAssetRemoved', (channelId: string, assetId: string) => studio().receiveAssetRemoved(channelId, assetId));
+      conn.on('StudioReset', (channelId: string, doc: StudioDoc, version: number) => studio().receiveReset(channelId, doc, version));
+      conn.on('VoiceStudioOpened', (voiceChannelId: string, studioChannelId: string) => studio().setVoiceLink(voiceChannelId, studioChannelId));
+      conn.on('VoiceStudioClosed', (voiceChannelId: string) => studio().setVoiceLink(voiceChannelId, null));
+      conn.on('VoiceStudioLinkChanged', (voiceChannelId: string, studioChannelId: string | null) => studio().setVoiceLink(voiceChannelId, studioChannelId));
+
       refreshSignalRState(conn);
       // Join the active channel group — the channel may have been restored
       // from localStorage before SignalR connected, so ChannelSidebar's
@@ -812,6 +835,8 @@ export function useSignalRListeners() {
       const conn = getConnection();
       rejoinActiveChannel(conn);
       refreshSignalRState(conn);
+      // Studio group membership is per-connection; rejoin and resync the doc.
+      void useStudioStore.getState().resync();
     });
   }, []);
 

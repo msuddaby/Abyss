@@ -5,6 +5,7 @@ import MessageInput from '../components/MessageInput';
 
 import VoiceChannelView from '../components/VoiceChannelView';
 import RssFeedChannelView from '../components/RssFeedChannelView';
+import StudioView from '../studio/StudioView';
 import TypingIndicator from '../components/TypingIndicator';
 import MemberList from '../components/MemberList';
 import SearchPanel from '../components/SearchPanel';
@@ -315,6 +316,15 @@ export default function MainLayout() {
               </div>
               <RssFeedChannelView />
             </>
+          ) : activeChannel.type === 'Studio' ? (
+            <div className="studio-channel-view">
+              <div className="channel-header">
+                {hamburgerButton}
+                <span className="channel-studio-icon" aria-hidden="true">🎛️</span>
+                <span className="channel-name">{activeChannel.name}</span>
+              </div>
+              <StudioView channelId={activeChannel.id} />
+            </div>
           ) : null
         ) : (
           <div className="no-channel">

@@ -41,6 +41,13 @@ const CHANNEL_PERM_SECTIONS = [
     ],
   },
   {
+    section: 'Studio',
+    perms: [
+      { key: 'EditStudio', label: 'Edit Studio', desc: 'Edit the studio project and upload or record audio', value: Permission.EditStudio },
+      { key: 'ManageStudio', label: 'Manage Studio', desc: "Delete anyone's studio audio and reset the project", value: Permission.ManageStudio },
+    ],
+  },
+  {
     section: 'Forum Bridge',
     perms: [
       { key: 'CreateForumTopic', label: 'Create Forum Topic', desc: 'Post a digest of channel messages as a XenForo thread', value: Permission.CreateForumTopic },

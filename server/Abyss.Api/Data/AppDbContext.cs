@@ -41,6 +41,8 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<ArchiveAlbum> ArchiveAlbums => Set<ArchiveAlbum>();
     public DbSet<ArchiveItem> ArchiveItems => Set<ArchiveItem>();
     public DbSet<MessageSplat> MessageSplats => Set<MessageSplat>();
+    public DbSet<StudioProject> StudioProjects => Set<StudioProject>();
+    public DbSet<StudioAsset> StudioAssets => Set<StudioAsset>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -442,6 +444,26 @@ public class AppDbContext : IdentityDbContext<AppUser>
 
         builder.Entity<XenForoPostMessage>()
             .HasIndex(x => new { x.ChannelId, x.XfPostId });
+
+        // Studio
+        builder.Entity<StudioProject>()
+            .HasOne(sp => sp.Channel)
+            .WithMany()
+            .HasForeignKey(sp => sp.ChannelId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<StudioProject>()
+            .HasIndex(sp => sp.ChannelId)
+            .IsUnique();
+        builder.Entity<StudioProject>()
+            .Property(sp => sp.DocJson)
+            .HasColumnType("jsonb");
+        builder.Entity<StudioAsset>()
+            .HasOne(sa => sa.Project)
+            .WithMany()
+            .HasForeignKey(sa => sa.ProjectId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<StudioAsset>()
+            .HasIndex(sa => new { sa.ProjectId, sa.CreatedAt });
 
         // WatchParty
         builder.Entity<WatchParty>()

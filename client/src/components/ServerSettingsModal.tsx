@@ -123,6 +123,13 @@ const PERMISSION_SECTIONS: { section: string; perms: { perm: number; label: stri
     ],
   },
   {
+    section: 'Studio',
+    perms: [
+      { perm: Permission.EditStudio, label: 'Edit Studio', description: 'Edit studio projects and upload or record audio' },
+      { perm: Permission.ManageStudio, label: 'Manage Studio', description: "Delete anyone's studio audio and reset studio projects" },
+    ],
+  },
+  {
     section: 'Forum Bridge',
     perms: [
       { perm: Permission.CreateForumTopic, label: 'Create Forum Topic', description: 'Post a digest of channel messages as a thread on the linked XenForo forum' },

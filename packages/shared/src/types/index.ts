@@ -161,7 +161,7 @@ export interface UserPreferences {
 export interface Channel {
   id: string;
   name: string;
-  type: "Text" | "Voice" | "RssFeed" | "XenForoMirror";
+  type: "Text" | "Voice" | "RssFeed" | "XenForoMirror" | "Studio";
   serverId: string;
   position: number;
   permissions?: number;
@@ -601,6 +601,8 @@ export const Permission = {
   CreateForumTopic: 1 << 24,
   UploadToArchive: 1 << 25,
   ManageArchive: 1 << 26,
+  EditStudio: 1 << 27,
+  ManageStudio: 1 << 28,
 } as const;
 
 export function hasPermission(member: ServerMember, perm: number): boolean {
@@ -703,3 +705,5 @@ export interface ArchiveStats {
 }
 
 export type ArchiveTypeFilter = 'all' | 'video' | 'image';
+
+export * from './studio.js';

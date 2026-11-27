@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useServerStore, useXenForoStore } from '@abyss/shared';
 
-type ChannelTypeValue = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror';
+type ChannelTypeValue = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror' | 'Studio';
 
 export default function EditChannelModal({
   channelId,

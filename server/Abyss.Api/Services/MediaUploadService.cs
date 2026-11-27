@@ -162,6 +162,59 @@ public class MediaUploadService
     }
 
     /// <summary>
+    /// Stores an audio asset for a Studio project under uploads/studio. Duration
+    /// comes from TagLib when available; WebM recordings from MediaRecorder carry
+    /// no duration header, so the client-decoded duration is used as a fallback.
+    /// </summary>
+    public async Task<(bool IsValid, string? ErrorMessage, string? Url, double Duration)> StoreStudioAudioAsync(IFormFile file, double clientDurationSec)
+    {
+        var options = new MediaValidator.MediaValidationOptions(
+            MaxSize: _mediaConfig.StudioAssetMaxSize,
+            AllowedExtensions: _mediaConfig.StudioAllowedExtensions,
+            AllowedMimeTypes: _mediaConfig.StudioAllowedMimeTypes,
+            RequireExtension: true,
+            CategoryLabel: "audio file"
+        );
+
+        var validation = await _mediaValidator.ValidateUploadAsync(file, options);
+        if (!validation.IsValid)
+            return (false, validation.ErrorMessage, null, 0);
+
+        await using var memoryStream = new MemoryStream();
+        await file.CopyToAsync(memoryStream);
+        memoryStream.Position = 0;
+
+        double duration = 0;
+        try
+        {
+            var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
+            using var tagFile = TagLib.File.Create(abstraction);
+            duration = tagFile.Properties.Duration.TotalSeconds;
+        }
+        catch
+        {
+            // Unreadable headers are fine for WebM recordings; fall back below.
+        }
+        if (duration <= 0 || double.IsNaN(duration))
+            duration = clientDurationSec;
+        if (duration <= 0 || double.IsNaN(duration) || double.IsInfinity(duration))
+            return (false, "Could not determine audio duration.", null, 0);
+        if (duration > _mediaConfig.StudioAssetMaxDurationSeconds)
+            return (false, $"Audio must be {_mediaConfig.StudioAssetMaxDurationSeconds / 60:0} minutes or shorter", null, 0);
+
+        var dir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "studio");
+        Directory.CreateDirectory(dir);
+        var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName).ToLowerInvariant()}";
+        memoryStream.Position = 0;
+        await using (var fs = new FileStream(Path.Combine(dir, fileName), FileMode.Create))
+        {
+            await memoryStream.CopyToAsync(fs);
+        }
+
+        return (true, null, $"/uploads/studio/{fileName}", duration);
+    }
+
+    /// <summary>
     /// TagLib file abstraction that reads from a Stream.
     /// </summary>
     private class StreamFileAbstraction : TagLib.File.IFileAbstraction

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useServerStore, useXenForoStore, parseValidationErrors, getGeneralError } from '@abyss/shared';
 import FormField from './FormField';
 
-type ChannelTypeOption = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror';
+type ChannelTypeOption = 'Text' | 'Voice' | 'RssFeed' | 'XenForoMirror' | 'Studio';
 
 export default function CreateChannelModal({ serverId, onClose }: { serverId: string; onClose: () => void }) {
   const [name, setName] = useState('');
@@ -107,6 +107,13 @@ export default function CreateChannelModal({ serverId, onClose }: { serverId: st
                 onClick={() => setType('XenForoMirror')}
               >
                 💬 Forum Mirror
+              </button>
+              <button
+                type="button"
+                className={`type-option ${type === 'Studio' ? 'active' : ''}`}
+                onClick={() => setType('Studio')}
+              >
+                🎛️ Studio
               </button>
             </div>
           </label>

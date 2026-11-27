@@ -130,6 +130,35 @@ public class MediaConfig
     };
 
     /// <summary>
+    /// Studio (DAW) audio asset limits. Larger than soundboard sounds and also
+    /// accepts WebM/Opus, which is what MediaRecorder produces in Chromium.
+    /// </summary>
+    public long StudioAssetMaxSize => MaxSizesByCategory["audio"];
+    public double StudioAssetMaxDurationSeconds { get; } = 30 * 60;
+    public HashSet<string> StudioAllowedMimeTypes { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "audio/mpeg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/ogg",
+        "audio/flac",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/webm",
+        "video/webm",
+    };
+    public HashSet<string> StudioAllowedExtensions { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3",
+        ".wav",
+        ".ogg",
+        ".flac",
+        ".m4a",
+        ".webm",
+    };
+
+    /// <summary>
     /// Profile avatar upload limit.
     /// </summary>
     public long AvatarMaxSize { get; } = 5 * 1024 * 1024; // 5MB

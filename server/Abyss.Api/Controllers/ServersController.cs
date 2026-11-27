@@ -24,9 +24,11 @@ public class ServersController : ControllerBase
     private readonly CosmeticService _cosmeticService;
     private readonly RssFeedService _rss;
     private readonly MediaConfig _mediaConfig;
+    private readonly StudioSessionService _studio;
 
-    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService, RssFeedService rss, MediaConfig mediaConfig)
+    public ServersController(AppDbContext db, PermissionService perms, IHubContext<ChatHub> hub, ImageService imageService, SystemMessageService systemMessages, CosmeticService cosmeticService, RssFeedService rss, MediaConfig mediaConfig, StudioSessionService studio)
     {
+        _studio = studio;
         _mediaConfig = mediaConfig;
         _db = db;
         _perms = perms;
@@ -81,7 +83,8 @@ public class ServersController : ControllerBase
                 Permission.Speak |
                 Permission.Stream |
                 Permission.AddToWatchTogether |
-                Permission.UploadToArchive),
+                Permission.UploadToArchive |
+                Permission.EditStudio),
             Position = 0,
             IsDefault = true,
             DisplaySeparately = false,
@@ -255,6 +258,15 @@ public class ServersController : ControllerBase
             RssRefreshIntervalMinutes = channelType == ChannelType.RssFeed ? (req.RssRefreshIntervalMinutes ?? 30) : null,
         };
         _db.Channels.Add(channel);
+        if (channelType == ChannelType.Studio)
+        {
+            _db.StudioProjects.Add(new StudioProject
+            {
+                Id = Guid.NewGuid(),
+                ChannelId = channel.Id,
+                DocJson = StudioSessionService.CreateDefaultDoc().ToJsonString(),
+            });
+        }
         await _db.SaveChangesAsync();
 
         await _perms.LogAsync(serverId, AuditAction.ChannelCreated, UserId,
@@ -611,6 +623,13 @@ public class ServersController : ControllerBase
 
         if (channel.Type == ChannelType.RssFeed)
             _rss.Invalidate(channelId);
+
+        if (channel.Type == ChannelType.Studio)
+        {
+            foreach (var voiceId in _studio.UnlinkStudio(channelId))
+                await _hub.Clients.Group($"voice:{voiceId}").SendAsync("VoiceStudioClosed", voiceId.ToString());
+            _studio.Discard(channelId);
+        }
 
         await _perms.LogAsync(serverId, AuditAction.ChannelDeleted, UserId,
             targetName: $"#{channel.Name}", details: channel.Type.ToString());

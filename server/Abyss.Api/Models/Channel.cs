@@ -8,7 +8,8 @@ public enum ChannelType
     Voice,
     DM,
     RssFeed,
-    XenForoMirror
+    XenForoMirror,
+    Studio
 }
 
 public class Channel
