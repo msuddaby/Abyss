@@ -4,6 +4,7 @@ import { api, useStudioStore, useAuthStore, useToastStore } from '@abyss/shared'
 import ConfirmModal from '../components/ConfirmModal';
 import type { StudioAsset } from '@abyss/shared';
 import { assetUrl } from './engine/assetCache';
+import { isSoundFontAsset } from './engine/soundfont';
 import { ASSET_DRAG_TYPE } from './StudioArrange';
 import { formatDuration, memberName, uploadAudioFiles } from './studioUtils';
 
@@ -119,11 +120,11 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
         {editable && (
           <>
             {assets.length > 0 && <button className="studio-btn small" onClick={() => void cleanup()} title="Delete audio files nothing uses">Clean up…</button>}
-            <button className="studio-btn small" onClick={() => fileRef.current?.click()}>Upload audio</button>
+            <button className="studio-btn small" onClick={() => fileRef.current?.click()}>Upload audio / SF2</button>
             <input
               ref={fileRef}
               type="file"
-              accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.webm"
+              accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.webm,.sf2"
               multiple
               hidden
               onChange={(e) => { void upload(Array.from(e.target.files ?? [])); e.target.value = ''; }}
@@ -140,36 +141,47 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
         ))}
         {assets.length === 0 && Object.keys(uploads).length === 0 && (
           <div className="studio-asset-empty">
-            {editable ? 'Drop audio files here or upload them, then drag onto an audio track.' : 'No audio in this project yet.'}
+            {editable ? 'Drop audio or SoundFont (.sf2) files here, then drag onto a track or use in MIDI import.' : 'No audio or SoundFonts in this project yet.'}
           </div>
         )}
-        {assets.map((a) => (
-          <div
-            key={a.id}
-            className="studio-asset"
-            draggable={editable}
-            onDragStart={(e) => {
-              e.dataTransfer.setData(ASSET_DRAG_TYPE, a.id);
-              e.dataTransfer.effectAllowed = 'copy';
-            }}
-            title={`Uploaded by ${memberName(a.uploadedById)}`}
-          >
-            <button className="studio-icon-btn" onClick={() => togglePreview(a)} title="Preview">{playing === a.id ? '■' : '▶'}</button>
-            <span className="studio-asset-name">{a.name}</span>
-            <span className="studio-muted">{formatDuration(a.durationSec)}</span>
-            {usage.get(a.id) ? <span className="studio-asset-uses" title="Clips using this audio">×{usage.get(a.id)}</span> : null}
-            {editable && (
-              <button className="studio-icon-btn" onClick={() => onAddToTimeline(a)} title="Add at playhead">＋</button>
-            )}
-            {editable && (
-              <button className="studio-icon-btn" onClick={() => onMakeSampler(a)} title="New sampler track playing this sound">🎹</button>
-            )}
-            {inInstrument(a.id) && <span className="studio-asset-uses" title="Used by a sampler or drum pad">🎹</span>}
-            {(a.uploadedById === myId || canManage) && !usage.get(a.id) && !inInstrument(a.id) && (
-              <button className="studio-icon-btn danger" onClick={() => void remove(a)} title="Delete">🗑</button>
-            )}
-          </div>
-        ))}
+        {assets.map((a) => {
+          const sf = isSoundFontAsset(a);
+          return (
+            <div
+              key={a.id}
+              className="studio-asset"
+              draggable={editable}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(ASSET_DRAG_TYPE, a.id);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+              title={`Uploaded by ${memberName(a.uploadedById)}`}
+            >
+              {sf ? (
+                <span className="studio-asset-sf-badge" title="SoundFont (.sf2)">SF2</span>
+              ) : (
+                <button className="studio-icon-btn" onClick={() => togglePreview(a)} title="Preview">{playing === a.id ? '■' : '▶'}</button>
+              )}
+              <span className="studio-asset-name">{a.name}</span>
+              <span className="studio-muted">{sf ? `${(a.fileSize / (1024 * 1024)).toFixed(1)} MB` : formatDuration(a.durationSec)}</span>
+              {usage.get(a.id) ? <span className="studio-asset-uses" title="Clips using this audio">×{usage.get(a.id)}</span> : null}
+              {editable && !sf && (
+                <button className="studio-icon-btn" onClick={() => onAddToTimeline(a)} title="Add at playhead">＋</button>
+              )}
+              {editable && (
+                <button
+                  className="studio-icon-btn"
+                  onClick={() => onMakeSampler(a)}
+                  title={sf ? 'New SoundFont track using this .sf2' : 'New sampler track playing this sound'}
+                >🎹</button>
+              )}
+              {inInstrument(a.id) && <span className="studio-asset-uses" title={sf ? 'Used by a SoundFont track' : 'Used by a sampler or drum pad'}>🎹</span>}
+              {(a.uploadedById === myId || canManage) && !usage.get(a.id) && !inInstrument(a.id) && (
+                <button className="studio-icon-btn danger" onClick={() => void remove(a)} title="Delete">🗑</button>
+              )}
+            </div>
+          );
+        })}
       </div>
       {confirm && (
         <ConfirmModal

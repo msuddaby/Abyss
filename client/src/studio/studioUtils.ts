@@ -1,6 +1,7 @@
 import { useServerStore, useStudioStore, useToastStore, studioId, tempoMap, barAt } from '@abyss/shared';
 import type { StudioAsset, StudioDoc, StudioClip, StudioMeta, StudioOp } from '@abyss/shared';
 import { decodeBlob, putBuffer } from './engine/assetCache';
+import { isSoundFontFile, parseSoundFont, putSoundFont } from './engine/soundfont';
 import { clipSrcSeconds, assetBeatsAt } from './engine/routing';
 
 /** Track header width; narrower on phones (matches --studio-header-w in App.css). */
@@ -141,6 +142,13 @@ export async function uploadAudioFiles(files: File[], onProgress?: (name: string
   const out: StudioAsset[] = [];
   for (const file of files) {
     try {
+      if (isSoundFontFile(file)) {
+        const parsed = parseSoundFont(await file.arrayBuffer());
+        const asset = await useStudioStore.getState().uploadAsset(file, file.name, 0, (pct) => onProgress?.(file.name, pct));
+        putSoundFont(asset.id, parsed);
+        out.push(asset);
+        continue;
+      }
       const buffer = await decodeBlob(await file.arrayBuffer());
       const asset = await useStudioStore.getState().uploadAsset(file, file.name, buffer.duration, (pct) => onProgress?.(file.name, pct));
       putBuffer(asset.id, buffer);
@@ -148,7 +156,7 @@ export async function uploadAudioFiles(files: File[], onProgress?: (name: string
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: unknown } })?.response?.data;
       useToastStore.getState().addToast(
-        typeof msg === 'string' ? msg : `Couldn't add ${file.name} — is it an audio file?`,
+        typeof msg === 'string' ? msg : `Couldn't add ${file.name} — is it an audio or SoundFont (.sf2) file?`,
         'error',
       );
     }

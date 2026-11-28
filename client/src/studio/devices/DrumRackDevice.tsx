@@ -3,6 +3,7 @@ import { useStudioStore } from '@abyss/shared';
 import type { StudioParams } from '@abyss/shared';
 import type { StudioEngine } from '../engine/StudioEngine';
 import { DRUM_PADS, PAD_DEFAULTS, padKey, padParam, kitChoke, type PadKey } from '../engine/drumRack';
+import { isSoundFontAsset } from '../engine/soundfont';
 import Knob from './Knob';
 import { Scope } from './SynthDevice';
 
@@ -99,7 +100,7 @@ export default function DrumRackDevice({ trackId, params, editable, engine, colo
           <span>Source</span>
           <select className="studio-select" value={sample} disabled={!editable} onChange={(e) => commit(padSet('sample', e.target.value))}>
             <option value="">Built-in {pad.name.toLowerCase()}</option>
-            {assets.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {assets.filter((a) => !isSoundFontAsset(a)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </label>
         <div className="studio-device-knobs">

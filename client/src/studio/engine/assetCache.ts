@@ -59,11 +59,16 @@ export function loadAsset(assetId: string, url: string): Promise<AudioBuffer> {
   return promise;
 }
 
+/** Notify listeners that an asset (audio or SoundFont) finished loading. */
+export function notifyAssetLoaded(assetId: string) {
+  for (const cb of listeners) cb(assetId);
+}
+
 /** Seed the cache with a buffer we already decoded (e.g. a fresh recording). */
 export function putBuffer(assetId: string, buffer: AudioBuffer) {
   buffers.set(assetId, buffer);
   peaks.set(assetId, computePeaks(buffer));
-  for (const cb of listeners) cb(assetId);
+  notifyAssetLoaded(assetId);
 }
 
 function computePeaks(buffer: AudioBuffer): Peaks {

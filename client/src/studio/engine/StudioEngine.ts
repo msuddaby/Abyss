@@ -1,10 +1,11 @@
 import * as Tone from 'tone';
 import { tempoMap, bpmAt, spanSec, type TempoMap } from '@abyss/shared';
 import type { StudioDoc, StudioTrack, StudioClip, StudioParams, StudioEffect } from '@abyss/shared';
-import { createInstrument, samplerAssetId, LIVE_UPDATE_TYPES, type PlayableInstrument } from './instruments';
+import { createInstrument, samplerAssetId, soundfontAssetId, LIVE_UPDATE_TYPES, type PlayableInstrument } from './instruments';
 import { ensureSynthWorklet, isSynthReady } from './wavetable/synthNode';
 import { EFFECT_DEFS, resolveParams, buildDevice, type FxDevice, type Resolved } from './effects';
 import { getBuffer } from './assetCache';
+import { getSoundFont } from './soundfont';
 import { valueAt } from './automationMath';
 import { resolveOutput, audibleUnderSolo, isReturnOnlySolo, isSidechainCycle, clipPlayback } from './routing';
 
@@ -291,10 +292,12 @@ export class StudioEngine {
     if (track.kind === 'instrument') {
       const inst = track.instrument ?? { type: 'synth' as const };
       const sample = samplerAssetId(inst);
+      const sf = soundfontAssetId(inst);
       const live = LIVE_UPDATE_TYPES.has(inst.type);
       const paramsKey = JSON.stringify(inst.params ?? {});
       const typeKey = inst.type
         + (sample ? `|${sample}|${!!getBuffer(sample)}` : '')
+        + (sf ? `|${sf}|${!!getSoundFont(sf)}` : '')
         + (inst.type === 'synth' ? `|${isSynthReady()}` : '')
         + (live ? '' : `|${paramsKey}`);
       if (typeKey !== node.instKey) {

@@ -3,6 +3,7 @@ import { arrangementEnd, tempoMap, beatToSec } from '@abyss/shared';
 import type { StudioDoc, StudioAsset, StudioTrack } from '@abyss/shared';
 import { StudioEngine } from './StudioEngine';
 import { loadAsset } from './assetCache';
+import { isSoundFontAsset, loadSoundFont } from './soundfont';
 import { usedAssetIds } from './instruments';
 import { ensureSynthWorklet } from './wavetable/synthNode';
 import { ancestors } from './routing';
@@ -10,9 +11,11 @@ import { zipStore } from './zip';
 
 /** Renders `doc` offline from beat 0 to `endBeats` (+ tail) and returns the buffer. */
 export async function renderDoc(doc: StudioDoc, assets: StudioAsset[], opts: { endBeats?: number; tailSec?: number; sampleRate?: number } = {}): Promise<AudioBuffer> {
-  // Make sure every referenced asset is decoded before entering the offline context.
+  // Make sure every referenced asset (audio or SoundFont) is loaded before entering the offline context.
   const used = usedAssetIds(doc);
-  await Promise.all(assets.filter((a) => used.has(a.id)).map((a) => loadAsset(a.id, a.url).catch(() => null)));
+  await Promise.all(assets.filter((a) => used.has(a.id)).map((a) => (
+    isSoundFontAsset(a) ? loadSoundFont(a.id, a.url).catch(() => null) : loadAsset(a.id, a.url).catch(() => null)
+  )));
 
   const endBeats = opts.endBeats ?? arrangementEnd(doc, 1);
   const duration = beatToSec(tempoMap(doc), endBeats) + (opts.tailSec ?? 2);

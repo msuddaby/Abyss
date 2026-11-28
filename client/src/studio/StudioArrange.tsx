@@ -1,4 +1,5 @@
 import { isMidiFile } from './midiImport';
+import { isSoundFontAsset, isSoundFontFile } from './engine/soundfont';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStudioStore, useToastStore, studioId, tempoMap, barsIn } from '@abyss/shared';
 import type { StudioDoc, StudioClip, StudioOp, StudioPresence } from '@abyss/shared';
@@ -307,11 +308,11 @@ export default function StudioArrange(props: Props) {
     const assetId = e.dataTransfer.getData(ASSET_DRAG_TYPE);
     if (assetId) {
       const asset = assets.find((a) => a.id === assetId);
-      if (asset) edit([audioClipOp(asset, trackId, at, doc)]);
+      if (asset && !isSoundFontAsset(asset)) edit([audioClipOp(asset, trackId, at, doc)]);
       return;
     }
-    // MIDI files bubble up to the studio view, which imports them.
-    const files = Array.from(e.dataTransfer.files).filter((f) => !isMidiFile(f));
+    // MIDI and SoundFont files bubble up to the studio view.
+    const files = Array.from(e.dataTransfer.files).filter((f) => !isMidiFile(f) && !isSoundFontFile(f));
     if (!files.length) return;
     const created = await uploadAudioFiles(files);
     const latest = useStudioStore.getState().doc ?? doc;

@@ -180,31 +180,39 @@ public class MediaUploadService
         if (!validation.IsValid)
             return (false, validation.ErrorMessage, null, 0);
 
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var isSoundFont = ext == ".sf2" || validation.DetectedMimeType == "audio/x-soundfont";
+        if (isSoundFont && validation.DetectedMimeType != "audio/x-soundfont")
+            return (false, "File is not a valid SoundFont (.sf2).", null, 0);
+
         await using var memoryStream = new MemoryStream();
         await file.CopyToAsync(memoryStream);
         memoryStream.Position = 0;
 
         double duration = 0;
-        try
+        if (!isSoundFont)
         {
-            var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
-            using var tagFile = TagLib.File.Create(abstraction);
-            duration = tagFile.Properties.Duration.TotalSeconds;
+            try
+            {
+                var abstraction = new StreamFileAbstraction(file.FileName, memoryStream);
+                using var tagFile = TagLib.File.Create(abstraction);
+                duration = tagFile.Properties.Duration.TotalSeconds;
+            }
+            catch
+            {
+                // Unreadable headers are fine for WebM recordings; fall back below.
+            }
+            if (duration <= 0 || double.IsNaN(duration))
+                duration = clientDurationSec;
+            if (duration <= 0 || double.IsNaN(duration) || double.IsInfinity(duration))
+                return (false, "Could not determine audio duration.", null, 0);
+            if (duration > _mediaConfig.StudioAssetMaxDurationSeconds)
+                return (false, $"Audio must be {_mediaConfig.StudioAssetMaxDurationSeconds / 60:0} minutes or shorter", null, 0);
         }
-        catch
-        {
-            // Unreadable headers are fine for WebM recordings; fall back below.
-        }
-        if (duration <= 0 || double.IsNaN(duration))
-            duration = clientDurationSec;
-        if (duration <= 0 || double.IsNaN(duration) || double.IsInfinity(duration))
-            return (false, "Could not determine audio duration.", null, 0);
-        if (duration > _mediaConfig.StudioAssetMaxDurationSeconds)
-            return (false, $"Audio must be {_mediaConfig.StudioAssetMaxDurationSeconds / 60:0} minutes or shorter", null, 0);
 
         var dir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "studio");
         Directory.CreateDirectory(dir);
-        var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName).ToLowerInvariant()}";
+        var fileName = $"{Guid.NewGuid()}{ext}";
         memoryStream.Position = 0;
         await using (var fs = new FileStream(Path.Combine(dir, fileName), FileMode.Create))
         {

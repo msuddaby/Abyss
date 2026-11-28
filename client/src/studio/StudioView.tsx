@@ -8,6 +8,7 @@ import type { StudioOp, StudioClip, StudioAsset, StudioParams, StudioTrack } fro
 import ConfirmModal from '../components/ConfirmModal';
 import { StudioEngine, MASTER_ID } from './engine/StudioEngine';
 import { loadAsset, onAssetLoaded } from './engine/assetCache';
+import { getSoundFont, isSoundFontAsset, isSoundFontFile, loadSoundFont } from './engine/soundfont';
 import { renderProjectToWav, renderStemsZip } from './engine/exportWav';
 import { EFFECT_DEFS } from './engine/effects';
 import { exportMidi } from './midiExport';
@@ -31,7 +32,7 @@ import { parseMidi, midiImportOps, batchOps, isMidiFile, type MidiFileInfo } fro
 import { useStudioRecorder, getRecordLatencyMs, setRecordLatencyMs } from './useStudioRecorder';
 import {
   SNAP_OPTIONS, snapSize, formatPosition, barBeats, nextTrackOrder, nextTrackColor,
-  keyBelongsToTarget, colorForUser, audioClipOp, sliceClip, memberName, clipFitsTrack, barFloor, syncHeaderWidth,
+  keyBelongsToTarget, colorForUser, audioClipOp, sliceClip, memberName, clipFitsTrack, barFloor, syncHeaderWidth, uploadAudioFiles,
 } from './studioUtils';
 
 const MAX_TRACKS = 48;
@@ -220,7 +221,9 @@ export default function StudioView({ channelId, compact }: Props) {
     if (!doc) return;
     const used = usedAssetIds(doc);
     for (const a of assets) {
-      if (used.has(a.id)) loadAsset(a.id, a.url).catch((e) => console.warn('[studio] asset load failed', a.name, e));
+      if (!used.has(a.id)) continue;
+      if (isSoundFontAsset(a)) loadSoundFont(a.id, a.url).catch((e) => console.warn('[studio] soundfont load failed', a.name, e));
+      else loadAsset(a.id, a.url).catch((e) => console.warn('[studio] asset load failed', a.name, e));
     }
   }, [doc, assets]);
 
@@ -427,12 +430,12 @@ export default function StudioView({ channelId, compact }: Props) {
   const trackIds = useMemo(() => (doc ? sortedTrackIds(doc) : []), [doc]);
   const grid = doc ? snapSize(snap, doc.meta) : 1;
 
-  const addTrack = (kind: StudioTrack['kind'], instrument?: 'synth' | 'drums' | 'bass' | 'sampler', params?: StudioParams, name?: string) => {
+  const addTrack = (kind: StudioTrack['kind'], instrument?: 'synth' | 'drums' | 'bass' | 'sampler' | 'soundfont', params?: StudioParams, name?: string) => {
     if (!doc) return;
     if (Object.keys(doc.tracks).length >= MAX_TRACKS) { useToastStore.getState().addToast(`A project can have up to ${MAX_TRACKS} tracks.`, 'info'); return; }
     const id = studioId();
     const count = Object.values(doc.tracks).filter((t) => t.kind === kind).length + 1;
-    const label = kind === 'audio' ? 'Audio' : kind === 'group' ? 'Group' : instrument === 'drums' ? 'Drums' : instrument === 'bass' ? 'Bass' : instrument === 'sampler' ? 'Sampler' : 'Synth';
+    const label = kind === 'audio' ? 'Audio' : kind === 'group' ? 'Group' : instrument === 'drums' ? 'Drums' : instrument === 'bass' ? 'Bass' : instrument === 'sampler' ? 'Sampler' : instrument === 'soundfont' ? 'SoundFont' : 'Synth';
     const trackName = (name ?? (kind === 'return' ? `${String.fromCharCode(64 + Math.min(26, count))}-Return` : `${label} ${count}`)).slice(0, 40);
     const ops: StudioOp[] = [];
     let order = nextTrackOrder(doc);
@@ -474,22 +477,36 @@ export default function StudioView({ channelId, compact }: Props) {
     }
   };
 
-  const runMidiImport = (keys: string[], opts: { tempo: boolean; timeSig: boolean; atStart: boolean }) => {
+  const runMidiImport = async (keys: string[], opts: { tempo: boolean; timeSig: boolean; atStart: boolean; soundfontId?: string }) => {
     if (!doc || !midiImport) return;
     const { info } = midiImport;
     const parts = info.parts.filter((p) => keys.includes(p.key));
-    const meta = { ...doc.meta, ...(opts.timeSig && info.timeSig ? { timeSigNum: info.timeSig.num, timeSigDen: info.timeSig.den } : {}) };
+    let soundfont: { assetId: string; sf: NonNullable<ReturnType<typeof getSoundFont>> } | undefined;
+    if (opts.soundfontId) {
+      const sfAsset = useStudioStore.getState().assets.find((a) => a.id === opts.soundfontId);
+      if (sfAsset) {
+        try {
+          const sf = getSoundFont(sfAsset.id) ?? await loadSoundFont(sfAsset.id, sfAsset.url);
+          soundfont = { assetId: sfAsset.id, sf };
+        } catch {
+          useToastStore.getState().addToast(`Couldn't load SoundFont ${sfAsset.name}; importing with built-in synths.`, 'error');
+        }
+      }
+    }
+    const latestDoc = useStudioStore.getState().doc ?? doc;
+    const meta = { ...latestDoc.meta, ...(opts.timeSig && info.timeSig ? { timeSigNum: info.timeSig.num, timeSigDen: info.timeSig.den } : {}) };
     const bar = barBeats(meta);
-    const at = opts.atStart ? 0 : opts.timeSig && info.timeSig ? Math.floor(playhead / bar) * bar : barFloor(doc, playhead);
-    const { ops, trackIds: added } = midiImportOps(doc, parts, at, {
+    const at = opts.atStart ? 0 : opts.timeSig && info.timeSig ? Math.floor(playhead / bar) * bar : barFloor(latestDoc, playhead);
+    const { ops, trackIds: added } = midiImportOps(latestDoc, parts, at, {
       bpm: opts.tempo && info.bpm ? info.bpm : undefined,
       timeSig: opts.timeSig && info.timeSig ? info.timeSig : undefined,
+      soundfont,
     });
     // Big files go out in several messages (each is its own undo step).
     for (const batch of batchOps(ops)) edit(batch);
     setMidiImport(null);
     if (added[0]) setSelectedTrackId(added[0]);
-    const n = parts.reduce((a, p) => a + p.notes.length, 0);
+    const n = parts.reduce((a, p) => a + (soundfont && p.rawNotes?.length ? p.rawNotes.length : p.notes.length), 0);
     useToastStore.getState().addToast(`Imported ${parts.length} track${parts.length === 1 ? '' : 's'} (${n} notes).`, 'success');
   };
 
@@ -498,10 +515,25 @@ export default function StudioView({ channelId, compact }: Props) {
   };
   const onViewDrop = (e: React.DragEvent) => {
     if (!editable) return;
-    const midi = Array.from(e.dataTransfer.files).find(isMidiFile);
-    if (!midi) return;
-    e.preventDefault();
-    void openMidiFile(midi);
+    const files = Array.from(e.dataTransfer.files);
+    const midi = files.find(isMidiFile);
+    if (midi) {
+      e.preventDefault();
+      void openMidiFile(midi);
+      return;
+    }
+    const sfFiles = files.filter(isSoundFontFile);
+    if (sfFiles.length) {
+      e.preventDefault();
+      void uploadAudioFiles(sfFiles).then((added) => {
+        if (added.length) {
+          useToastStore.getState().addToast(
+            `Uploaded SoundFont ${added.map((a) => a.name).join(', ')} — select SoundFont on a track or import a MIDI file.`,
+            'success',
+          );
+        }
+      });
+    }
   };
 
   const deleteSelected = useCallback(() => {
@@ -1154,7 +1186,13 @@ export default function StudioView({ channelId, compact }: Props) {
                 canManage={canManage}
                 onAddToTimeline={addAssetAtPlayhead}
                 onMakeSampler={(a) => {
-                  addTrack('instrument', 'sampler', { assetId: a.id, root: 60, mode: a.durationSec < 1.5 ? 'oneshot' : 'classic' }, a.name);
+                  if (isSoundFontAsset(a)) {
+                    const sf = getSoundFont(a.id);
+                    const first = sf?.presets[0];
+                    addTrack('instrument', 'soundfont', { assetId: a.id, bank: first?.bank ?? 0, program: first?.program ?? 0 }, a.name);
+                  } else {
+                    addTrack('instrument', 'sampler', { assetId: a.id, root: 60, mode: a.durationSec < 1.5 ? 'oneshot' : 'classic' }, a.name);
+                  }
                   setPanel('track');
                   setPanelOpen(true);
                 }}

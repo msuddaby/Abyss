@@ -3,6 +3,7 @@ import type { StudioTrack, StudioDoc } from '@abyss/shared';
 import { EFFECT_DEFS, resolveParams, EQ_BANDS, bandKey, formatParam, type ParamUnit } from './engine/effects';
 import { resolveSynthParams } from './engine/wavetable/synthParams';
 import { resolveClassic, CLASSIC_TYPES, type ClassicType } from './engine/instruments';
+import { SOUNDFONT_DEFAULTS } from './engine/soundfont';
 
 // Automation lanes: what can be automated on a track, how values map to the
 // lane's height, and the recorder that turns live knob moves into points.
@@ -94,6 +95,15 @@ export function laneDefs(track: StudioTrack, doc?: StudioDoc | null): LaneDef[] 
     const t = instType as ClassicType;
     const p = resolveClassic(t, track.instrument?.params);
     for (const l of CLASSIC_LANES[t]) out.push({ ...l, key: `inst:${l.key}`, group: 'Instrument', base: Number(p[l.key]) });
+  }
+  if (track.kind === 'instrument' && instType === 'soundfont') {
+    const p = track.instrument?.params;
+    const val = (k: keyof typeof SOUNDFONT_DEFAULTS) => (typeof p?.[k] === 'number' ? (p[k] as number) : SOUNDFONT_DEFAULTS[k]);
+    out.push(
+      { key: 'inst:cutoff', label: 'Filter Cutoff', group: 'SoundFont', min: 40, max: 20000, log: true, unit: 'Hz', base: val('cutoff') },
+      { key: 'inst:res', label: 'Filter Res', group: 'SoundFont', min: 0.1, max: 18, log: true, unit: '', base: val('res') },
+      { key: 'inst:volume', label: 'SoundFont Volume', group: 'SoundFont', min: -36, max: 12, unit: 'dB', base: val('volume') },
+    );
   }
   if (doc && track.kind !== 'return') {
     for (const [rid, rt] of Object.entries(doc.tracks)) {

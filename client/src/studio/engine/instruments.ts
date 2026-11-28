@@ -3,6 +3,7 @@ import type { StudioDoc, StudioInstrument, StudioInstrumentType, StudioParams } 
 import { getBuffer } from './assetCache';
 import { createWavetableSynth } from './wavetable/synthNode';
 import { createDrumRack, DRUM_PADS, drumSampleIds } from './drumRack';
+import { createSoundFontInstrument } from './soundfont';
 
 // Built-in instruments and effects. Everything here is constructed against the
 // *current* Tone context so the same factories work for offline export.
@@ -29,7 +30,7 @@ export interface PlayableInstrument {
 }
 
 /** Instrument types that take param changes live via update(). */
-export const LIVE_UPDATE_TYPES = new Set<StudioInstrumentType>(['synth', 'fm', 'am', 'mono', 'pluck', 'bass', 'drums']);
+export const LIVE_UPDATE_TYPES = new Set<StudioInstrumentType>(['synth', 'fm', 'am', 'mono', 'pluck', 'bass', 'drums', 'soundfont']);
 
 export const INSTRUMENT_LABELS: Record<StudioInstrumentType, string> = {
   synth: 'Wavetable',
@@ -40,6 +41,7 @@ export const INSTRUMENT_LABELS: Record<StudioInstrumentType, string> = {
   bass: 'Bass',
   drums: 'Drum Rack',
   sampler: 'Sampler',
+  soundfont: 'SoundFont',
 };
 
 export const OSC_TYPES = ['sine', 'triangle', 'sawtooth', 'square'] as const;
@@ -213,12 +215,18 @@ export function samplerAssetId(inst: StudioInstrument | undefined): string | und
   return typeof id === 'string' && id ? id : undefined;
 }
 
-/** Every asset the arrangement needs decoded: clip audio plus sampler samples. */
+/** Asset id of a SoundFont instrument's .sf2 asset, if any. */
+export function soundfontAssetId(inst: StudioInstrument | undefined): string | undefined {
+  const id = inst?.type === 'soundfont' ? inst.params?.assetId : undefined;
+  return typeof id === 'string' && id ? id : undefined;
+}
+
+/** Every asset the arrangement needs decoded/loaded: clips, samplers, drum pads, SoundFonts. */
 export function usedAssetIds(doc: StudioDoc): Set<string> {
   const ids = new Set<string>();
   for (const c of Object.values(doc.clips)) if (c.assetId) ids.add(c.assetId);
   for (const t of Object.values(doc.tracks)) {
-    const id = samplerAssetId(t.instrument);
+    const id = samplerAssetId(t.instrument) ?? soundfontAssetId(t.instrument);
     if (id) ids.add(id);
     if (t.instrument?.type === 'drums') for (const sid of drumSampleIds(t.instrument.params)) ids.add(sid);
   }
@@ -324,6 +332,8 @@ export function createInstrument(inst: StudioInstrument | undefined): PlayableIn
       return createDrumRack(p);
     case 'sampler':
       return sampler(p);
+    case 'soundfont':
+      return createSoundFontInstrument(p);
     case 'synth':
     default:
       return createWavetableSynth(p);

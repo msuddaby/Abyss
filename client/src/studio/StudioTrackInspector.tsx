@@ -14,7 +14,9 @@ import DelayDevice from './devices/DelayDevice';
 import ClassicSynthDevice from './devices/ClassicSynthDevice';
 import DrumRackDevice from './devices/DrumRackDevice';
 import SamplerDevice from './devices/SamplerDevice';
+import SoundFontDevice from './devices/SoundFontDevice';
 import SynthDevice from './devices/SynthDevice';
+import { SOUNDFONT_DEFAULTS } from './engine/soundfont';
 import { TRACK_COLORS } from './studioUtils';
 import { recordParamDiff, finishAutomation } from './automation';
 import { resolveSynthParams } from './engine/wavetable/synthParams';
@@ -39,7 +41,7 @@ const MAX_FX = 8;
 function stripInstrumentAssets(type: StudioInstrumentType, params: StudioParams | undefined): StudioParams {
   const out: StudioParams = {};
   for (const [k, v] of Object.entries(params ?? {})) {
-    if (type === 'sampler' && k === 'assetId') continue;
+    if ((type === 'sampler' || type === 'soundfont') && k === 'assetId') continue;
     if (type === 'drums' && /^d\d+_sample$/.test(k)) continue;
     out[k] = v;
   }
@@ -48,7 +50,7 @@ function stripInstrumentAssets(type: StudioInstrumentType, params: StudioParams 
 
 function mergeInstrumentPreset(type: StudioInstrumentType, cur: StudioParams | undefined, preset: StudioParams): StudioParams {
   const clean = stripInstrumentAssets(type, preset);
-  if (type === 'sampler') {
+  if (type === 'sampler' || type === 'soundfont') {
     return typeof cur?.assetId === 'string' && cur.assetId ? { ...clean, assetId: cur.assetId } : clean;
   }
   if (type === 'drums') {
@@ -128,7 +130,7 @@ export default function StudioTrackInspector({ trackId, track, editable, canMana
       {track.kind === 'instrument' && (
         <DeviceFrame
           title=""
-          width={inst.type === 'drums' ? DRUM_RACK_WIDTH : inst.type === 'sampler' ? 470 : inst.type === 'synth' ? 1110 : CLASSIC_WIDTH[inst.type as ClassicType] ?? 690}
+          width={inst.type === 'drums' ? DRUM_RACK_WIDTH : inst.type === 'sampler' || inst.type === 'soundfont' ? 470 : inst.type === 'synth' ? 1110 : CLASSIC_WIDTH[inst.type as ClassicType] ?? 690}
           color={color}
           editable={editable}
           headerExtra={(
@@ -151,6 +153,10 @@ export default function StudioTrackInspector({ trackId, track, editable, canMana
           ) : inst.type === 'sampler' ? (
             <SamplerDevice trackId={trackId} params={inst.params ?? {}} editable={editable} engine={engine} color={color}
               onCommit={(params) => setInstrument('sampler', params)} />
+          ) : inst.type === 'soundfont' ? (
+            <SoundFontDevice trackId={trackId} params={inst.params ?? {}} editable={editable} engine={engine} color={color}
+              onPreviewParams={(next) => recordParamDiff(trackId, 'inst:', { ...SOUNDFONT_DEFAULTS, ...(inst.params ?? {}) }, next)}
+              onCommit={(params) => { if (!finishAutomation(trackId, 'inst:')) setInstrument('soundfont', params); }} />
           ) : inst.type === 'drums' ? (
             <DrumRackDevice trackId={trackId} params={inst.params} editable={editable} engine={engine} color={color}
               onCommit={(params) => setInstrument('drums', params)} />

@@ -3,6 +3,7 @@ import { useStudioStore } from '@abyss/shared';
 import type { StudioParams } from '@abyss/shared';
 import type { StudioEngine } from '../engine/StudioEngine';
 import { getPeaks } from '../engine/assetCache';
+import { isSoundFontAsset, isSoundFontFile } from '../engine/soundfont';
 import { SAMPLER_DEFAULTS } from '../engine/instruments';
 import { ASSET_DRAG_TYPE } from '../StudioArrange';
 import { uploadAudioFiles, formatDuration } from '../studioUtils';
@@ -23,7 +24,8 @@ const noteName = (p: number) => `${NAMES[p % 12]}${Math.floor(p / 12) - 1}`;
 const ROOTS = Array.from({ length: 73 }, (_, i) => 24 + i); // C1..C7
 
 export default function SamplerDevice({ trackId, params, editable, engine, color, onCommit }: Props) {
-  const assets = useStudioStore((s) => s.assets);
+  const allAssets = useStudioStore((s) => s.assets);
+  const assets = allAssets.filter((a) => !isSoundFontAsset(a));
   const [draftStart, setDraftStart] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const num = (k: keyof typeof SAMPLER_DEFAULTS) => (typeof params[k] === 'number' ? (params[k] as number) : SAMPLER_DEFAULTS[k]);
@@ -89,8 +91,11 @@ export default function SamplerDevice({ trackId, params, editable, engine, color
     if (!editable) return;
     e.preventDefault();
     const id = e.dataTransfer.getData(ASSET_DRAG_TYPE);
-    if (id) { set({ assetId: id, start: 0 }); return; }
-    const files = Array.from(e.dataTransfer.files);
+    if (id) {
+      if (assets.some((a) => a.id === id)) set({ assetId: id, start: 0 });
+      return;
+    }
+    const files = Array.from(e.dataTransfer.files).filter((f) => !isSoundFontFile(f));
     if (!files.length) return;
     const [created] = await uploadAudioFiles(files.slice(0, 1));
     if (created) set({ assetId: created.id, start: 0 });

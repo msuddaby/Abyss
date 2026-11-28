@@ -26,6 +26,27 @@ describe('MIDI export', () => {
     expect(notes.map((n) => [n.pitch, n.start, n.len])).toEqual([[60, 4, 1], [64, 5.5, 0.5]]);
     expect(info.parts.find((p) => p.name === 'Drums')?.drums).toBe(true);
   });
+
+  it('skips leading SysEx events without corrupting subsequent delta times', () => {
+    // Format 0, 1 track, 48 TPQ, with two SysEx events at tick 0 followed by C4 at tick 0.
+    const track = [
+      0x00, 0xf0, 0x05, 0x7e, 0x7f, 0x09, 0x01, 0xf7, // GM System On SysEx (5 bytes)
+      0x00, 0xf0, 0x04, 0x41, 0x10, 0x42, 0xf7,       // second SysEx (4 bytes)
+      0x00, 0x90, 60, 100,                            // Note On C4 at tick 0
+      48,   0x80, 60, 0,                              // Note Off C4 at tick 48 (1 beat)
+      0x00, 0xff, 0x2f, 0x00,                         // End of track
+    ];
+    const header = [
+      0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 48,
+      0x4d, 0x54, 0x72, 0x6b,
+      (track.length >>> 24) & 0xff, (track.length >>> 16) & 0xff, (track.length >>> 8) & 0xff, track.length & 0xff,
+      ...track,
+    ];
+    const info = parseMidi(new Uint8Array(header).buffer);
+    expect(info.parts).toHaveLength(1);
+    expect(info.parts[0].notes).toHaveLength(1);
+    expect(info.parts[0].notes[0]).toMatchObject({ pitch: 60, start: 0, len: 1 });
+  });
 });
 
 describe('zip', () => {

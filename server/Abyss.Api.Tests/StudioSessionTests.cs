@@ -274,4 +274,22 @@ public class StudioSessionTests
         Assert.NotNull(StudioSessionService.ValidatePresetParams(JsonSerializer.SerializeToElement(new { mix = 50, mode = "pingpong", sync = true })));
         Assert.Null(StudioSessionService.ValidatePresetParams(JsonSerializer.SerializeToElement(new { nested = new { a = 1 } })));
     }
+
+    [Fact]
+    public void SoundFont_InstrumentAndMagicNumber_AreSupported()
+    {
+        var sfAssetId = Guid.NewGuid().ToString();
+        Assert.Equal(1, Apply(Set(["tracks", "ins", "instrument"], new
+        {
+            type = "soundfont",
+            @params = new Dictionary<string, object> { ["assetId"] = sfAssetId, ["bank"] = 0, ["program"] = 2, ["volume"] = -3 },
+        })));
+        Assert.Equal("soundfont", At("tracks", "ins", "instrument", "type")?.GetValue<string>());
+        Assert.True(_svc.IsAssetReferenced(_ch, sfAssetId));
+        Assert.True(StudioSessionService.IsValidPresetType("instrument", "soundfont"));
+
+        var riffSfbk = new byte[] { 0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x73, 0x66, 0x62, 0x6B };
+        using var ms = new MemoryStream(riffSfbk);
+        Assert.Equal("audio/x-soundfont", MagicNumberValidator.DetectMimeType(ms));
+    }
 }

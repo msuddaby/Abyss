@@ -87,6 +87,8 @@ public class MagicNumberValidator
                 // Bytes 8-11 identify the sub-format
                 if (buffer[8] == 0x57 && buffer[9] == 0x41 && buffer[10] == 0x56 && buffer[11] == 0x45) // "WAVE"
                     return "audio/wav";
+                if (buffer[8] == 0x73 && buffer[9] == 0x66 && buffer[10] == 0x62 && buffer[11] == 0x6B) // "sfbk"
+                    return "audio/x-soundfont";
                 if (buffer[8] == 0x57 && buffer[9] == 0x45 && buffer[10] == 0x42 && buffer[11] == 0x50) // "WEBP"
                     return "image/webp";
                 if (buffer[8] == 0x41 && buffer[9] == 0x56 && buffer[10] == 0x49 && buffer[11] == 0x20) // "AVI "

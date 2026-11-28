@@ -147,6 +147,7 @@ public class MediaConfig
         "audio/x-m4a",
         "audio/webm",
         "video/webm",
+        "audio/x-soundfont",
     };
     public HashSet<string> StudioAllowedExtensions { get; } = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -156,6 +157,7 @@ public class MediaConfig
         ".flac",
         ".m4a",
         ".webm",
+        ".sf2",
     };
 
     /// <summary>

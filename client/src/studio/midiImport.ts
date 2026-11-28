@@ -1,22 +1,26 @@
 import { studioId } from '@abyss/shared';
 import type { StudioDoc, StudioNote, StudioOp } from '@abyss/shared';
 import { DRUM_PADS, DRUM_ALIASES } from './engine/drumRack';
+import { findPreset, type ParsedSoundFont } from './engine/soundfont';
 import { barBeats, nextTrackColor, nextTrackOrder } from './studioUtils';
 
 // Standard MIDI File (format 0/1) import: each (track, channel) with notes
 // becomes an instrument track with one clip. Channel 10 becomes a drum track
-// mapped onto the studio kit.
+// mapped onto the studio kit (or Bank 128 when importing with a SoundFont).
 
 export interface MidiPart {
   /** Stable key for the import dialog */
   key: string;
   name: string;
   channel: number;
+  bank: number;
   program: number | null;
   drums: boolean;
-  /** Notes in beats from the start of the file */
+  /** Notes in beats from the start of the file (with GM drums mapped to studio kit) */
   notes: StudioNote[];
-  /** Drum hits with no matching kit piece (dropped) */
+  /** Unmapped raw notes (used for Channel 10 when importing into a SoundFont) */
+  rawNotes?: StudioNote[];
+  /** Drum hits with no matching kit piece (dropped when using the built-in drum rack) */
   unmapped: number;
 }
 
@@ -99,6 +103,7 @@ export function parseMidi(buf: ArrayBuffer): MidiFileInfo {
     let status = 0;
     let trackName = '';
     const program: (number | null)[] = Array(16).fill(null);
+    const bank: number[] = Array(16).fill(0);
     const byChannel = new Map<number, StudioNote[]>();
     // Sounding notes per channel+pitch (FIFO, so overlapping repeats pair up in order)
     const open = new Map<number, { tick: number; vel: number }[]>();
@@ -114,28 +119,43 @@ export function parseMidi(buf: ArrayBuffer): MidiFileInfo {
 
     while (r.pos < end) {
       tick += r.vlq();
+      if (r.pos >= end) break;
       let b = r.u8();
       if (b === 0xff) {
         const type = r.u8();
-        const n = r.vlq();
+        const n = Math.min(r.vlq(), Math.max(0, end - r.pos));
         const data: number[] = [];
         for (let i = 0; i < n; i++) data.push(r.u8());
         if (type === 0x03 && !trackName) trackName = decodeText(data);
         else if (type === 0x51 && n === 3) {
           const us = (data[0] << 16) | (data[1] << 8) | data[2];
-          const v = Math.round((60_000_000 / us) * 100) / 100;
-          if (bpm === null) bpm = v; else if (Math.abs(v - bpm) > 0.01) tempoChanges = true;
+          if (us > 0) {
+            const v = Math.round((60_000_000 / us) * 100) / 100;
+            if (bpm === null) bpm = v; else if (Math.abs(v - bpm) > 0.01) tempoChanges = true;
+          }
         } else if (type === 0x58 && n >= 2 && !timeSig) {
           timeSig = { num: data[0], den: 2 ** data[1] };
         } else if (type === 0x2f) break;
         continue;
       }
-      if (b === 0xf0 || b === 0xf7) { r.pos += r.vlq(); continue; }
+      if (b === 0xf0 || b === 0xf7) {
+        // Read VLQ before mutating r.pos: `r.pos += r.vlq()` evaluates the old
+        // r.pos first, leaving r.pos 1+ bytes short on the SysEx terminator 0xf7!
+        const n = r.vlq();
+        r.pos = Math.min(end, r.pos + n);
+        continue;
+      }
+      if (b >= 0xf1) {
+        // System common / real-time bytes (rare in SMF, but shouldn't desync the stream).
+        if (b === 0xf1 || b === 0xf3) r.pos = Math.min(end, r.pos + 1);
+        else if (b === 0xf2) r.pos = Math.min(end, r.pos + 2);
+        continue;
+      }
       if (b & 0x80) status = b; else { r.pos--; b = status; } // running status
       if (!status) throw new Error('Corrupt MIDI track');
       const kind = status & 0xf0, ch = status & 0x0f;
-      const d1 = r.u8();
-      const d2 = kind === 0xc0 || kind === 0xd0 ? 0 : r.u8();
+      const d1 = r.u8() & 0x7f;
+      const d2 = kind === 0xc0 || kind === 0xd0 ? 0 : (r.u8() & 0x7f);
       if (kind === 0x90 && d2 > 0) {
         const k = ch * 128 + d1;
         const stack = open.get(k) ?? [];
@@ -145,6 +165,9 @@ export function parseMidi(buf: ArrayBuffer): MidiFileInfo {
         close(ch, d1, tick);
       } else if (kind === 0xc0 && program[ch] === null) {
         program[ch] = d1;
+      } else if (kind === 0xb0 && d1 === 0 && program[ch] === null) {
+        // Bank Select MSB (CC 0)
+        bank[ch] = d2;
       }
     }
     // Notes never released end at the track's last event.
@@ -170,12 +193,12 @@ export function parseMidi(buf: ArrayBuffer): MidiFileInfo {
       parts.push({
         key: `${t}:${ch}`,
         name: (trackName ? (multi ? `${trackName} (${fallback})` : trackName) : fallback).slice(0, 40),
-        channel: ch, program: prog, drums, notes, unmapped,
+        channel: ch, bank: drums ? 128 : bank[ch], program: prog, drums, notes, rawNotes: drums ? list : undefined, unmapped,
       });
     }
   }
 
-  return { parts: parts.filter((p) => p.notes.length), bpm, timeSig, tempoChanges, lengthBeats: lengthTicks / tpq };
+  return { parts: parts.filter((p) => p.notes.length || p.rawNotes?.length), bpm, timeSig, tempoChanges, lengthBeats: lengthTicks / tpq };
 }
 
 /** Max notes per clip on the server; longer parts are split at bar lines. */
@@ -185,7 +208,12 @@ const MAX_CLIP_NOTES = 4000;
  * Ops that add the chosen parts as new instrument tracks, starting at `atBeats`.
  * Each part keeps its position relative to the file start.
  */
-export function midiImportOps(doc: StudioDoc, parts: MidiPart[], atBeats: number, meta?: { bpm?: number; timeSig?: { num: number; den: number } }): { ops: StudioOp[]; trackIds: string[] } {
+export function midiImportOps(
+  doc: StudioDoc,
+  parts: MidiPart[],
+  atBeats: number,
+  meta?: { bpm?: number; timeSig?: { num: number; den: number }; soundfont?: { assetId: string; sf: ParsedSoundFont } },
+): { ops: StudioOp[]; trackIds: string[] } {
   const ops: StudioOp[] = [];
   const trackIds: string[] = [];
   const m = { ...doc.meta };
@@ -197,19 +225,36 @@ export function midiImportOps(doc: StudioDoc, parts: MidiPart[], atBeats: number
   const bar = barBeats(m);
   // nextTrackOrder/Color look at doc.tracks, so keep a working copy as we add.
   const working: StudioDoc = { ...doc, tracks: { ...doc.tracks } };
+  const sfOpt = meta?.soundfont;
 
   for (const part of parts) {
+    const partNotes = sfOpt && part.rawNotes?.length ? part.rawNotes : part.notes;
+    if (!partNotes.length) continue;
     const trackId = studioId();
+    let instrument: StudioDoc['tracks'][string]['instrument'];
+    let trackName = part.name || 'MIDI';
+    if (sfOpt) {
+      const matched = findPreset(sfOpt.sf, part.bank, part.program ?? 0, part.drums);
+      instrument = {
+        type: 'soundfont',
+        params: { assetId: sfOpt.assetId, bank: matched?.bank ?? 0, program: matched?.program ?? 0 },
+      };
+      if (matched && (!part.name || part.name.startsWith('Channel ') || part.name.includes(' ('))) {
+        trackName = matched.name.slice(0, 40) || trackName;
+      }
+    } else {
+      instrument = { type: part.drums ? 'drums' : part.program !== null && part.program >= 32 && part.program <= 39 ? 'bass' : 'synth' };
+    }
     const track = {
-      name: part.name || 'MIDI', kind: 'instrument' as const, order: nextTrackOrder(working), color: nextTrackColor(working),
+      name: trackName, kind: 'instrument' as const, order: nextTrackOrder(working), color: nextTrackColor(working),
       volume: -6, pan: 0, mute: false, solo: false,
-      instrument: { type: part.drums ? 'drums' : part.program !== null && part.program >= 32 && part.program <= 39 ? 'bass' : 'synth' },
+      instrument,
     };
     working.tracks[trackId] = track as StudioDoc['tracks'][string];
     ops.push({ t: 'set', path: ['tracks', trackId], value: track });
     trackIds.push(trackId);
 
-    const sorted = [...part.notes].sort((a, b) => a.start - b.start);
+    const sorted = [...partNotes].sort((a, b) => a.start - b.start);
     // Chunk into clips of ≤ MAX_CLIP_NOTES, each starting on a bar line.
     let i = 0;
     while (i < sorted.length) {

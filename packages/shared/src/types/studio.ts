@@ -4,7 +4,7 @@
 /** 'return' tracks are fed by sends; 'group' tracks sum the tracks routed into them. Neither holds clips. */
 export type StudioTrackKind = 'audio' | 'instrument' | 'return' | 'group';
 export type StudioClipKind = 'audio' | 'midi';
-export type StudioInstrumentType = 'synth' | 'fm' | 'am' | 'mono' | 'pluck' | 'drums' | 'bass' | 'sampler';
+export type StudioInstrumentType = 'synth' | 'fm' | 'am' | 'mono' | 'pluck' | 'drums' | 'bass' | 'sampler' | 'soundfont';
 export type StudioEffectType = 'reverb' | 'delay' | 'eq' | 'compressor' | 'distortion' | 'chorus' | 'filter' | 'tape' | 'limiter';
 export type StudioParams = Record<string, number | string | boolean>;
 

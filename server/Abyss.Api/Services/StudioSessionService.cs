@@ -68,7 +68,7 @@ public class StudioSessionService
     private static readonly TimeSpan HistoryRetention = TimeSpan.FromDays(90);
 
     private static readonly Regex IdRegex = new(@"^[A-Za-z0-9_-]{1,40}$", RegexOptions.Compiled);
-    private static readonly HashSet<string> InstrumentTypes = new() { "synth", "fm", "am", "mono", "pluck", "drums", "bass", "sampler" };
+    private static readonly HashSet<string> InstrumentTypes = new() { "synth", "fm", "am", "mono", "pluck", "drums", "bass", "sampler", "soundfont" };
     private static readonly HashSet<string> EffectTypes = new() { "reverb", "delay", "eq", "compressor", "distortion", "chorus", "filter", "tape", "limiter" };
 
     private readonly ConcurrentDictionary<Guid, StudioSession> _sessions = new();
