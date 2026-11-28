@@ -74,6 +74,7 @@ public class HubRateLimiter
         ["CloseStudioInVoice"]       = Category.StudioEdit,
         ["StudioPresence"]           = Category.StudioPresence,
         ["GetServerVoiceStudios"]    = Category.Query,
+        ["GetServerStudioUsers"]     = Category.Query,
     };
 
     // Exempt methods that should never be rate-limited

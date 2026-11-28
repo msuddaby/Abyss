@@ -215,6 +215,10 @@ export function fetchServerState(conn: SignalRConnection, serverId: string) {
     if (data) useStudioStore.getState().setVoiceLinks(data as Record<string, string>);
   });
 
+  delayedInvoke(conn, 300, 'GetServerStudioUsers', serverId).then((data) => {
+    if (data) useStudioStore.getState().setChannelUsers(data as Record<string, string[]>);
+  });
+
   delayedInvoke(conn, 300, 'GetOnlineUsers', serverId).then((data) => {
     if (!data) return;
     const typed = data as Record<string, number>;
@@ -314,6 +318,7 @@ export function useSignalRListeners() {
         'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
         'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
         'StudioOps', 'StudioPresence', 'StudioTransportChanged', 'StudioUserJoined', 'StudioUserLeft',
+        'StudioChannelUserJoined', 'StudioChannelUserLeft',
         'StudioAssetAdded', 'StudioAssetRemoved', 'StudioReset', 'StudioVersionsChanged',
         'VoiceStudioOpened', 'VoiceStudioClosed', 'VoiceStudioLinkChanged',
       ];
@@ -812,6 +817,8 @@ export function useSignalRListeners() {
       conn.on('StudioTransportChanged', (channelId: string, transport: StudioTransport) => studio().receiveTransport(channelId, transport));
       conn.on('StudioUserJoined', (channelId: string, userId: string) => studio().receiveUserJoined(channelId, userId));
       conn.on('StudioUserLeft', (channelId: string, userId: string) => studio().receiveUserLeft(channelId, userId));
+      conn.on('StudioChannelUserJoined', (channelId: string, userId: string) => studio().receiveChannelUserJoined(channelId, userId));
+      conn.on('StudioChannelUserLeft', (channelId: string, userId: string) => studio().receiveChannelUserLeft(channelId, userId));
       conn.on('StudioAssetAdded', (channelId: string, asset: StudioAsset) => studio().receiveAssetAdded(channelId, asset));
       conn.on('StudioAssetRemoved', (channelId: string, assetId: string) => studio().receiveAssetRemoved(channelId, assetId));
       conn.on('StudioReset', (channelId: string, doc: StudioDoc, version: number) => studio().receiveReset(channelId, doc, version));

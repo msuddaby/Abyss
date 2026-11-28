@@ -292,4 +292,26 @@ public class StudioSessionTests
         using var ms = new MemoryStream(riffSfbk);
         Assert.Equal("audio/x-soundfont", MagicNumberValidator.DetectMimeType(ms));
     }
+
+    [Fact]
+    public void ActiveUsers_TracksDistinctUsersAcrossConnections()
+    {
+        var serverId = Guid.NewGuid();
+        _session.ServerId = serverId;
+        _session.Connections["c1"] = "user-1";
+        _session.Connections["c2"] = "user-1";
+        _session.Connections["c3"] = "user-2";
+
+        var active = _svc.GetActiveUsers(new[] { _ch, Guid.NewGuid() });
+        Assert.Single(active);
+        Assert.Equal(2, active[_ch].Count);
+        Assert.Contains("user-1", active[_ch]);
+        Assert.Contains("user-2", active[_ch]);
+
+        // Closing one of user-1's two connections doesn't mark them gone
+        Assert.False(_svc.Leave(_ch, "c1", out var sid));
+        Assert.Equal(serverId, sid);
+        Assert.True(_svc.Leave(_ch, "c2", out _));
+        Assert.Equal(new[] { "user-2" }, _svc.GetActiveUsers(new[] { _ch })[_ch]);
+    }
 }

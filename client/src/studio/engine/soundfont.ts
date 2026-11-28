@@ -122,6 +122,7 @@ function ascii(bytes: Uint8Array, start: number, len: number): string {
 
 const s16 = (u: number) => (u >= 0x8000 ? u - 0x10000 : u);
 const tcToSec = (tc: number) => (tc <= -12000 ? 0 : Math.pow(2, Math.max(-12000, Math.min(8000, tc)) / 1200));
+const centsToRate = (c: number) => Math.pow(2, c / 1200);
 const centsToHz = (c: number) => Math.max(20, Math.min(20000, 8.1757989156 * Math.pow(2, c / 1200)));
 
 interface RawGen { op: number; val: number }
@@ -572,7 +573,8 @@ export function createSoundFontInstrument(initial: StudioParams | undefined): Pl
 
       const semitones = (pitch - z.rootKey) * (z.scaleTuning / 100) + z.coarseTune + tuneSemis;
       const baseCents = semitones * 100 + z.fineTune;
-      src.detune.setValueAtTime(baseCents + bendSemis * 100, time);
+      // playbackRate, not detune: standardized-audio-context's buffer source has no detune param.
+      src.playbackRate.setValueAtTime(centsToRate(baseCents + bendSemis * 100), time);
 
       const env = rawCtx.createGain();
       const peak = Math.min(1.5, velGain * z.attenuationGain);
@@ -676,7 +678,7 @@ export function createSoundFontInstrument(initial: StudioParams | undefined): Pl
       bendSemis = semis;
       const now = rawCtx.currentTime;
       for (const v of voices) {
-        try { v.src.detune.setValueAtTime(v.baseCents + semis * 100, now); } catch { /* */ }
+        try { v.src.playbackRate.setValueAtTime(centsToRate(v.baseCents + semis * 100), now); } catch { /* */ }
       }
     },
     update: applyParams,

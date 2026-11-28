@@ -54,6 +54,7 @@ export const ALL_SIGNALR_EVENTS = [
   'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
   // Studio (collaborative DAW)
   'StudioOps', 'StudioPresence', 'StudioTransportChanged', 'StudioUserJoined', 'StudioUserLeft',
+  'StudioChannelUserJoined', 'StudioChannelUserLeft',
   'StudioAssetAdded', 'StudioAssetRemoved', 'StudioReset', 'StudioVersionsChanged',
   'VoiceStudioOpened', 'VoiceStudioClosed', 'VoiceStudioLinkChanged',
   // Voice (useWebRTC — LiveKit SFU presence/state events)

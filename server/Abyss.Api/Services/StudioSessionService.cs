@@ -16,11 +16,12 @@ public record StudioOp(string T, List<string> Path, JsonElement? Value);
 
 public record StudioTransportState(bool IsPlaying, double PositionBeats, long ServerTimeMs, string? UserId);
 
-public record StudioJoinResult(JsonObject Doc, long Version, StudioTransportState Transport, Dictionary<string, JsonElement> Presence);
+public record StudioJoinResult(JsonObject Doc, long Version, StudioTransportState Transport, Dictionary<string, JsonElement> Presence, bool FirstConnectionForUser);
 
 public class StudioSession
 {
     public Guid ChannelId { get; init; }
+    public Guid ServerId { get; set; }
     public Guid ProjectId { get; init; }
     public JsonObject Doc { get; set; } = new();
     public long Version { get; set; }
@@ -194,32 +195,41 @@ public class StudioSessionService
     public StudioSession? GetSession(Guid channelId) =>
         _sessions.TryGetValue(channelId, out var s) ? s : null;
 
-    public async Task<StudioJoinResult> JoinAsync(Guid channelId, string connectionId, string userId)
+    public async Task<StudioJoinResult> JoinAsync(Guid channelId, Guid serverId, string connectionId, string userId)
     {
         var session = await GetOrLoadAsync(channelId);
-        session.Connections[connectionId] = userId;
+        if (serverId != Guid.Empty) session.ServerId = serverId;
+        bool firstForUser;
         lock (session.Lock)
         {
+            firstForUser = !session.Connections.Values.Contains(userId);
+            session.Connections[connectionId] = userId;
             return new StudioJoinResult(
                 (JsonObject)session.Doc.DeepClone(),
                 session.Version,
                 session.Transport,
-                new Dictionary<string, JsonElement>(session.Presence));
+                new Dictionary<string, JsonElement>(session.Presence),
+                firstForUser);
         }
     }
 
     /// <summary>Removes a connection; returns true if the user has no other connection in this studio.</summary>
-    public bool Leave(Guid channelId, string connectionId)
+    public bool Leave(Guid channelId, string connectionId) => Leave(channelId, connectionId, out _);
+
+    public bool Leave(Guid channelId, string connectionId, out Guid serverId)
     {
+        serverId = Guid.Empty;
         if (!_sessions.TryGetValue(channelId, out var session)) return false;
-        if (!session.Connections.TryRemove(connectionId, out var userId)) return false;
-        var userGone = !session.Connections.Values.Contains(userId);
-        if (userGone) session.Presence.TryRemove(userId, out _);
-        if (session.Connections.IsEmpty)
+        serverId = session.ServerId;
+        bool userGone;
+        lock (session.Lock)
         {
-            session.EmptySince = DateTime.UtcNow;
-            lock (session.Lock)
+            if (!session.Connections.TryRemove(connectionId, out var userId)) return false;
+            userGone = !session.Connections.Values.Contains(userId);
+            if (userGone) session.Presence.TryRemove(userId, out _);
+            if (session.Connections.IsEmpty)
             {
+                session.EmptySince = DateTime.UtcNow;
                 if (session.Transport.IsPlaying)
                     session.Transport = session.Transport with { IsPlaying = false, UserId = null };
             }
@@ -227,16 +237,29 @@ public class StudioSessionService
         return userGone;
     }
 
-    /// <summary>Removes the connection from every studio it joined. Returns (channelId, userId) pairs where the user fully left.</summary>
-    public List<(Guid ChannelId, string UserId)> LeaveAll(string connectionId)
+    /// <summary>Removes the connection from every studio it joined. Returns (channelId, serverId, userId) triples where the user fully left.</summary>
+    public List<(Guid ChannelId, Guid ServerId, string UserId)> LeaveAll(string connectionId)
     {
-        var left = new List<(Guid, string)>();
+        var left = new List<(Guid, Guid, string)>();
         foreach (var session in _sessions.Values)
         {
-            if (session.Connections.TryGetValue(connectionId, out var userId) && Leave(session.ChannelId, connectionId))
-                left.Add((session.ChannelId, userId));
+            if (session.Connections.TryGetValue(connectionId, out var userId) && Leave(session.ChannelId, connectionId, out var serverId))
+                left.Add((session.ChannelId, serverId, userId));
         }
         return left;
+    }
+
+    /// <summary>Active distinct user ids per studio channel (only non-empty studios included).</summary>
+    public Dictionary<Guid, List<string>> GetActiveUsers(IEnumerable<Guid> studioChannelIds)
+    {
+        var result = new Dictionary<Guid, List<string>>();
+        foreach (var id in studioChannelIds)
+        {
+            if (!_sessions.TryGetValue(id, out var session)) continue;
+            var users = session.Connections.Values.Distinct().ToList();
+            if (users.Count > 0) result[id] = users;
+        }
+        return result;
     }
 
     public void SetPresence(Guid channelId, string userId, JsonElement presence)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, useWatchPartyStore, useArchiveStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
+import { useServerStore, useMessageStore, useVoiceStore, useAuthStore, useUnreadStore, useDmStore, useFriendStore, usePresenceStore, useNotificationSettingsStore, useWatchPartyStore, useArchiveStore, useStudioStore, api, getApiBase, hasPermission, Permission, canViewChannel } from '@abyss/shared';
 import { useContextMenuStore } from '../stores/contextMenuStore';
 import { useMobileStore, isMobile } from '../stores/mobileStore';
 import { useLongPress } from '../hooks/useLongPress';
@@ -24,6 +24,7 @@ export default function ChannelSidebar() {
   const { activeServer, channels, activeChannel, setActiveChannel, members, deleteChannel, renameChannel, reorderChannels, leaveServer } = useServerStore();
   const { joinChannel, leaveChannel, fetchMessages, currentChannelId } = useMessageStore();
   const voiceChannelId = useVoiceStore((s) => s.currentChannelId);
+  const studioChannelUsers = useStudioStore((s) => s.channelUsers);
   const { joinVoice, leaveVoice } = useWebRTC();
   const user = useAuthStore((s) => s.user);
   const isSysadmin = useAuthStore((s) => s.isSysadmin);
@@ -570,29 +571,58 @@ export default function ChannelSidebar() {
         {studioChannels.length > 0 && (
           <div className="channel-category">
             <span className="category-label">Studios</span>
-            {studioChannels.map((channel) => (
-              <div
-                key={channel.id}
-                className={`channel-item-wrapper${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
-                draggable={canManageChannels && !isMobile()}
-                onDragStart={handleDragStart(channel, 'Studio')}
-                onDragOver={handleDragOver(channel, 'Studio')}
-                onDrop={handleDrop(channel, 'Studio')}
-                onDragEnd={handleDragEnd}
-                onContextMenu={handleChannelContextMenu(channel)}
-                onTouchStart={(e) => { longPressChannelRef.current = channel; channelLongPress.onTouchStart(e); }}
-                onTouchMove={channelLongPress.onTouchMove}
-                onTouchEnd={channelLongPress.onTouchEnd}
-              >
-                <button
-                  className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}`}
-                  onClick={() => handleChannelClick(channel)}
+            {studioChannels.map((channel) => {
+              const workingIds = studioChannelUsers[channel.id] ?? [];
+              return (
+                <div
+                  key={channel.id}
+                  className={`channel-item-wrapper studio${dragOverChannelId === channel.id ? ' drag-over' : ''}${draggingChannelId === channel.id ? ' dragging' : ''}`}
+                  draggable={canManageChannels && !isMobile()}
+                  onDragStart={handleDragStart(channel, 'Studio')}
+                  onDragOver={handleDragOver(channel, 'Studio')}
+                  onDrop={handleDrop(channel, 'Studio')}
+                  onDragEnd={handleDragEnd}
+                  onContextMenu={handleChannelContextMenu(channel)}
+                  onTouchStart={(e) => { longPressChannelRef.current = channel; channelLongPress.onTouchStart(e); }}
+                  onTouchMove={channelLongPress.onTouchMove}
+                  onTouchEnd={channelLongPress.onTouchEnd}
                 >
-                  <span className="channel-studio-icon" aria-hidden="true">🎛️</span>
-                  {channel.name}
-                </button>
-              </div>
-            ))}
+                  <button
+                    className={`channel-item ${activeChannel?.id === channel.id ? 'active' : ''}`}
+                    onClick={() => handleChannelClick(channel)}
+                  >
+                    <span className="channel-studio-icon" aria-hidden="true">🎛️</span>
+                    {channel.name}
+                  </button>
+                  {workingIds.length > 0 && (
+                    <div className="studio-participants">
+                      {workingIds.map((uid) => {
+                        const member = members.find((m) => m.userId === uid);
+                        const displayName = member?.user?.displayName || (uid === user?.id ? user.displayName : 'Collaborator');
+                        const rawAvatar = member?.user?.avatarUrl ?? (uid === user?.id ? user.avatarUrl : null);
+                        const avatarUrl = rawAvatar
+                          ? (rawAvatar.startsWith('http') ? rawAvatar : `${getApiBase()}${rawAvatar}`)
+                          : null;
+                        return (
+                          <div
+                            key={uid}
+                            className="voice-participant studio-participant"
+                            onClick={() => handleChannelClick(channel)}
+                            title={`${displayName} is working here`}
+                          >
+                            <span className="participant-avatar">
+                              {avatarUrl ? <img src={avatarUrl} alt={displayName} /> : displayName.charAt(0).toUpperCase()}
+                            </span>
+                            <span className="participant-name">{displayName}</span>
+                            <span className="studio-participant-status">working</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

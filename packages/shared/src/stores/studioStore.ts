@@ -47,6 +47,8 @@ interface StudioState {
   redoStack: StudioOp[][];
   /** voiceChannelId -> studioChannelId (voice activity links, for the active server) */
   voiceLinks: Record<string, string>;
+  /** studioChannelId -> active userIds across the active server (for channel sidebar) */
+  channelUsers: Record<string, string[]>;
 
   join: (channelId: string) => Promise<void>;
   leave: () => void;
@@ -79,6 +81,9 @@ interface StudioState {
 
   setVoiceLinks: (links: Record<string, string>) => void;
   setVoiceLink: (voiceChannelId: string, studioChannelId: string | null) => void;
+  setChannelUsers: (usersByChannel: Record<string, string[]>) => void;
+  receiveChannelUserJoined: (channelId: string, userId: string) => void;
+  receiveChannelUserLeft: (channelId: string, userId: string) => void;
 }
 
 const idleTransport: StudioTransport = { isPlaying: false, positionBeats: 0, serverTimeMs: 0, userId: null };
@@ -146,6 +151,7 @@ export const useStudioStore = create<StudioState>((set, get) => {
     undoStack: [],
     redoStack: [],
     voiceLinks: {},
+    channelUsers: {},
     versionsTick: 0,
 
     join: async (channelId) => {
@@ -341,6 +347,21 @@ export const useStudioStore = create<StudioState>((set, get) => {
       if (studioChannelId) voiceLinks[voiceChannelId] = studioChannelId;
       else delete voiceLinks[voiceChannelId];
       return { voiceLinks };
+    }),
+    setChannelUsers: (usersByChannel) => set({ channelUsers: usersByChannel }),
+    receiveChannelUserJoined: (channelId, userId) => set((s) => {
+      const prev = s.channelUsers[channelId] ?? [];
+      if (prev.includes(userId)) return s;
+      return { channelUsers: { ...s.channelUsers, [channelId]: [...prev, userId] } };
+    }),
+    receiveChannelUserLeft: (channelId, userId) => set((s) => {
+      const prev = s.channelUsers[channelId];
+      if (!prev || !prev.includes(userId)) return s;
+      const next = prev.filter((u) => u !== userId);
+      const channelUsers = { ...s.channelUsers };
+      if (next.length) channelUsers[channelId] = next;
+      else delete channelUsers[channelId];
+      return { channelUsers };
     }),
   };
 });

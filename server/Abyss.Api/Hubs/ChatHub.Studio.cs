@@ -29,9 +29,12 @@ public partial class ChatHub
         var channel = await GetStudioChannel(channelId);
         if (channel == null) return null;
 
-        var result = await _studio.JoinAsync(channel.Id, Context.ConnectionId, UserId);
+        var serverId = channel.ServerId ?? Guid.Empty;
+        var result = await _studio.JoinAsync(channel.Id, serverId, Context.ConnectionId, UserId);
         await Groups.AddToGroupAsync(Context.ConnectionId, $"studio:{channel.Id}");
         await Clients.OthersInGroup($"studio:{channel.Id}").SendAsync("StudioUserJoined", channel.Id.ToString(), UserId);
+        if (result.FirstConnectionForUser && serverId != Guid.Empty)
+            await Clients.Group($"server:{serverId}").SendAsync("StudioChannelUserJoined", channel.Id.ToString(), UserId);
 
         var canEdit = await _perms.HasChannelPermissionAsync(channel.Id, UserId, Permission.EditStudio);
         var session = _studio.GetSession(channel.Id);
@@ -53,8 +56,12 @@ public partial class ChatHub
     {
         if (!Guid.TryParse(channelId, out var id)) return;
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"studio:{id}");
-        if (_studio.Leave(id, Context.ConnectionId))
+        if (_studio.Leave(id, Context.ConnectionId, out var serverId))
+        {
             await Clients.Group($"studio:{id}").SendAsync("StudioUserLeft", id.ToString(), UserId);
+            if (serverId != Guid.Empty)
+                await Clients.Group($"server:{serverId}").SendAsync("StudioChannelUserLeft", id.ToString(), UserId);
+        }
     }
 
     public async Task<object?> StudioApplyOps(string channelId, string clientBatchId, List<StudioOp> ops)
@@ -146,6 +153,17 @@ public partial class ChatHub
         return _studio.GetVoiceLinks(voiceIds);
     }
 
+    public async Task<Dictionary<Guid, List<string>>> GetServerStudioUsers(string serverId)
+    {
+        if (!Guid.TryParse(serverId, out var serverGuid)) return new();
+        if (!await _perms.IsMemberAsync(serverGuid, UserId)) return new();
+        var studioIds = await _db.Channels
+            .Where(c => c.ServerId == serverGuid && c.Type == ChannelType.Studio)
+            .Select(c => c.Id)
+            .ToListAsync();
+        return _studio.GetActiveUsers(studioIds);
+    }
+
     private async Task CloseVoiceStudioLink(Guid voiceId)
     {
         if (!_studio.UnlinkVoice(voiceId)) return;
@@ -157,7 +175,11 @@ public partial class ChatHub
 
     private async Task HandleStudioDisconnect()
     {
-        foreach (var (channelId, userId) in _studio.LeaveAll(Context.ConnectionId))
+        foreach (var (channelId, serverId, userId) in _studio.LeaveAll(Context.ConnectionId))
+        {
             await Clients.Group($"studio:{channelId}").SendAsync("StudioUserLeft", channelId.ToString(), userId);
+            if (serverId != Guid.Empty)
+                await Clients.Group($"server:{serverId}").SendAsync("StudioChannelUserLeft", channelId.ToString(), userId);
+        }
     }
 }

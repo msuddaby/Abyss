@@ -13840,6 +13840,12 @@ label.has-error select:focus {
 .studio-sf-scope { flex: 1; height: 34px; border-radius: 4px; background: #141518; }
 .studio-midi-import-sf { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
 .studio-midi-import-sf .studio-select { flex: 1; min-width: 160px; margin-left: 0; }
+
+.channel-item-wrapper.studio { flex-direction: column; align-items: stretch; }
+.studio-participants { width: 100%; padding: 2px 8px 4px 28px; }
+.studio-participant { cursor: pointer; border-radius: 4px; padding: 2px 4px; }
+.studio-participant:hover { background: var(--bg-hover); color: var(--text-primary); }
+.studio-participant-status { margin-left: auto; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 .studio-preset-save { display: flex; gap: 4px; padding-top: 6px; margin-top: 4px; border-top: 1px solid var(--border-color); }
 .studio-preset-save input { flex: 1; min-width: 0; font-size: 12px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-tertiary); color: var(--text-primary); }
 
