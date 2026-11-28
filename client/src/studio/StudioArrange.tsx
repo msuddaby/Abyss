@@ -143,9 +143,22 @@ export default function StudioArrange(props: Props) {
     const end = prim.start + prim.length;
     if (d.mode === 'trim-end') {
       let length = Math.max(MIN_CLIP_BEATS, snapBeats(end + dx, snapGrid) - prim.start);
-      if (prim.kind === 'audio' && prim.assetId && !prim.reverse) {
+      if (prim.kind === 'audio' && prim.assetId) {
         const dur = assetDur.get(prim.assetId);
-        if (dur) length = Math.min(length, clipBeatsForSrc(doc, prim, 0, dur - (prim.offset ?? 0)));
+        if (!prim.reverse) {
+          if (dur) length = Math.min(length, clipBeatsForSrc(doc, prim, 0, dur - (prim.offset ?? 0)));
+          out[d.primary] = { ...prim, length: Math.max(MIN_CLIP_BEATS, length) };
+          return out;
+        }
+        // Reversed: the right edge reads from `offset` in the source. Extending
+        // right reduces offset toward 0; shrinking right advances offset.
+        const maxExtra = clipBeatsForSrc(doc, prim, prim.length, prim.offset ?? 0);
+        length = Math.max(MIN_CLIP_BEATS, Math.min(length, prim.length + maxExtra));
+        const newOffset = length <= prim.length
+          ? (prim.offset ?? 0) + clipSrcSeconds(doc, prim, length, prim.length)
+          : Math.max(0, (prim.offset ?? 0) - clipSrcSeconds(doc, prim, prim.length, length));
+        out[d.primary] = { ...prim, length, offset: Math.max(0, newOffset) };
+        return out;
       }
       out[d.primary] = { ...prim, length: Math.max(MIN_CLIP_BEATS, length) };
       return out;
@@ -164,8 +177,13 @@ export default function StudioArrange(props: Props) {
         const srcShift = shift >= 0 ? clipSrcSeconds(doc, prim, 0, shift) : -clipSrcSeconds(doc, { ...prim, start }, 0, -shift);
         out[d.primary] = { ...prim, start, length: end - start, offset: Math.max(0, (prim.offset ?? 0) + srcShift) };
       } else {
-        // Reversed: the left edge reads the source's end; the offset stays put.
-        out[d.primary] = { ...prim, start, length: end - start };
+        // Reversed: the left edge reads the source's end; cap to remaining source after offset.
+        const dur = prim.assetId ? assetDur.get(prim.assetId) : undefined;
+        if (dur) {
+          const maxLen = clipBeatsForSrc(doc, { ...prim, start }, 0, Math.max(0, dur - (prim.offset ?? 0)));
+          start = Math.max(start, end - maxLen);
+        }
+        out[d.primary] = { ...prim, start, length: Math.max(MIN_CLIP_BEATS, end - start) };
       }
     } else {
       const shift = start - prim.start;

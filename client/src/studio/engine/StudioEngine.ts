@@ -6,7 +6,7 @@ import { ensureSynthWorklet, isSynthReady } from './wavetable/synthNode';
 import { EFFECT_DEFS, resolveParams, buildDevice, type FxDevice, type Resolved } from './effects';
 import { getBuffer } from './assetCache';
 import { valueAt } from './automationMath';
-import { resolveOutput, audibleUnderSolo, clipPlayback } from './routing';
+import { resolveOutput, audibleUnderSolo, isReturnOnlySolo, isSidechainCycle, clipPlayback } from './routing';
 
 // Renders a StudioDoc with Tone.js. `sync(doc)` diffs the doc against the
 // current audio graph by entity id and rebuilds only what changed, so remote
@@ -45,12 +45,14 @@ interface TrackNode extends ChainHost {
   /** End of the effect chain, pre-fader (sidechain taps here) */
   post: Tone.Gain;
   channel: Tone.Channel;
+  /** Dry output gate between channel and outTarget (muted when soloing returns only) */
+  dryOut: Tone.Gain;
   meter: Tone.Meter | null;
   instrument: PlayableInstrument | null;
   instKey: string;
   instParamsKey: string;
   autoKey: string;
-  /** Where the channel is connected (a group's input or the master input) */
+  /** Where dryOut is connected (a group's input or the master input) */
   outTarget: Tone.ToneAudioNode | null;
   sends: Map<string, { gain: Tone.Gain; target: Tone.ToneAudioNode }>;
 }
@@ -104,6 +106,7 @@ export class StudioEngine {
   private readonly tracks = new Map<string, TrackNode>();
   private readonly clips = new Map<string, ClipNode>();
   private readonly withMeters: boolean;
+  private readonly isOffline: boolean;
   private doc: StudioDoc | null = null;
   private map: TempoMap | null = null;
   private tempoKey = '';
@@ -113,12 +116,17 @@ export class StudioEngine {
   private metronomeOn = false;
   private disposed = false;
   private autoEvent = -1;
+  private playSeq = 0;
+  private readonly liveNotes = new Set<string>();
+  private countInCancel: (() => void) | null = null;
   private readonly onStart: (time: number) => void;
   private readonly onStopLike: (time: number) => void;
+  private readonly onLoopEnd: (time: number) => void;
   private readonly onLoop: (time: number) => void;
 
   constructor(opts: { meters?: boolean } = {}) {
     this.withMeters = opts.meters ?? true;
+    this.isOffline = Tone.getContext().isOffline;
     this.transport = Tone.getTransport();
     const prev = liveEngines.get(this.transport);
     if (prev) prev.dispose();
@@ -137,12 +145,21 @@ export class StudioEngine {
     // resume mid-clip correctly at any playback rate and across tempo changes.
     this.onStart = (time) => this.resumeClips(time);
     this.onStopLike = (time) => this.stopPlayers(time);
-    this.onLoop = (time) => { if (this.map && this.doc) this.transport.bpm.setValueAtTime(bpmAt(this.map, this.doc.meta.loopStart), time); };
+    this.onLoopEnd = (time) => {
+      this.stopPlayers(time);
+      for (const t of this.tracks.values()) t.instrument?.releaseAll();
+    };
+    this.onLoop = (time) => {
+      if (!this.map || !this.doc) return;
+      const b = bpmAt(this.map, this.doc.meta.loopStart);
+      this.transport.bpm.setValueAtTime(b, time);
+      this.applyBpmToDevices(b, time);
+    };
     this.transport.on('start', this.onStart);
     this.transport.on('loopStart', this.onStart);
     this.transport.on('stop', this.onStopLike);
     this.transport.on('pause', this.onStopLike);
-    this.transport.on('loopEnd', this.onStopLike);
+    this.transport.on('loopEnd', this.onLoopEnd);
     this.transport.on('loop', this.onLoop);
     // Wavetable synth tracks (and sidechain compressors) wait for the worklet, then rebuild.
     if (!isSynthReady()) {
@@ -170,12 +187,15 @@ export class StudioEngine {
     }
 
     // Tracks
-    for (const [id, track] of Object.entries(doc.tracks)) this.syncTrack(id, track, meta.bpm);
+    const curBpm = this.map ? bpmAt(this.map, this.getPositionBeats()) : meta.bpm;
+    for (const [id, track] of Object.entries(doc.tracks)) this.syncTrack(id, track, curBpm, doc);
     for (const id of [...this.tracks.keys()]) {
       if (!doc.tracks[id]) this.disposeTrack(id);
     }
-    this.syncEffects(this.masterHost, meta.masterEffects, meta.bpm);
-    if (this.master.volume.value !== (meta.masterVolume ?? 0)) this.master.volume.rampTo(meta.masterVolume ?? 0, 0.02);
+    this.syncEffects(this.masterHost, meta.masterEffects, curBpm, doc, '');
+    const masterVol = meta.masterVolume ?? 0;
+    if (this.isOffline) this.master.volume.value = masterVol;
+    else if (Math.abs(this.master.volume.value - masterVol) > 1e-4) this.master.volume.rampTo(masterVol, 0.02);
     this.route(doc);
 
     // Clips
@@ -195,6 +215,18 @@ export class StudioEngine {
     if (this.doc) this.sync(this.doc);
   }
 
+  private applyBpmToDevices(bpm: number, time?: number) {
+    for (const t of this.tracks.values()) {
+      t.instrument?.setBpm?.(bpm, time);
+      for (const e of t.devices.values()) {
+        if (e.type === 'delay') e.device.update(e.params, bpm, time, time !== undefined ? 0.05 : undefined);
+      }
+    }
+    for (const e of this.masterHost.devices.values()) {
+      if (e.type === 'delay') e.device.update(e.params, bpm, time, time !== undefined ? 0.05 : undefined);
+    }
+  }
+
   private syncTempo(doc: StudioDoc) {
     const map = tempoMap(doc);
     this.map = map;
@@ -205,25 +237,32 @@ export class StudioEngine {
     this.tempoEvents = [];
     const ppq = this.transport.PPQ;
     for (const seg of map.segs.slice(1)) {
-      this.tempoEvents.push(this.transport.schedule((time) => this.transport.bpm.setValueAtTime(seg.bpm, time), `${Math.round(seg.beat * ppq)}i`));
+      this.tempoEvents.push(this.transport.schedule((time) => {
+        this.transport.bpm.setValueAtTime(seg.bpm, time);
+        this.applyBpmToDevices(seg.bpm, time);
+      }, `${Math.round(seg.beat * ppq)}i`));
     }
     const now = bpmAt(map, this.getPositionBeats());
+    this.transport.bpm.cancelScheduledValues(Tone.now());
     if (this.isPlaying) this.transport.bpm.setValueAtTime(now, Tone.now());
     else this.transport.bpm.value = now;
+    this.applyBpmToDevices(now);
   }
 
-  private syncTrack(id: string, track: StudioTrack, bpm: number) {
+  private syncTrack(id: string, track: StudioTrack, bpm: number, doc: StudioDoc) {
     let node = this.tracks.get(id);
     if (!node) {
       const input = new Tone.Gain(1);
       const post = new Tone.Gain(1);
       const channel = new Tone.Channel({ volume: track.volume, pan: track.pan, mute: track.mute });
+      const dryOut = new Tone.Gain(1);
       const meter = this.withMeters ? new Tone.Meter({ smoothing: 0.8 }) : null;
       if (meter) channel.connect(meter);
       input.connect(post);
       post.connect(channel);
+      channel.connect(dryOut);
       node = {
-        input, post, tail: post, channel, meter, devices: new Map(), wiring: [[input, post]], chainKey: '',
+        input, post, tail: post, channel, dryOut, meter, devices: new Map(), wiring: [[input, post]], chainKey: '',
         instrument: null, instKey: '', instParamsKey: '', autoKey: '{}', outTarget: null, sends: new Map(),
       };
       this.tracks.set(id, node);
@@ -231,8 +270,14 @@ export class StudioEngine {
 
     const ch = node.channel;
     // Automated volume/pan are driven by applyAutomation instead.
-    if (!track.automation?.vol?.length && ch.volume.value !== track.volume) ch.volume.rampTo(track.volume, 0.02);
-    if (!track.automation?.pan?.length && ch.pan.value !== track.pan) ch.pan.rampTo(track.pan, 0.02);
+    if (!track.automation?.vol?.length) {
+      if (this.isOffline) ch.volume.value = track.volume;
+      else if (Math.abs(ch.volume.value - track.volume) > 1e-4) ch.volume.rampTo(track.volume, 0.02);
+    }
+    if (!track.automation?.pan?.length) {
+      if (this.isOffline) ch.pan.value = track.pan;
+      else if (Math.abs(ch.pan.value - track.pan) > 1e-4) ch.pan.rampTo(track.pan, 0.02);
+    }
     // When a track's automation changes, re-apply base values so removed lanes don't stick.
     const autoKey = JSON.stringify(track.automation ?? {});
     if (autoKey !== node.autoKey) {
@@ -271,16 +316,20 @@ export class StudioEngine {
       node.instKey = '';
     }
 
-    this.syncEffects(node, track.effects, bpm);
+    this.syncEffects(node, track.effects, bpm, doc, id);
   }
 
-  private syncEffects(host: ChainHost, effects: StudioEffect[] | undefined, bpm: number) {
+  private syncEffects(host: ChainHost, effects: StudioEffect[] | undefined, bpm: number, doc: StudioDoc, hostTrackId: string) {
     const list = (effects ?? []).filter((fx) => EFFECT_DEFS[fx.type]);
     let rewire = false;
     const seen = new Set<string>();
     for (const fx of list) {
       seen.add(fx.id);
       const p = resolveParams(fx.type, fx.params);
+      // Treat a deleted or cyclic sidechain key track as off so the compressor keeps working.
+      if (fx.type === 'compressor' && typeof p.sidechain === 'string' && p.sidechain && isSidechainCycle(doc, hostTrackId, p.sidechain)) {
+        p.sidechain = '';
+      }
       const structKey = EFFECT_DEFS[fx.type].structKey(p);
       const paramKey = `${JSON.stringify(p)}@${bpm}`;
       const entry = host.devices.get(fx.id);
@@ -340,6 +389,7 @@ export class StudioEngine {
   /** Outputs (groups / master), sends, sidechain keys and solo-in-place muting. */
   private route(doc: StudioDoc) {
     const audible = audibleUnderSolo(doc);
+    const returnOnly = isReturnOnlySolo(doc);
     for (const [id, node] of this.tracks) {
       const track = doc.tracks[id];
       if (!track) continue;
@@ -347,8 +397,8 @@ export class StudioEngine {
       const dest = resolveOutput(doc, id);
       const target = dest ? this.tracks.get(dest)!.input : this.masterIn;
       if (node.outTarget !== target) {
-        if (node.outTarget) { try { node.channel.disconnect(node.outTarget); } catch { /* disposed with its track */ } }
-        node.channel.connect(target);
+        if (node.outTarget) { try { node.dryOut.disconnect(node.outTarget); } catch { /* disposed with its track */ } }
+        node.dryOut.connect(target);
         node.outTarget = target;
       }
 
@@ -376,7 +426,13 @@ export class StudioEngine {
         const g = Tone.dbToGain(db);
         const s = node.sends.get(rid);
         // Automated sends are driven by applyAutomation.
-        if (s) { if (!track.automation?.[`send:${rid}`]?.length && Math.abs(s.gain.gain.value - g) > 1e-6) s.gain.gain.rampTo(g, 0.02); continue; }
+        if (s) {
+          if (!track.automation?.[`send:${rid}`]?.length && Math.abs(s.gain.gain.value - g) > 1e-6) {
+            if (this.isOffline) s.gain.gain.value = g;
+            else s.gain.gain.rampTo(g, 0.02);
+          }
+          continue;
+        }
         const target = this.tracks.get(rid)!.input;
         const gain = new Tone.Gain(g);
         node.channel.connect(gain);
@@ -384,21 +440,26 @@ export class StudioEngine {
         node.sends.set(rid, { gain, target });
       }
 
-      const mute = track.mute || !audible.has(id);
+      // When soloing only return track(s), keep source tracks unmuted so their
+      // sends still feed the soloed return(s), while muting dry output at master.
+      const mute = returnOnly && track.kind !== 'return' ? track.mute : (track.mute || !audible.has(id));
       if (node.channel.mute !== mute) node.channel.mute = mute;
+      const dryGain = returnOnly && track.kind !== 'return' && dest === '' ? 0 : 1;
+      if (node.dryOut.gain.value !== dryGain) node.dryOut.gain.value = dryGain;
     }
 
     // Sidechain keys: compressor param `sidechain` names the key track (tapped pre-fader).
-    const hosts: ChainHost[] = [...this.tracks.values(), this.masterHost];
-    for (const host of hosts) {
+    const hostEntries: [string, ChainHost][] = [...this.tracks.entries(), ['', this.masterHost]];
+    for (const [hostTrackId, host] of hostEntries) {
       for (const entry of host.devices.values()) {
         const sc = entry.device.sidechain;
         if (!sc) continue;
         const keyId = typeof entry.params.sidechain === 'string' ? entry.params.sidechain : '';
-        const from = keyId ? this.tracks.get(keyId)?.post ?? null : null;
+        const valid = keyId && !isSidechainCycle(doc, hostTrackId, keyId);
+        const from = valid ? this.tracks.get(keyId)?.post ?? null : null;
         if (entry.scFrom === from) continue;
         if (entry.scFrom) { try { entry.scFrom.disconnect(sc); } catch { /* */ } }
-        if (from && from !== (host as TrackNode).post) from.connect(sc);
+        if (from) from.connect(sc);
         entry.scFrom = from;
       }
     }
@@ -462,7 +523,9 @@ export class StudioEngine {
     if (remaining <= 0.001) return;
     const srcInto = into * play.rate;
     try {
-      if (player instanceof Tone.GrainPlayer) player.start(time, play.srcOffset + srcInto, remaining);
+      // Tone.GrainPlayer._start divides offset by (grainSize / playbackRate),
+      // multiplying buffer offset by playbackRate — divide by rate to compensate.
+      if (player instanceof Tone.GrainPlayer) player.start(time, (play.srcOffset + srcInto) / play.rate, remaining);
       else player.start(time, play.srcOffset + srcInto, play.srcDur - srcInto);
     } catch (e) { console.warn('[studio] clip start failed', e); }
   }
@@ -481,13 +544,13 @@ export class StudioEngine {
 
   private stopPlayers(time: number) {
     for (const c of this.clips.values()) {
-      if (c.player && c.player.state === 'started') { try { c.player.stop(time); } catch { /* */ } }
+      if (c.player) { try { c.player.stop(time); } catch { /* not started */ } }
     }
   }
 
   private syncMidiClip(id: string, clip: StudioClip) {
     const track = this.tracks.get(clip.trackId);
-    if (!track?.instrument) return;
+    if (!track?.instrument) { this.disposeClip(id); return; }
     const key = midiClipKey(clip, track.instKey);
     if (this.clips.get(id)?.key === key) return;
     this.disposeClip(id);
@@ -497,16 +560,21 @@ export class StudioEngine {
     const instrument = track.instrument;
     const gain = Tone.dbToGain(clip.gain ?? 0);
     const events = Object.values(clip.notes ?? {})
-      .filter((n) => n.start < clip.length)
-      .map((n) => ({
-        time: `${Math.round(n.start * ppq)}i`,
-        pitch: n.pitch,
+      .filter((n) => n.start >= 0 && n.start < clip.length && n.len > 0)
+      .map((n) => {
+        const absStart = clip.start + n.start;
         // Notes are cut at the clip boundary
-        lenTicks: Math.round(Math.min(n.len, clip.length - n.start) * ppq),
-        vel: Math.min(1, n.vel * gain),
-      }));
+        const absEnd = clip.start + Math.min(clip.length, n.start + n.len);
+        return {
+          time: `${Math.round(n.start * ppq)}i`,
+          pitch: n.pitch,
+          absStart,
+          absEnd,
+          vel: Math.min(1, n.vel * gain),
+        };
+      });
     const part = new Tone.Part((time, ev) => {
-      const dur = Tone.Ticks(ev.lenTicks).toSeconds();
+      const dur = this.map ? Math.max(0.005, spanSec(this.map, ev.absStart, ev.absEnd)) : 0.1;
       instrument.play(ev.pitch, dur, time, ev.vel);
     }, events);
     part.start(`${Math.round(clip.start * ppq)}i`);
@@ -545,6 +613,7 @@ export class StudioEngine {
     node.input.dispose();
     node.post.dispose();
     node.channel.dispose();
+    node.dryOut.dispose();
     this.tracks.delete(id);
     // Tracks that fed this one (a group) are re-routed by route().
     for (const t of this.tracks.values()) if (t.outTarget === node.input) t.outTarget = null;
@@ -554,7 +623,8 @@ export class StudioEngine {
     const doc = this.doc;
     if (!doc || this.disposed) return;
     const beat = this.transport.getTicksAtTime(time) / this.transport.PPQ;
-    const step = (60 / this.transport.bpm.getValueAtTime(time)) / 16;
+    const bpm = this.map ? bpmAt(this.map, beat) : this.transport.bpm.getValueAtTime(time);
+    const step = (60 / bpm) / 16;
     for (const [trackId, node] of this.tracks) {
       const lanes = doc.tracks[trackId]?.automation;
       if (!lanes) continue;
@@ -571,11 +641,11 @@ export class StudioEngine {
           const param = lane.slice(sep + 1);
           if (entry && entry.params[param] !== v) {
             entry.params = { ...entry.params, [param]: v };
-            entry.device.update(entry.params, doc.meta.bpm);
+            entry.device.update(entry.params, bpm, time, step);
             entry.paramKey = ''; // next sync restores/merges base values
           }
         } else if (lane.startsWith('inst:')) {
-          node.instrument?.setParam?.(lane.slice(5), v);
+          node.instrument?.setParam?.(lane.slice(5), v, time, step);
         }
       }
     }
@@ -604,30 +674,44 @@ export class StudioEngine {
   private setTempoFor(beats: number) {
     if (!this.map) return;
     const bpm = bpmAt(this.map, beats);
+    this.transport.bpm.cancelScheduledValues(Tone.now());
     if (this.transport.bpm.value !== bpm) this.transport.bpm.value = bpm;
+    this.applyBpmToDevices(bpm);
   }
 
-  async play(fromBeats: number) {
+  async play(fromBeats: number): Promise<boolean> {
+    const seq = ++this.playSeq;
     await Tone.start();
-    if (this.disposed) return;
+    if (this.disposed || seq !== this.playSeq) return false;
     const ticks = Math.max(0, Math.round(fromBeats * this.transport.PPQ));
     this.setTempoFor(fromBeats);
     if (this.isPlaying) {
+      this.stopPlayers(Tone.now());
+      for (const t of this.tracks.values()) t.instrument?.releaseAll();
       this.transport.ticks = ticks;
-      return;
+      return true;
     }
     this.transport.ticks = ticks;
     // Small lookahead so the first events aren't dropped.
     this.transport.start('+0.05');
+    return true;
   }
 
   stop() {
-    if (this.transport.state !== 'stopped') this.transport.pause();
+    this.playSeq++;
+    this.cancelCountIn();
+    // Always pause (even if state === 'stopped') to cancel a queued '+0.05' start.
+    try { this.transport.pause(); } catch { /* */ }
+    this.stopPlayers(Tone.now());
     for (const t of this.tracks.values()) t.instrument?.releaseAll();
   }
 
   seek(beats: number) {
     this.setTempoFor(beats);
+    if (this.isPlaying) {
+      this.stopPlayers(Tone.now());
+      for (const t of this.tracks.values()) t.instrument?.releaseAll();
+    }
     this.transport.ticks = Math.max(0, Math.round(beats * this.transport.PPQ));
   }
 
@@ -666,12 +750,24 @@ export class StudioEngine {
     return this.metronomeOn;
   }
 
+  /** Cancels any active count-in immediately. */
+  cancelCountIn() {
+    const cancel = this.countInCancel;
+    if (!cancel) return;
+    this.countInCancel = null;
+    cancel();
+  }
+
   /**
    * Clicks `bars` bars at the tempo / signature of `atBeats`, starting now.
-   * Resolves (on the main thread) when the count-in ends; `endTime` is its context time.
+   * Resolves with the end context time, or `null` if cancelled / disposed.
    */
-  async countIn(atBeats: number, bars: number): Promise<number> {
+  async countIn(atBeats: number, bars: number): Promise<number | null> {
+    this.cancelCountIn();
+    let aborted = false;
+    this.countInCancel = () => { aborted = true; };
     await Tone.start();
+    if (this.disposed || aborted) { this.countInCancel = null; return null; }
     const map = this.map;
     const bpm = map ? bpmAt(map, atBeats) : this.bpm;
     const sig = map ? map.sigs.reduce((a, s) => (s.beat <= atBeats + 1e-6 ? s : a), map.sigs[0]) : { num: 4, den: 4 };
@@ -681,8 +777,20 @@ export class StudioEngine {
     const n = sig.num * bars;
     for (let i = 0; i < n; i++) click.triggerAttackRelease(i % sig.num === 0 ? 'C6' : 'G5', 0.03, t0 + i * beatSec);
     const end = t0 + n * beatSec;
-    await new Promise((r) => setTimeout(r, Math.max(0, (end - Tone.now()) * 1000 - 60)));
-    return end;
+    return await new Promise<number | null>((resolve) => {
+      const done = (val: number | null) => {
+        if (this.countInCancel === cancel) this.countInCancel = null;
+        window.clearTimeout(timer);
+        resolve(val);
+      };
+      const cancel = () => {
+        // Recreate click on next use so already-scheduled clicks stop immediately.
+        if (this.click && !this.metronome) { try { this.click.dispose(); } catch { /* */ } this.click = null; }
+        done(null);
+      };
+      const timer = window.setTimeout(() => done(this.disposed ? null : end), Math.max(0, (end - Tone.now()) * 1000 - 60));
+      this.countInCancel = cancel;
+    });
   }
 
   /** Audition a note on an instrument track (piano roll, keyboard). */
@@ -707,9 +815,13 @@ export class StudioEngine {
     this.tracks.get(trackId)?.instrument?.setModWheel?.(value);
   }
 
-  /** Held note from live input (computer keyboard). */
+  /** Held note from live input (computer keyboard / MIDI). */
   async noteOn(trackId: string, pitch: number, velocity: number) {
+    const key = `${trackId}:${pitch}`;
+    this.liveNotes.add(key);
     await Tone.start();
+    // If noteOff arrived while waiting for Tone.start(), don't leave a stuck note.
+    if (this.disposed || !this.liveNotes.has(key)) return;
     const inst = this.tracks.get(trackId)?.instrument;
     if (!inst) return;
     const now = Tone.immediate();
@@ -718,6 +830,7 @@ export class StudioEngine {
   }
 
   noteOff(trackId: string, pitch: number) {
+    this.liveNotes.delete(`${trackId}:${pitch}`);
     this.tracks.get(trackId)?.instrument?.noteOff?.(pitch, Tone.immediate());
   }
 
@@ -825,7 +938,7 @@ export class StudioEngine {
       this.transport.off('loopStart', this.onStart);
       this.transport.off('stop', this.onStopLike);
       this.transport.off('pause', this.onStopLike);
-      this.transport.off('loopEnd', this.onStopLike);
+      this.transport.off('loopEnd', this.onLoopEnd);
       this.transport.off('loop', this.onLoop);
     });
     for (const id of [...this.clips.keys()]) safe(() => this.disposeClip(id));

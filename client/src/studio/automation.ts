@@ -189,10 +189,15 @@ function commitBuffer(k: string): boolean {
   return true;
 }
 
-/** Diff two flat param sets and record every changed numeric value under `prefix`. */
+/** Diff two flat param sets and record every changed automatable numeric value under `prefix`. */
 export function recordParamDiff(trackId: string, prefix: string, before: Record<string, unknown>, after: Record<string, unknown>) {
   if (!context.armed) return;
+  const doc = useStudioStore.getState().doc;
+  const track = doc?.tracks[trackId];
+  if (!track) return;
+  const valid = new Set(laneDefs(track, doc).map((d) => d.key));
   for (const [key, v] of Object.entries(after)) {
-    if (typeof v === 'number' && v !== before[key]) recordAutomation(trackId, `${prefix}${key}`, v);
+    const lane = `${prefix}${key}`;
+    if (typeof v === 'number' && v !== before[key] && valid.has(lane)) recordAutomation(trackId, lane, v);
   }
 }

@@ -4,6 +4,7 @@ import type { StudioClip, StudioNote, StudioOp, StudioTrack, StudioMeta } from '
 import type { StudioEngine } from './engine/StudioEngine';
 import { DRUM_MAP } from './engine/instruments';
 import { barBeats, snapBeats, floorBeats, MIN_CLIP_BEATS, keyBelongsToTarget } from './studioUtils';
+import { batchOps } from './midiImport';
 import { SCALES, PITCH_CLASSES, projectScale, inScale, nearestInScale } from './scales';
 
 interface Props {
@@ -151,14 +152,48 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
     return () => window.removeEventListener('pointerdown', onDown);
   }, [popover]);
 
-  // Ctrl/Cmd + wheel zooms around the pointer. Native listener: React's is passive.
+  // Ctrl/Cmd + wheel zooms around the pointer; Shift + wheel over a note adjusts velocity.
+  // Both use a native non-passive listener because React's onWheel is passive.
   const zoomRef = useRef(pxPerBeat);
   zoomRef.current = pxPerBeat;
   const pendingScroll = useRef<number | null>(null);
+  const wheelVel = useRef<{ id: string; vel: number; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const wheelCtx = useRef({ editable, notes, clipId, edit });
+  wheelCtx.current = { editable, notes, clipId, edit };
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        const noteEl = (e.target as HTMLElement | null)?.closest('[data-note-id]') as HTMLElement | null;
+        const id = noteEl?.dataset.noteId;
+        const ctx = wheelCtx.current;
+        if (!id || !ctx.editable) return;
+        const base = ctx.notes[id];
+        if (!base) return;
+        e.preventDefault();
+        const curVel = wheelVel.current?.id === id ? wheelVel.current.vel : base.vel;
+        const vel = Math.max(0.05, Math.min(1, Math.round((curVel + (e.deltaY < 0 ? 0.05 : -0.05)) * 100) / 100));
+        if (wheelVel.current) {
+          clearTimeout(wheelVel.current.timer);
+          if (wheelVel.current.id !== id) {
+            ctx.edit([{ t: 'set', path: ['clips', ctx.clipId, 'notes', wheelVel.current.id, 'vel'], value: wheelVel.current.vel }]);
+          }
+        }
+        setPreview({ ...(previewRef.current ?? {}), [id]: { ...base, vel } });
+        const commitId = id;
+        const commitClipId = ctx.clipId;
+        const timer = setTimeout(() => {
+          const cur = wheelVel.current;
+          wheelVel.current = null;
+          setPreview(null);
+          if (cur && cur.id === commitId) {
+            wheelCtx.current.edit([{ t: 'set', path: ['clips', commitClipId, 'notes', commitId, 'vel'], value: cur.vel }]);
+          }
+        }, 250);
+        wheelVel.current = { id, vel, timer };
+        return;
+      }
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       const px = zoomRef.current;
@@ -169,7 +204,10 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
       setPxPerBeat(next);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      if (wheelVel.current) { clearTimeout(wheelVel.current.timer); wheelVel.current = null; }
+    };
   }, []);
   useLayoutEffect(() => {
     if (pendingScroll.current != null && scrollRef.current) {
@@ -271,13 +309,13 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
           ids.push(nid);
           return { t: 'set', path: ['clips', clipId, 'notes', nid], value: result[copyKey(id)] };
         });
-        edit(ops);
+        commitBatched(ops);
         setSelected(ids);
         return;
       }
       const ops = noteOps(result, d.origin);
       if (d.mode !== 'move') { const first = result[d.ids[0]]; if (first) lastLen.current = first.len; }
-      if (ops.length) edit(ops);
+      if (ops.length) commitBatched(ops);
     };
     e.preventDefault();
     window.addEventListener('pointermove', move);
@@ -383,6 +421,10 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
     setSelected((s) => (e.shiftKey ? [...new Set([...s, ...ids])] : ids));
   };
 
+  const commitBatched = (ops: StudioOp[]) => {
+    for (const batch of batchOps(ops)) edit(batch);
+  };
+
   // ───────────── Edits on the selection ─────────────
 
   /** Selected notes, or every note in the clip when nothing is selected. */
@@ -393,7 +435,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
 
   const deleteNotes = (ids: string[]) => {
     if (!editable || !ids.length) return;
-    edit(ids.filter((id) => notes[id]).map((id) => ({ t: 'del' as const, path: ['clips', clipId, 'notes', id] })));
+    commitBatched(ids.filter((id) => notes[id]).map((id) => ({ t: 'del' as const, path: ['clips', clipId, 'notes', id] })));
     setSelected((s) => s.filter((x) => !ids.includes(x)));
   };
 
@@ -407,7 +449,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
       next[id] = t;
     }
     const ops = noteOps(next, notes);
-    if (ops.length) edit(ops);
+    if (ops.length) commitBatched(ops);
   };
 
   const quantize = () => {
@@ -437,7 +479,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
       ids.push(id);
       return { t: 'set', path: ['clips', clipId, 'notes', id], value: { ...n, start: Math.max(0, at + n.start - anchor) } };
     });
-    edit(ops);
+    commitBatched(ops);
     setSelected(ids);
   };
 
@@ -453,8 +495,8 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
     edit(ops);
   };
 
-  // Note-editing shortcuts while the roll has focus. Handled keys stop here so
-  // the arrange view's shortcuts don't also fire.
+  // Note-editing shortcuts while the roll has focus. Consume these keys even when
+  // no notes are selected so they never bubble to the arrangement view.
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (keyBelongsToTarget(e)) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -463,34 +505,36 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
     const sel = selected.filter((id) => notes[id]);
 
     if (mod && key === 'a') { done(); setSelected(Object.keys(notes)); return; }
-    if (mod && key === 'c' && sel.length) { done(); noteClipboard = sel.map((id) => notes[id]); return; }
+    if (mod && key === 'c') { done(); if (sel.length) noteClipboard = sel.map((id) => notes[id]); return; }
     if (mod && key === '1') { done(); stepGrid(true); return; }
     if (mod && key === '2') { done(); stepGrid(false); return; }
     if (key === 'Escape') { done(); if (popover) setPopover(null); else if (selected.length) setSelected([]); else onClose(); return; }
     if (!mod && key === 'b') { done(); setTool((t) => (t === 'draw' ? 'select' : 'draw')); return; }
-    if (!editable) return;
-    if ((key === 'Delete' || key === 'Backspace') && sel.length) { done(); deleteNotes(sel); return; }
-    if (mod && key === 'u') { done(); quantize(); return; }
-    if (mod && key === 'x' && sel.length) { done(); noteClipboard = sel.map((id) => notes[id]); deleteNotes(sel); return; }
-    if (mod && key === 'v' && noteClipboard?.length) {
+    if (key === 'Delete' || key === 'Backspace') { done(); if (editable && sel.length) deleteNotes(sel); return; }
+    if (mod && key === 'u') { done(); if (editable) quantize(); return; }
+    if (mod && key === 'x') { done(); if (editable && sel.length) { noteClipboard = sel.map((id) => notes[id]); deleteNotes(sel); } return; }
+    if (mod && key === 'v') {
       done();
-      pasteNotes(noteClipboard, playheadInClip ?? 0);
+      if (editable && noteClipboard?.length) pasteNotes(noteClipboard, playheadInClip ?? 0);
       return;
     }
-    if (mod && key === 'd' && sel.length) {
+    if (mod && key === 'd') {
       done();
-      const list = sel.map((id) => notes[id]);
-      const start = Math.min(...list.map((n) => n.start));
-      const end = Math.max(...list.map((n) => n.start + n.len));
-      pasteNotes(list, start + Math.max(grid, end - start));
+      if (editable && sel.length) {
+        const list = sel.map((id) => notes[id]);
+        const start = Math.min(...list.map((n) => n.start));
+        const end = Math.max(...list.map((n) => n.start + n.len));
+        pasteNotes(list, start + Math.max(grid, end - start));
+      }
       return;
     }
     if (mod) return;
-    if ((key === 'ArrowUp' || key === 'ArrowDown') && sel.length) {
+    if (key === 'ArrowUp' || key === 'ArrowDown') {
       done();
+      if (!editable || !sel.length) return;
       const up = key === 'ArrowUp';
-      if (rowStepping && !e.shiftKey) {
-        // Step between visible rows: kit pieces, or scale degrees when folded.
+      if (isDrums || (rowStepping && !e.shiftKey)) {
+        // Step between visible rows: kit pieces (never transpose drums out of DRUM_MAP), or scale degrees when folded.
         transform(sel, (n) => {
           const row = (rowOf.get(n.pitch) ?? 0) + (up ? -1 : 1);
           return row >= 0 && row < pitches.length ? { ...n, pitch: pitches[row] } : null;
@@ -501,21 +545,13 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
       }
       return;
     }
-    if ((key === 'ArrowLeft' || key === 'ArrowRight') && sel.length) {
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
       done();
+      if (!editable || !sel.length) return;
       const d = (key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? perBar : grid);
       transform(sel, (n) => (n.start + d >= 0 ? { ...n, start: n.start + d } : null));
       return;
     }
-  };
-
-  const onNoteWheel = (e: React.WheelEvent, id: string) => {
-    if (!editable || !e.shiftKey) return;
-    e.preventDefault();
-    const n = notes[id];
-    if (!n) return;
-    const vel = Math.max(0.05, Math.min(1, Math.round((n.vel + (e.deltaY < 0 ? 0.05 : -0.05)) * 100) / 100));
-    edit([{ t: 'set', path: ['clips', clipId, 'notes', id, 'vel'], value: vel }], { undoable: true });
   };
 
   // ───────────── Velocity lane ─────────────
@@ -569,7 +605,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
       window.removeEventListener('pointerup', up);
       setPreview(null);
       const ops = noteOps(out, origin);
-      if (ops.length) edit(ops);
+      if (ops.length) commitBatched(ops);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -775,6 +811,7 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
               return (
                 <div
                   key={id}
+                  data-note-id={id}
                   className={`studio-note${sel ? ' selected' : ''}${n.start >= clip.length ? ' outside' : ''}${off ? ' off-scale' : ''}`}
                   style={{
                     left: n.start * pxPerBeat,
@@ -787,7 +824,6 @@ export default function PianoRoll({ clipId, clip, track, trackId, meta, engine, 
                   onPointerDown={(e) => onNotePointerDown(e, id)}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); deleteNotes([id]); }}
                   onDoubleClick={(e) => { e.stopPropagation(); deleteNotes([id]); }}
-                  onWheel={(e) => onNoteWheel(e, id)}
                 >
                   {!isDrums && w >= 30 && <span className="studio-note-label">{noteName(n.pitch)}</span>}
                 </div>

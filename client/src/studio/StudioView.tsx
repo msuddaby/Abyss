@@ -277,12 +277,21 @@ export default function StudioView({ channelId, compact }: Props) {
 
   // ───────────── Transport ─────────────
 
-  const play = useCallback(async (from: number, broadcast: boolean) => {
-    if (!engine) return;
-    await engine.play(from);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const play = useCallback(async (from: number, broadcast: boolean): Promise<boolean> => {
+    if (!engine) return false;
+    const started = await engine.play(from);
+    if (!started || !mountedRef.current) return false;
     setNeedsUnlock(false);
     setIsPlaying(true);
-    if (broadcast && useStudioStore.getState().followTransport) sendTransport(true, from);
+    const st = useStudioStore.getState();
+    if (broadcast && st.followTransport && st.canEdit) sendTransport(true, from);
+    return true;
   }, [engine, sendTransport]);
 
   const stop = useCallback((broadcast: boolean) => {
@@ -291,22 +300,25 @@ export default function StudioView({ channelId, compact }: Props) {
     const pos = engine.getPositionBeats();
     setPlayhead(pos);
     setIsPlaying(false);
-    if (broadcast && useStudioStore.getState().followTransport) sendTransport(false, pos);
+    const st = useStudioStore.getState();
+    if (broadcast && st.followTransport && st.canEdit) sendTransport(false, pos);
   }, [engine, sendTransport]);
 
   const stopRecording = useCallback(async () => {
-    if (recorder.state === 'recording') await recorder.stop();
-    else stop(true);
+    // End MIDI take immediately so network upload of an audio take doesn't inflate its length.
     input.endTake();
     setMidiRecording(false);
+    if (recorder.state === 'recording') await recorder.stop();
+    else stop(true);
     setIsPlaying(false);
   }, [recorder, stop, input]);
 
   const togglePlay = useCallback(() => {
+    if (countingIn) { engine?.cancelCountIn(); setCountingIn(false); return; }
     if (recorder.state === 'recording' || midiRecording) { void stopRecording(); return; }
     if (isPlaying) stop(true);
     else void play(playhead, true);
-  }, [isPlaying, play, stop, playhead, recorder, midiRecording, stopRecording]);
+  }, [countingIn, engine, isPlaying, play, stop, playhead, recorder, midiRecording, stopRecording]);
 
   const seek = useCallback((beats: number) => {
     setPlayhead(beats);
@@ -315,7 +327,8 @@ export default function StudioView({ channelId, compact }: Props) {
       void play(beats, true);
     } else {
       engine.seek(beats);
-      if (useStudioStore.getState().followTransport) sendTransport(false, beats);
+      const st = useStudioStore.getState();
+      if (st.followTransport && st.canEdit) sendTransport(false, beats);
     }
   }, [engine, isPlaying, play, sendTransport]);
 
@@ -356,12 +369,18 @@ export default function StudioView({ channelId, compact }: Props) {
       const d = useStudioStore.getState().doc;
       const elapsed = Math.max(0, (Date.now() + offset - t.serverTimeMs) / 1000);
       const map = d ? tempoMap(d) : null;
-      void play(map ? secToBeat(map, beatToSec(map, t.positionBeats) + elapsed) : t.positionBeats, false);
+      let pos = map ? secToBeat(map, beatToSec(map, t.positionBeats) + elapsed) : t.positionBeats;
+      const meta = d?.meta;
+      if (meta?.loopEnabled && meta.loopEnd > meta.loopStart && pos >= meta.loopEnd) {
+        pos = meta.loopStart + ((pos - meta.loopStart) % (meta.loopEnd - meta.loopStart));
+      }
+      void play(pos, false);
     }
   };
 
   /** Arrangement record: MIDI onto armed instrument tracks (or the selected one), audio onto an armed audio track. */
   const toggleRecord = async () => {
+    if (countingIn) { engine?.cancelCountIn(); setCountingIn(false); return; }
     if (recorder.state === 'recording' || midiRecording) { await stopRecording(); return; }
     if (!doc) return;
     const audioTrack = armedTrackIds.find((id) => doc.tracks[id]?.kind === 'audio');
@@ -374,13 +393,27 @@ export default function StudioView({ channelId, compact }: Props) {
     if (countIn > 0 && engine) {
       // Clicks only you hear; recording starts on the downbeat after.
       setCountingIn(true);
-      try { await engine.countIn(playhead, countIn); } finally { setCountingIn(false); }
+      let end: number | null = null;
+      try { end = await engine.countIn(playhead, countIn); } finally { if (mountedRef.current) setCountingIn(false); }
+      if (end == null || !mountedRef.current) return;
     }
     input.beginTake(midiTracks, playhead);
     setMidiRecording(midiTracks.length > 0);
-    if (audioTrack) await recorder.start(audioTrack, playhead, liveInput?.recordStream);
-    else await play(playhead, true);
-    setIsPlaying(true);
+    if (audioTrack) {
+      const ok = await recorder.start(audioTrack, playhead, liveInput?.recordStream);
+      if (!ok) {
+        input.endTake();
+        if (mountedRef.current) setMidiRecording(false);
+        return;
+      }
+      if (mountedRef.current) setIsPlaying(true);
+    } else {
+      const ok = await play(playhead, true);
+      if (!ok) {
+        input.endTake();
+        if (mountedRef.current) setMidiRecording(false);
+      }
+    }
   };
 
   const armTrack = (id: string, additive: boolean) => {
@@ -791,7 +824,16 @@ export default function StudioView({ channelId, compact }: Props) {
 
   // ───────────── Render ─────────────
 
-  if (error) return <div className="studio-view"><div className="studio-message">{error}</div></div>;
+  if (error) {
+    return (
+      <div className="studio-view">
+        <div className="studio-message">
+          <span>{error}</span>
+          <button className="studio-btn primary" onClick={() => void useStudioStore.getState().resync()}>Retry</button>
+        </div>
+      </div>
+    );
+  }
   if (loading || !doc) return <div className="studio-view"><div className="studio-message">Loading studio…</div></div>;
 
   const meta = doc.meta;

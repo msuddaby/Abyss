@@ -40,7 +40,7 @@ export interface FxDevice {
   analyser: Tone.Analyser;
   structKey: string;
   ready: Promise<void>;
-  update: (p: Resolved, bpm: number) => void;
+  update: (p: Resolved, bpm: number, time?: number, ramp?: number) => void;
   /** Compressor gain reduction in dB (≤ 0) */
   getReduction?: () => number;
   /** Sidechain key input (compressor in sidechain mode); the engine wires the key track here */
@@ -152,20 +152,22 @@ function buildEq(p: Resolved): FxDevice {
   const analyser = new Tone.Analyser({ type: 'fft', size: FFT_SIZE, smoothing: 0.8 });
   output.connect(analyser);
 
-  const update = (p: Resolved) => {
+  const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+    void _bpm;
+    const r = ramp ?? 0.02;
     for (let i = 0; i < EQ_BANDS; i++) {
       const b = eqBand(p, i);
       bandStages(b.type, b.f, b.gScaled, b.q, b.on).forEach((st, s) => {
         const f = filters[i][s];
         if (f.type !== st.type) f.type = st.type;
-        f.frequency.rampTo(st.frequency, 0.02);
-        f.Q.rampTo(st.Q, 0.02);
-        f.gain.rampTo(st.gain, 0.02);
+        setAudioParam(f.frequency, st.frequency, r, time);
+        setAudioParam(f.Q, st.Q, r, time);
+        setAudioParam(f.gain, st.gain, r, time);
       });
     }
-    output.gain.rampTo(Tone.dbToGain(Number(p.out ?? 0)), 0.02);
+    setAudioParam(output.gain, Tone.dbToGain(Number(p.out ?? 0)), r, time);
   };
-  update(p);
+  update(p, 120, undefined, 0);
 
   return {
     input, output, analyser, structKey: 'eq', ready: Promise.resolve(), update,
@@ -204,6 +206,24 @@ export function eqResponse(p: Resolved, freqs: Float32Array<ArrayBuffer>, onlyBa
 
 // ───────────────────────── Shared helpers ─────────────────────────
 
+/**
+ * Set or schedule a Tone Param/Signal. Uses immediate `.value` on initial
+ * construction (ramp <= 0) or unscheduled offline updates to prevent beat-0
+ * ramp pops, and schedules at `time` when driven by automation.
+ */
+function setAudioParam(param: { value: unknown; rampTo: (v: number, r: number, t?: number) => unknown; setValueAtTime?: (v: number, t: number) => unknown }, val: number, ramp: number, time?: number) {
+  if (time !== undefined) {
+    if (ramp <= 0 && param.setValueAtTime) param.setValueAtTime(val, time);
+    else param.rampTo(val, ramp, time);
+    return;
+  }
+  if (ramp <= 0 || Tone.getContext().isOffline) {
+    param.value = val;
+    return;
+  }
+  param.rampTo(val, ramp);
+}
+
 /** Equal-power dry/wet around a wet chain. */
 function dryWet(input: Tone.Gain, output: Tone.Gain) {
   const dry = new Tone.Gain(1);
@@ -213,10 +233,10 @@ function dryWet(input: Tone.Gain, output: Tone.Gain) {
   wet.connect(output);
   return {
     wet,
-    set(mix01: number) {
+    set(mix01: number, time?: number, ramp = 0.03) {
       const m = Math.max(0, Math.min(1, mix01));
-      dry.gain.rampTo(Math.cos((m * Math.PI) / 2), 0.03);
-      wet.gain.rampTo(Math.sin((m * Math.PI) / 2), 0.03);
+      setAudioParam(dry.gain, Math.cos((m * Math.PI) / 2), ramp, time);
+      setAudioParam(wet.gain, Math.sin((m * Math.PI) / 2), ramp, time);
     },
     dispose() { dry.dispose(); wet.dispose(); },
   };
@@ -415,16 +435,18 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       b.input.connect(comp);
       comp.connect(makeup);
       makeup.connect(dw.wet);
-      const update = (p: Resolved) => {
-        comp.threshold.rampTo(num(p, 'threshold'), 0.02);
-        comp.ratio.rampTo(num(p, 'ratio'), 0.02);
-        comp.attack.rampTo(num(p, 'attack') / 1000, 0.02);
-        comp.release.rampTo(num(p, 'release') / 1000, 0.02);
-        comp.knee.rampTo(num(p, 'knee'), 0.02);
-        makeup.gain.rampTo(Tone.dbToGain(num(p, 'makeup')), 0.02);
-        dw.set(num(p, 'mix') / 100);
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        const r = ramp ?? 0.02;
+        setAudioParam(comp.threshold, num(p, 'threshold'), r, time);
+        setAudioParam(comp.ratio, num(p, 'ratio'), r, time);
+        setAudioParam(comp.attack, num(p, 'attack') / 1000, r, time);
+        setAudioParam(comp.release, num(p, 'release') / 1000, r, time);
+        setAudioParam(comp.knee, num(p, 'knee'), r, time);
+        setAudioParam(makeup.gain, Tone.dbToGain(num(p, 'makeup')), r, time);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: Promise.resolve(), update,
         getReduction: () => {
@@ -452,16 +474,18 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       const pre = new Tone.Gain(1);
       const post = new Tone.Gain(1);
       b.input.chain(drive, comp, pre, clip, post, b.output);
-      const update = (p: Resolved) => {
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        const r = ramp ?? 0.02;
         const ceil = num(p, 'ceiling');
-        drive.gain.rampTo(Tone.dbToGain(num(p, 'gain')), 0.02);
-        comp.threshold.rampTo(ceil - 1, 0.02);
-        comp.release.rampTo(num(p, 'release') / 1000, 0.02);
+        setAudioParam(drive.gain, Tone.dbToGain(num(p, 'gain')), r, time);
+        setAudioParam(comp.threshold, ceil - 1, r, time);
+        setAudioParam(comp.release, num(p, 'release') / 1000, r, time);
         // clip at the ceiling: scale up into the shaper, back down after
-        pre.gain.rampTo(1 / Tone.dbToGain(ceil), 0.02);
-        post.gain.rampTo(Tone.dbToGain(ceil), 0.02);
+        setAudioParam(pre.gain, 1 / Tone.dbToGain(ceil), r, time);
+        setAudioParam(post.gain, Tone.dbToGain(ceil), r, time);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: Promise.resolve(), update,
         getReduction: () => {
@@ -487,15 +511,19 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       const lp = new Tone.Filter({ type: 'lowpass', frequency: num(p, 'highcut'), rolloff: -12 });
       b.input.chain(reverb, hp, lp, dw.wet);
       let decay = num(p, 'decay'), pre = num(p, 'predelay');
-      const update = (p: Resolved) => {
-        // Decay / pre-delay regenerate the impulse response — only when changed.
-        if (num(p, 'decay') !== decay) { decay = num(p, 'decay'); reverb.decay = decay; }
-        if (num(p, 'predelay') !== pre) { pre = num(p, 'predelay'); reverb.preDelay = pre / 1000; }
-        hp.frequency.rampTo(num(p, 'lowcut'), 0.02);
-        lp.frequency.rampTo(num(p, 'highcut'), 0.02);
-        dw.set(num(p, 'mix') / 100);
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        const r = ramp ?? 0.02;
+        // Decay / pre-delay regenerate the impulse response — skip during scheduled automation.
+        if (time === undefined) {
+          if (num(p, 'decay') !== decay) { decay = num(p, 'decay'); reverb.decay = decay; }
+          if (num(p, 'predelay') !== pre) { pre = num(p, 'predelay'); reverb.preDelay = pre / 1000; }
+        }
+        setAudioParam(hp.frequency, num(p, 'lowcut'), r, time);
+        setAudioParam(lp.frequency, num(p, 'highcut'), r, time);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: reverb.ready, update,
         dispose: () => { reverb.dispose(); hp.dispose(); lp.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
@@ -539,14 +567,15 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       R.out.connect(merge, 0, 1);
       merge.connect(dw.wet);
 
-      const update = (p: Resolved, bpm: number) => {
-        L.delay.delayTime.rampTo(delaySideSeconds(p, 'l', bpm), 0.05);
-        R.delay.delayTime.rampTo(delaySideSeconds(p, 'r', bpm), 0.05);
+      const update = (p: Resolved, bpm: number, time?: number, ramp?: number) => {
+        const r = ramp ?? 0.02;
+        setAudioParam(L.delay.delayTime, delaySideSeconds(p, 'l', bpm), ramp ?? 0.05, time);
+        setAudioParam(R.delay.delayTime, delaySideSeconds(p, 'r', bpm), ramp ?? 0.05, time);
         const freeze = p.freeze === true;
         const pp = p.mode === 'pingpong';
         const fb = freeze ? 1 : Math.min(0.95, num(p, 'feedback') / 100);
         const inGain = freeze ? 0 : 1;
-        const set = (n: Tone.Gain, v: number) => n.gain.rampTo(v, 0.02);
+        const set = (n: Tone.Gain, v: number) => setAudioParam(n.gain, v, r, time);
         set(inLL, inGain * (pp ? 0.5 : 1));
         set(inRL, pp ? inGain * 0.5 : 0);
         set(inRR, pp ? 0 : inGain);
@@ -561,12 +590,12 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
         const lo = filt ? Math.max(20, num(p, 'fFreq') / half) : 10;
         const hi = filt ? Math.min(20000, num(p, 'fFreq') * half) : 22000;
         for (const side of [L, R]) {
-          side.hp.frequency.rampTo(lo, 0.02);
-          side.lp.frequency.rampTo(hi, 0.02);
+          setAudioParam(side.hp.frequency, lo, r, time);
+          setAudioParam(side.lp.frequency, hi, r, time);
         }
-        dw.set(num(p, 'mix') / 100);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p, bpm);
+      update(p, bpm, undefined, 0);
       const nodes = [split, merge, inLL, inRR, inRL, fbLL, fbRR, xLR, xRL, sumL, sumR, L.delay, L.hp, L.lp, R.delay, R.hp, R.lp];
       return {
         ...b, ready: Promise.resolve(), update,
@@ -596,14 +625,16 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
         shaper = ws;
       }
       b.input.chain(drive, shaper, tone, out, dw.wet);
-      const update = (p: Resolved) => {
-        drive.gain.rampTo(Tone.dbToGain(num(p, 'drive')), 0.02);
-        if (shaper instanceof Tone.BitCrusher) shaper.bits.value = Math.round(num(p, 'bits'));
-        tone.frequency.rampTo(num(p, 'tone'), 0.02);
-        out.gain.rampTo(Tone.dbToGain(num(p, 'output')), 0.02);
-        dw.set(num(p, 'mix') / 100);
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        const r = ramp ?? 0.02;
+        setAudioParam(drive.gain, Tone.dbToGain(num(p, 'drive')), r, time);
+        if (shaper instanceof Tone.BitCrusher) setAudioParam(shaper.bits, Math.round(num(p, 'bits')), 0, time);
+        setAudioParam(tone.frequency, num(p, 'tone'), r, time);
+        setAudioParam(out.gain, Tone.dbToGain(num(p, 'output')), r, time);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: Promise.resolve(), update,
         dispose: () => { drive.dispose(); shaper.dispose(); tone.dispose(); out.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
@@ -622,15 +653,18 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       const dw = dryWet(b.input, b.output);
       const chorus = new Tone.Chorus({ wet: 1 }).start();
       b.input.chain(chorus, dw.wet);
-      const update = (p: Resolved) => {
-        chorus.frequency.rampTo(num(p, 'rate'), 0.05);
-        chorus.depth = num(p, 'depth') / 100;
-        chorus.delayTime = num(p, 'delay');
-        chorus.spread = num(p, 'spread');
-        chorus.feedback.rampTo(num(p, 'feedback') / 100, 0.02);
-        dw.set(num(p, 'mix') / 100);
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        setAudioParam(chorus.frequency, num(p, 'rate'), ramp ?? 0.05, time);
+        if (time === undefined || !Tone.getContext().isOffline) {
+          chorus.depth = num(p, 'depth') / 100;
+          chorus.delayTime = num(p, 'delay');
+          chorus.spread = num(p, 'spread');
+        }
+        setAudioParam(chorus.feedback, num(p, 'feedback') / 100, ramp ?? 0.02, time);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: Promise.resolve(), update,
         dispose: () => { chorus.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
@@ -686,25 +720,32 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       crackle.chain(crackleBp, crackleLevel, noiseGate);
       noiseGate.connect(wet);
 
-      const update = (p: Resolved) => {
-        if (num(p, 'drive') !== driveDb) { driveDb = num(p, 'drive'); shaper.setMap(tanhCurve(driveDb)); }
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
+        const nextDrive = num(p, 'drive');
+        if (nextDrive !== driveDb && (time === undefined || !ctx.isOffline)) {
+          driveDb = nextDrive;
+          shaper.setMap(tanhCurve(driveDb));
+        }
         // Drive adds level; pull it back so the knob mostly changes colour.
-        out.gain.rampTo(Tone.dbToGain(num(p, 'output') - driveDb * 0.5), 0.03);
-        bump.gain.rampTo(num(p, 'bump'), 0.03);
+        setAudioParam(out.gain, Tone.dbToGain(num(p, 'output') - nextDrive * 0.5), ramp ?? 0.03, time);
+        setAudioParam(bump.gain, num(p, 'bump'), ramp ?? 0.03, time);
         const age = num(p, 'age') / 100;
-        lp.frequency.rampTo(20000 * Math.pow(2500 / 20000, age), 0.05);
-        hp.frequency.rampTo(25 + age * 90, 0.05);
+        setAudioParam(lp.frequency, 20000 * Math.pow(2500 / 20000, age), ramp ?? 0.05, time);
+        setAudioParam(hp.frequency, 25 + age * 90, ramp ?? 0.05, time);
         const w = num(p, 'wow') / 100, f = num(p, 'flutter') / 100;
-        wow.min = TAPE_BASE_DELAY - w * 0.003; wow.max = TAPE_BASE_DELAY + w * 0.003;
-        wow.frequency.rampTo(0.4 + w * 0.6, 0.1);
-        flutter.min = -f * 0.00035; flutter.max = f * 0.00035;
-        hissLevel.gain.rampTo(Tone.dbToGain(-62 + (num(p, 'hiss') / 100) * 32) * (num(p, 'hiss') > 0 ? 1 : 0), 0.05);
-        crackleLevel.gain.rampTo((num(p, 'crackle') / 100) * 0.35, 0.05);
+        if (time === undefined || !ctx.isOffline) {
+          wow.min = TAPE_BASE_DELAY - w * 0.003; wow.max = TAPE_BASE_DELAY + w * 0.003;
+          flutter.min = -f * 0.00035; flutter.max = f * 0.00035;
+        }
+        setAudioParam(wow.frequency, 0.4 + w * 0.6, ramp ?? 0.1, time);
+        setAudioParam(hissLevel.gain, Tone.dbToGain(-62 + (num(p, 'hiss') / 100) * 32) * (num(p, 'hiss') > 0 ? 1 : 0), ramp ?? 0.05, time);
+        setAudioParam(crackleLevel.gain, (num(p, 'crackle') / 100) * 0.35, ramp ?? 0.05, time);
         const m = Math.max(0, Math.min(1, num(p, 'mix') / 100));
-        dry.gain.rampTo(Math.cos((m * Math.PI) / 2), 0.03);
-        wet.gain.rampTo(Math.sin((m * Math.PI) / 2), 0.03);
+        setAudioParam(dry.gain, Math.cos((m * Math.PI) / 2), ramp ?? 0.03, time);
+        setAudioParam(wet.gain, Math.sin((m * Math.PI) / 2), ramp ?? 0.03, time);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       const nodes = [dryDelay, dry, wet, shaper, bump, lp, hp, tape, out, wow, flutter, follower, gate, noiseGate, hiss, hissHp, hissLevel, crackle, crackleBp, crackleLevel];
       return {
         ...b, ready: Promise.resolve(), update,
@@ -729,18 +770,24 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
       const af = new Tone.AutoFilter({ frequency: 1, baseFrequency: 2000, octaves: 0, depth: 0, wet: 1,
         filter: { type: 'lowpass', rolloff: Number(p.slope) as -12 | -24 | -48, Q: 1 } }).start();
       b.input.chain(af, dw.wet);
-      const update = (p: Resolved) => {
+      const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+        void _bpm;
         const amt = num(p, 'lfoAmt') / 100;
         af.filter.type = String(p.mode) as BiquadFilterType;
-        af.filter.Q.rampTo(num(p, 'res'), 0.02);
+        setAudioParam(af.filter.Q, num(p, 'res'), ramp ?? 0.02, time);
         // LFO sweeps upward from the cutoff by up to 4 octaves.
-        af.baseFrequency = num(p, 'freq');
-        af.octaves = Math.max(0.0001, amt * 4);
-        af.depth.rampTo(amt > 0 ? 1 : 0, 0.02);
-        af.frequency.rampTo(num(p, 'lfoRate'), 0.05);
-        dw.set(num(p, 'mix') / 100);
+        const freq = num(p, 'freq');
+        if (time !== undefined && amt <= 0) {
+          setAudioParam(af.filter.frequency, freq, ramp ?? 0.02, time);
+        } else if (time === undefined || !Tone.getContext().isOffline) {
+          af.baseFrequency = freq;
+          af.octaves = Math.max(0.0001, amt * 4);
+        }
+        setAudioParam(af.depth, amt > 0 ? 1 : 0, ramp ?? 0.02, time);
+        setAudioParam(af.frequency, num(p, 'lfoRate'), ramp ?? 0.05, time);
+        dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
       };
-      update(p);
+      update(p, 120, undefined, 0);
       return {
         ...b, ready: Promise.resolve(), update,
         dispose: () => { af.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
@@ -767,14 +814,16 @@ function buildSidechainComp(p: Resolved): FxDevice {
   } else {
     b.input.connect(dw.wet);
   }
-  const update = (p: Resolved) => {
+  const update = (p: Resolved, _bpm = 120, time?: number, ramp?: number) => {
+    void _bpm;
     node?.port.postMessage({
       type: 'params', threshold: num(p, 'threshold'), ratio: num(p, 'ratio'), attack: num(p, 'attack'),
       release: num(p, 'release'), knee: num(p, 'knee'), makeup: num(p, 'makeup'),
+      ...(time !== undefined ? { time } : {}),
     });
-    dw.set(num(p, 'mix') / 100);
+    dw.set(num(p, 'mix') / 100, time, ramp ?? 0.03);
   };
-  update(p);
+  update(p, 120, undefined, 0);
   return {
     ...b, ready: Promise.resolve(), update, sidechain,
     getReduction: () => reduction,

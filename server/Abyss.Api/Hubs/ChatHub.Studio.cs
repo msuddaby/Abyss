@@ -106,6 +106,7 @@ public partial class ChatHub
         if (!Guid.TryParse(channelId, out var id) || double.IsNaN(positionBeats) || double.IsInfinity(positionBeats)) return;
         var session = _studio.GetSession(id);
         if (session == null || !session.Connections.ContainsKey(Context.ConnectionId)) return;
+        if (!await _perms.HasChannelPermissionAsync(id, UserId, Permission.EditStudio)) return;
 
         var state = _studio.SetTransport(id, isPlaying, positionBeats, UserId);
         await Clients.OthersInGroup($"studio:{id}").SendAsync("StudioTransportChanged", id.ToString(), state);

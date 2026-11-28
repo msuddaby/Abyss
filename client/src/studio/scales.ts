@@ -39,11 +39,12 @@ export function inScale(scale: ProjectScale, pitch: number): boolean {
   return scale.classes.has(((pitch % 12) + 12) % 12);
 }
 
-/** Closest in-scale pitch (ties resolve downward). */
+/** Closest in-scale pitch in 0..127 (ties resolve downward). */
 export function nearestInScale(scale: ProjectScale, pitch: number): number {
+  const clamped = Math.max(0, Math.min(127, Math.round(pitch)));
   for (let d = 0; d < 12; d++) {
-    if (inScale(scale, pitch - d)) return pitch - d;
-    if (inScale(scale, pitch + d)) return pitch + d;
+    if (clamped - d >= 0 && inScale(scale, clamped - d)) return clamped - d;
+    if (clamped + d <= 127 && inScale(scale, clamped + d)) return clamped + d;
   }
-  return pitch;
+  return clamped;
 }

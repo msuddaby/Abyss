@@ -176,7 +176,8 @@ export default function EqEightDevice({ params, editable, engine, trackId, fxId,
 
   const setBand = (k: 'on' | 'type' | 'f' | 'g' | 'q', v: number | string | boolean, commit = true) => {
     const next = { ...params, [bandKey(selected, k)]: v };
-    if (commit) onCommit(next); else onPreview(next);
+    if (commit) { setDraft(null); onCommit(next); }
+    else { setDraft(next); onPreview(next); }
   };
 
   const b = eqBand(p, selected);
@@ -195,7 +196,7 @@ export default function EqEightDevice({ params, editable, engine, trackId, fxId,
       <div className="studio-eq8-controls">
         <div className="studio-eq8-bands">
           {Array.from({ length: EQ_BANDS }, (_, i) => {
-            const on = params[bandKey(i, 'on')] === true;
+            const on = p[bandKey(i, 'on')] === true;
             return (
               <button
                 key={i}
@@ -239,9 +240,11 @@ export default function EqEightDevice({ params, editable, engine, trackId, fxId,
             onPreview={(v) => setBand('q', v, false)} onCommit={(v) => setBand('q', v)} />
           <div className="studio-eq8-sep" />
           <Knob label="Scale" value={Number(p.scale)} min={-200} max={200} def={100} unit="%" disabled={!editable}
-            onPreview={(v) => onPreview({ ...params, scale: v })} onCommit={(v) => onCommit({ ...params, scale: v })} />
+            onPreview={(v) => { const next = { ...params, scale: v }; setDraft(next); onPreview(next); }}
+            onCommit={(v) => { setDraft(null); onCommit({ ...params, scale: v }); }} />
           <Knob label="Output" value={Number(p.out)} min={-24} max={24} def={0} unit="dB" disabled={!editable}
-            onPreview={(v) => onPreview({ ...params, out: v })} onCommit={(v) => onCommit({ ...params, out: v })} />
+            onPreview={(v) => { const next = { ...params, out: v }; setDraft(next); onPreview(next); }}
+            onCommit={(v) => { setDraft(null); onCommit({ ...params, out: v }); }} />
         </div>
       </div>
     </div>

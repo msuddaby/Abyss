@@ -46,20 +46,54 @@ export function descendants(doc: StudioDoc, groupId: string): string[] {
 /**
  * Tracks that stay audible given the solo states (solo-in-place): soloed
  * tracks, the groups they play through, everything inside a soloed group,
- * and return tracks (so soloed tracks keep their reverb/delay sends).
+ * and return tracks (when any non-return track is soloed so it keeps its
+ * sends; when only return track(s) are soloed, only those returns stay open).
  */
 export function audibleUnderSolo(doc: StudioDoc): Set<string> {
   const ids = Object.keys(doc.tracks);
   const soloed = ids.filter((id) => doc.tracks[id].solo);
   if (!soloed.length) return new Set(ids);
   const out = new Set<string>();
+  let anyNonReturnSolo = false;
   for (const id of soloed) {
     out.add(id);
+    if (doc.tracks[id].kind !== 'return') anyNonReturnSolo = true;
     for (const a of ancestors(doc, id)) out.add(a);
     if (doc.tracks[id].kind === 'group') for (const d of descendants(doc, id)) out.add(d);
   }
-  for (const id of ids) if (doc.tracks[id].kind === 'return') out.add(id);
+  if (anyNonReturnSolo) {
+    for (const id of ids) if (doc.tracks[id].kind === 'return') out.add(id);
+  }
   return out;
+}
+
+/** True when soloing only return track(s) (non-return dry outputs mute while sends still feed returns). */
+export function isReturnOnlySolo(doc: StudioDoc): boolean {
+  const soloed = Object.values(doc.tracks).filter((t) => t.solo);
+  return soloed.length > 0 && soloed.every((t) => t.kind === 'return');
+}
+
+/**
+ * True if keying a compressor on `hostTrackId` from `keyTrackId` would form an
+ * audio feedback loop (self, ancestor group, or a return fed by the host or its ancestors).
+ */
+export function isSidechainCycle(doc: StudioDoc, hostTrackId: string, keyTrackId: string): boolean {
+  if (!keyTrackId || !doc.tracks[keyTrackId]) return true;
+  if (!hostTrackId) return false; // master bus is downstream of all tracks
+  if (keyTrackId === hostTrackId) return true;
+  const hostAncestors = ancestors(doc, hostTrackId);
+  if (hostAncestors.includes(keyTrackId)) return true;
+  const keyTrack = doc.tracks[keyTrackId];
+  if (keyTrack.kind === 'return') {
+    // Check if host or any of its ancestors sends to this return track.
+    for (const tid of [hostTrackId, ...hostAncestors]) {
+      const t = doc.tracks[tid];
+      if (!t) continue;
+      if ((t.sends?.[keyTrackId] ?? -Infinity) > -60) return true;
+      if (t.automation?.[`send:${keyTrackId}`]?.length) return true;
+    }
+  }
+  return false;
 }
 
 /** Track ids in display order with groups' children nested right after them. */

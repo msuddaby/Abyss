@@ -29,6 +29,9 @@ export async function bounceTrack(trackId: string): Promise<string> {
   const order = orders.length ? (src.order + orders[0]) / 2 : src.order + 1;
   const id = studioId();
   const length = spanBeats(tempoMap(latest), 0, trimmed.duration);
+  const mixerAuto = src.automation
+    ? Object.fromEntries(Object.entries(src.automation).filter(([k]) => k === 'vol' || k === 'pan' || k.startsWith('send:')))
+    : undefined;
   const ops: StudioOp[] = [
     {
       t: 'set', path: ['tracks', id], value: {
@@ -36,6 +39,7 @@ export async function bounceTrack(trackId: string): Promise<string> {
         volume: src.volume, pan: src.pan, mute: false, solo: false,
         ...(src.output ? { output: src.output } : {}),
         ...(src.sends && Object.keys(src.sends).length ? { sends: src.sends } : {}),
+        ...(mixerAuto && Object.keys(mixerAuto).length ? { automation: mixerAuto } : {}),
       },
     },
     {

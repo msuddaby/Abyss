@@ -215,7 +215,15 @@ public class StudioSessionService
         if (!session.Connections.TryRemove(connectionId, out var userId)) return false;
         var userGone = !session.Connections.Values.Contains(userId);
         if (userGone) session.Presence.TryRemove(userId, out _);
-        if (session.Connections.IsEmpty) session.EmptySince = DateTime.UtcNow;
+        if (session.Connections.IsEmpty)
+        {
+            session.EmptySince = DateTime.UtcNow;
+            lock (session.Lock)
+            {
+                if (session.Transport.IsPlaying)
+                    session.Transport = session.Transport with { IsPlaying = false, UserId = null };
+            }
+        }
         return userGone;
     }
 
@@ -233,14 +241,28 @@ public class StudioSessionService
 
     public void SetPresence(Guid channelId, string userId, JsonElement presence)
     {
-        if (_sessions.TryGetValue(channelId, out var session))
-            session.Presence[userId] = presence.Clone();
+        if (!_sessions.TryGetValue(channelId, out var session) || presence.ValueKind != JsonValueKind.Object) return;
+        lock (session.Lock)
+        {
+            JsonObject merged = session.Presence.TryGetValue(userId, out var prev) && prev.ValueKind == JsonValueKind.Object
+                ? (JsonNode.Parse(prev.GetRawText()) as JsonObject ?? new JsonObject())
+                : new JsonObject();
+            foreach (var prop in presence.EnumerateObject())
+                merged[prop.Name] = JsonNode.Parse(prop.Value.GetRawText());
+            var raw = merged.ToJsonString();
+            if (raw.Length > 8192) return;
+            using var doc = JsonDocument.Parse(raw);
+            session.Presence[userId] = doc.RootElement.Clone();
+        }
     }
 
     public StudioTransportState SetTransport(Guid channelId, bool isPlaying, double positionBeats, string userId)
     {
         var state = new StudioTransportState(isPlaying, Math.Max(0, positionBeats), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), userId);
-        if (_sessions.TryGetValue(channelId, out var session)) session.Transport = state;
+        if (_sessions.TryGetValue(channelId, out var session))
+        {
+            lock (session.Lock) session.Transport = state;
+        }
         return state;
     }
 
@@ -985,6 +1007,15 @@ public class StudioSessionService
         }
         return inst;
     }
+
+    public static bool IsValidPresetType(string kind, string type) => kind switch
+    {
+        "instrument" => InstrumentTypes.Contains(type),
+        "effect" => EffectTypes.Contains(type),
+        _ => false,
+    };
+
+    public static JsonObject? ValidatePresetParams(JsonElement v) => ValidateParams(v);
 
     /// Flat map of up to 256 numeric/string/bool params (EQ Eight bands, wavetable synth + mod matrix).
     private static JsonObject? ValidateParams(JsonElement v)

@@ -1,6 +1,7 @@
 import { useStudioStore, studioId } from '@abyss/shared';
 import type { StudioTrack, StudioEffect, StudioEffectType, StudioInstrumentType, StudioParams } from '@abyss/shared';
 import { MASTER_ID, type StudioEngine } from './engine/StudioEngine';
+import { isSidechainCycle } from './engine/routing';
 import StudioRouting from './StudioRouting';
 import PresetMenu from './PresetMenu';
 import Knob from './devices/Knob';
@@ -33,6 +34,32 @@ interface Props {
 const CLASSIC_WIDTH: Record<ClassicType, number> = { fm: 690, am: 690, pluck: 690, mono: 800, bass: 800 };
 const DRUM_RACK_WIDTH = 700;
 const MAX_FX = 8;
+
+/** Strips channel-local audio asset ids before saving/loading server-wide instrument presets. */
+function stripInstrumentAssets(type: StudioInstrumentType, params: StudioParams | undefined): StudioParams {
+  const out: StudioParams = {};
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (type === 'sampler' && k === 'assetId') continue;
+    if (type === 'drums' && /^d\d+_sample$/.test(k)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+function mergeInstrumentPreset(type: StudioInstrumentType, cur: StudioParams | undefined, preset: StudioParams): StudioParams {
+  const clean = stripInstrumentAssets(type, preset);
+  if (type === 'sampler') {
+    return typeof cur?.assetId === 'string' && cur.assetId ? { ...clean, assetId: cur.assetId } : clean;
+  }
+  if (type === 'drums') {
+    const samples: StudioParams = {};
+    for (const [k, v] of Object.entries(cur ?? {})) {
+      if (/^d\d+_sample$/.test(k)) samples[k] = v;
+    }
+    return { ...clean, ...samples };
+  }
+  return clean;
+}
 
 /** Drops values equal to defaults' types we can't store (server rejects nested/undefined). */
 function storable(p: Resolved): StudioParams {
@@ -111,8 +138,8 @@ export default function StudioTrackInspector({ trackId, track, editable, canMana
               </select>
               <PresetMenu
                 kind="instrument" type={inst.type} editable={editable} canManage={canManage}
-                current={() => inst.params ?? {}}
-                onLoad={(params) => setInstrument(inst.type, inst.type === 'sampler' ? { ...(inst.params ?? {}), ...params } : params)}
+                current={() => stripInstrumentAssets(inst.type, inst.params)}
+                onLoad={(params) => setInstrument(inst.type, mergeInstrumentPreset(inst.type, inst.params, params))}
               />
             </>
           )}
@@ -170,7 +197,12 @@ export default function StudioTrackInspector({ trackId, track, editable, canMana
             ) : (
               <EffectDevice
                 type={fx.type} params={params} editable={editable} engine={engine} trackId={trackId} fxId={fx.id} color={color} onPreview={preview} onCommit={commit}
-                sidechainOptions={fx.type === 'compressor' && doc ? Object.entries(doc.tracks).filter(([id]) => id !== trackId).sort((a, b) => a[1].order - b[1].order).map(([id, t]) => ({ id, name: t.name })) : undefined}
+                sidechainOptions={fx.type === 'compressor' && doc
+                  ? Object.entries(doc.tracks)
+                    .filter(([id]) => !isSidechainCycle(doc, isMaster ? '' : trackId, id))
+                    .sort((a, b) => a[1].order - b[1].order)
+                    .map(([id, t]) => ({ id, name: t.name }))
+                  : undefined}
               />
             )}
           </DeviceFrame>

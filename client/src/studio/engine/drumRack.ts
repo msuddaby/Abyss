@@ -176,6 +176,7 @@ export function createDrumRack(initial: StudioParams | undefined) {
   const analyser = new Tone.Analyser('waveform', 1024);
   out.connect(analyser);
   const pads = new Map<number, PadNode>();
+  const activeSamples = new Set<{ src: Tone.ToneBufferSource; g: Tone.Gain }>();
   let params = initial ?? {};
   let choke = kitChoke(params);
 
@@ -191,10 +192,11 @@ export function createDrumRack(initial: StudioParams | undefined) {
     pads.set(pad.pitch, { voice, input, shaper, driveDb: 0, filter, gate, panVol, ratio: 1, decay: 1, sample: '' });
   }
 
-  const update = (p: StudioParams) => {
+  const apply = (p: StudioParams, immediate: boolean) => {
     params = p;
     choke = kitChoke(p);
     const anySolo = DRUM_PADS.some((pad) => padParam(p, pad.pitch, 'solo'));
+    const noRamp = immediate || context.isOffline;
     for (const pad of DRUM_PADS) {
       const n = pads.get(pad.pitch)!;
       n.ratio = Math.pow(2, padParam(p, pad.pitch, 'tune') / 12);
@@ -204,20 +206,39 @@ export function createDrumRack(initial: StudioParams | undefined) {
       if (drive !== n.driveDb) { n.driveDb = drive; n.shaper.setMap(driveCurve(drive)); }
       const ftype = padParam(p, pad.pitch, 'ftype') === 'hp' ? 'highpass' : 'lowpass';
       if (n.filter.type !== ftype) n.filter.type = ftype;
-      n.filter.frequency.rampTo(Math.max(20, Math.min(20000, padParam(p, pad.pitch, 'tone'))), 0.02);
+      const freq = Math.max(20, Math.min(20000, padParam(p, pad.pitch, 'tone')));
       const audible = !padParam(p, pad.pitch, 'mute') && (!anySolo || padParam(p, pad.pitch, 'solo'));
-      n.gate.gain.rampTo(audible ? 1 : 0, 0.01);
-      n.panVol.pan.rampTo(Math.max(-1, Math.min(1, padParam(p, pad.pitch, 'pan'))), 0.02);
+      const pan = Math.max(-1, Math.min(1, padParam(p, pad.pitch, 'pan')));
       // Drive adds level; take some back so it mostly changes colour.
-      n.panVol.volume.rampTo(padParam(p, pad.pitch, 'level') - drive * 0.4, 0.02);
+      const vol = padParam(p, pad.pitch, 'level') - drive * 0.4;
+      if (noRamp) {
+        n.filter.frequency.value = freq;
+        n.gate.gain.value = audible ? 1 : 0;
+        n.panVol.pan.value = pan;
+        n.panVol.volume.value = vol;
+      } else {
+        n.filter.frequency.rampTo(freq, 0.02);
+        n.gate.gain.rampTo(audible ? 1 : 0, 0.01);
+        n.panVol.pan.rampTo(pan, 0.02);
+        n.panVol.volume.rampTo(vol, 0.02);
+      }
     }
   };
-  update(params);
+  const update = (p: StudioParams) => apply(p, false);
+  apply(params, true);
+
+  const freeSample = (entry: { src: Tone.ToneBufferSource; g: Tone.Gain }) => {
+    if (!activeSamples.delete(entry)) return;
+    entry.src.dispose();
+    entry.g.dispose();
+  };
 
   const playSample = (n: PadNode, buffer: AudioBuffer, time: number, vel: number) => {
     const g = new Tone.Gain({ context, gain: vel }).connect(n.input);
     const src = new Tone.ToneBufferSource({ context, url: new Tone.ToneAudioBuffer(buffer), playbackRate: n.ratio, fadeOut: 0.01 }).connect(g);
-    src.onended = () => { src.dispose(); g.dispose(); };
+    const entry = { src, g };
+    activeSamples.add(entry);
+    src.onended = () => freeSample(entry);
     src.start(time);
     if (n.decay < 1) src.stop(time + (buffer.duration / n.ratio) * n.decay);
   };
@@ -241,8 +262,16 @@ export function createDrumRack(initial: StudioParams | undefined) {
       if (buf) playSample(n, buf, time, vel);
       else n.voice?.trigger(time, vel, n.ratio, n.decay);
     },
-    releaseAll: () => {},
+    releaseAll: () => {
+      for (const entry of activeSamples) {
+        try { entry.src.stop(); } catch { /* not started yet */ }
+      }
+    },
     dispose: () => {
+      for (const entry of [...activeSamples]) {
+        try { entry.src.stop(); } catch { /* not started yet */ }
+        freeSample(entry);
+      }
       for (const n of pads.values()) {
         n.voice?.dispose();
         n.input.dispose(); n.shaper.dispose(); n.filter.dispose(); n.gate.dispose(); n.panVol.dispose();

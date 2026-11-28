@@ -182,7 +182,7 @@ public class StudioController : ControllerBase
             .OrderBy(p => p.Name)
             .Take(500)
             .ToListAsync();
-        return Ok(list.Select(p => new { id = p.Id, name = p.Name, createdById = p.CreatedById, createdAt = p.CreatedAt, @params = System.Text.Json.JsonDocument.Parse(p.ParamsJson).RootElement }));
+        return Ok(list.Select(p => new { id = p.Id, name = p.Name, createdById = p.CreatedById, createdAt = p.CreatedAt, @params = System.Text.Json.Nodes.JsonNode.Parse(p.ParamsJson) }));
     }
 
     [HttpPost("presets")]
@@ -192,9 +192,11 @@ public class StudioController : ControllerBase
         if (channel == null || project == null) return Forbid();
         var name = req.Name?.Trim() ?? "";
         if (name.Length is 0 or > 60) return BadRequest("Give the preset a name (up to 60 characters).");
-        if (!PresetKinds.Contains(req.Kind) || string.IsNullOrEmpty(req.Type) || req.Type.Length > 24) return BadRequest("Unknown preset type.");
-        if (req.Params.ValueKind != System.Text.Json.JsonValueKind.Object) return BadRequest("Invalid preset.");
-        var json = req.Params.GetRawText();
+        if (!PresetKinds.Contains(req.Kind) || string.IsNullOrEmpty(req.Type) || !StudioSessionService.IsValidPresetType(req.Kind, req.Type))
+            return BadRequest("Unknown preset type.");
+        var validated = StudioSessionService.ValidatePresetParams(req.Params);
+        if (validated == null) return BadRequest("Invalid preset parameters.");
+        var json = validated.ToJsonString();
         if (json.Length > 32 * 1024) return BadRequest("Preset is too large.");
         var count = await _db.StudioPresets.CountAsync(p => p.ServerId == channel.ServerId);
         if (count >= 2000) return BadRequest("This server has reached the preset limit.");
@@ -205,7 +207,7 @@ public class StudioController : ControllerBase
         };
         _db.StudioPresets.Add(preset);
         await _db.SaveChangesAsync();
-        return Ok(new { id = preset.Id, name = preset.Name, createdById = preset.CreatedById, createdAt = preset.CreatedAt, @params = req.Params });
+        return Ok(new { id = preset.Id, name = preset.Name, createdById = preset.CreatedById, createdAt = preset.CreatedAt, @params = validated });
     }
 
     [HttpDelete("presets/{presetId}")]

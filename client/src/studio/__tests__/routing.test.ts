@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { StudioDoc, StudioTrack } from '@abyss/shared';
-import { resolveOutput, audibleUnderSolo, displayOrder, ancestors, clipPlayback } from '../engine/routing';
+import { resolveOutput, audibleUnderSolo, isReturnOnlySolo, isSidechainCycle, displayOrder, ancestors, clipPlayback } from '../engine/routing';
 import { buildTempoMap } from '@abyss/shared';
+import { nearestInScale, projectScale } from '../scales';
 
 const t = (kind: StudioTrack['kind'], extra: Partial<StudioTrack> = {}): StudioTrack =>
   ({ name: kind, kind, order: 0, volume: 0, pan: 0, mute: false, solo: false, ...extra });
@@ -49,5 +50,30 @@ describe('routing', () => {
     expect(clipPlayback(clip, map)).toEqual({ warp: false, rate: 1, timelineSec: 4 });
     expect(clipPlayback({ ...clip, pitch: 12 }, map).rate).toBeCloseTo(2);
     expect(clipPlayback({ ...clip, warp: true, srcBpm: 90 }, map).rate).toBeCloseTo(120 / 90);
+  });
+
+  it('detects return-only solo and sidechain cycles', () => {
+    const d = mk({
+      kick: t('audio', { output: 'drums', sends: { verb: -6 } }),
+      drums: t('group'),
+      verb: t('return', { solo: true }),
+      delay: t('return'),
+    });
+    expect(isReturnOnlySolo(d)).toBe(true);
+    expect([...audibleUnderSolo(d)]).toEqual(['verb']);
+    // Sidechain cycle checks: self, ancestor group, return fed by track, deleted track
+    expect(isSidechainCycle(d, 'kick', 'kick')).toBe(true);
+    expect(isSidechainCycle(d, 'kick', 'drums')).toBe(true);
+    expect(isSidechainCycle(d, 'kick', 'verb')).toBe(true);
+    expect(isSidechainCycle(d, 'kick', 'delay')).toBe(false);
+    expect(isSidechainCycle(d, 'kick', 'deleted')).toBe(true);
+    expect(isSidechainCycle(d, '', 'kick')).toBe(false);
+  });
+
+  it('keeps nearestInScale within MIDI 0..127 bounds', () => {
+    const dMaj = projectScale({ bpm: 120, timeSigNum: 4, timeSigDen: 4, loopEnabled: false, loopStart: 0, loopEnd: 16, scaleRoot: 2, scaleMode: 'major' })!;
+    const fMinPent = projectScale({ bpm: 120, timeSigNum: 4, timeSigDen: 4, loopEnabled: false, loopStart: 0, loopEnd: 16, scaleRoot: 5, scaleMode: 'minorPentatonic' })!;
+    expect(nearestInScale(dMaj, 0)).toBeGreaterThanOrEqual(0);
+    expect(nearestInScale(fMinPent, 127)).toBeLessThanOrEqual(127);
   });
 });

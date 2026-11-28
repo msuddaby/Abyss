@@ -14,14 +14,14 @@ export interface PlayableInstrument {
   dispose: () => void;
   /** Live param change without a rebuild (keeps ringing notes). */
   update?: (params: StudioParams) => void;
-  setBpm?: (bpm: number) => void;
+  setBpm?: (bpm: number, time?: number) => void;
   /** Output waveform tap for the device scope */
   analyser?: Tone.Analyser;
   /** Held notes (computer keyboard / live input). Falls back to play() when absent. */
   noteOn?: (pitch: number, velocity: number, time: number) => void;
   noteOff?: (pitch: number, time: number) => void;
   /** Set one numeric param without a full update (automation). */
-  setParam?: (key: string, value: number) => void;
+  setParam?: (key: string, value: number, time?: number, rampSec?: number) => void;
   /** Pitch bend in semitones (live input) */
   setPitchBend?: (semis: number) => void;
   /** Mod wheel 0..1 (live input) */
@@ -115,7 +115,18 @@ function classicInstrument(type: ClassicType, p: StudioParams | undefined): Play
   synth.chain(tone, out);
   out.connect(analyser);
   const hz = (pitch: number) => Tone.Frequency(pitch, 'midi').toFrequency();
+  const isOffline = Tone.getContext().isOffline;
   const last: Record<string, number> = {};
+  type PolyInternal = {
+    _voices?: {
+      harmonicity?: Tone.Signal<'positive'>;
+      modulationIndex?: Tone.Signal<'positive'>;
+      portamento?: number;
+      filter?: { Q?: Tone.Signal<'positive'> };
+      filterEnvelope?: { baseFrequency?: number; octaves?: number };
+    }[];
+    options?: Record<string, unknown>;
+  };
   return {
     output: out,
     analyser,
@@ -126,22 +137,69 @@ function classicInstrument(type: ClassicType, p: StudioParams | undefined): Play
     update: (params) => {
       const next = resolveClassic(type, params);
       synth.set(classicOptions(type, next) as Partial<Tone.SynthOptions>);
-      tone.frequency.rampTo(Number(next.tone ?? 20000), 0.03);
-      out.volume.rampTo(Number(next.volume), 0.03);
+      if (isOffline) {
+        tone.frequency.value = Number(next.tone ?? 20000);
+        out.volume.value = Number(next.volume);
+      } else {
+        tone.frequency.rampTo(Number(next.tone ?? 20000), 0.03);
+        out.volume.rampTo(Number(next.volume), 0.03);
+      }
     },
-    // Automation: tone/volume ramp; the rest are set on every voice (control rate).
-    setParam: (key, value) => {
-      if (key === 'tone') { tone.frequency.rampTo(value, 0.03); return; }
-      if (key === 'volume') { out.volume.rampTo(value, 0.03); return; }
+    // Automation: schedule AudioParams at `time` so offline export works too.
+    setParam: (key, value, time, rampSec) => {
+      const ramp = rampSec ?? 0.03;
+      if (key === 'tone') {
+        if (time !== undefined) tone.frequency.rampTo(value, ramp, time);
+        else tone.frequency.rampTo(value, isOffline ? 0 : ramp);
+        return;
+      }
+      if (key === 'volume') {
+        if (time !== undefined) out.volume.rampTo(value, ramp, time);
+        else out.volume.rampTo(value, isOffline ? 0 : ramp);
+        return;
+      }
       if (last[key] !== undefined && Math.abs(last[key] - value) < 1e-4) return;
       last[key] = value;
+      const internal = synth as unknown as PolyInternal;
+      const voices = internal._voices ?? [];
       switch (key) {
-        case 'harmonicity': synth.set({ harmonicity: value } as never); break;
-        case 'modulationIndex': synth.set({ modulationIndex: value } as never); break;
-        case 'glide': synth.set({ portamento: value }); break;
-        case 'cutoff': synth.set({ filterEnvelope: { baseFrequency: value } } as never); break;
-        case 'res': synth.set({ filter: { Q: value } } as never); break;
-        case 'envAmt': synth.set({ filterEnvelope: { octaves: value } } as never); break;
+        case 'harmonicity':
+          if (time !== undefined) {
+            if (internal.options) internal.options.harmonicity = value;
+            for (const v of voices) v.harmonicity?.rampTo(value, ramp, time);
+          } else synth.set({ harmonicity: value } as never);
+          break;
+        case 'modulationIndex':
+          if (time !== undefined) {
+            if (internal.options) internal.options.modulationIndex = value;
+            for (const v of voices) v.modulationIndex?.rampTo(value, ramp, time);
+          } else synth.set({ modulationIndex: value } as never);
+          break;
+        case 'glide':
+          if (internal.options) internal.options.portamento = value;
+          for (const v of voices) v.portamento = value;
+          break;
+        case 'cutoff':
+          if (time !== undefined) {
+            const fe = internal.options?.filterEnvelope as Record<string, unknown> | undefined;
+            if (fe) fe.baseFrequency = value;
+            for (const v of voices) if (v.filterEnvelope) v.filterEnvelope.baseFrequency = value;
+          } else synth.set({ filterEnvelope: { baseFrequency: value } } as never);
+          break;
+        case 'res':
+          if (time !== undefined) {
+            const f = internal.options?.filter as Record<string, unknown> | undefined;
+            if (f) f.Q = value;
+            for (const v of voices) v.filter?.Q?.rampTo(value, ramp, time);
+          } else synth.set({ filter: { Q: value } } as never);
+          break;
+        case 'envAmt':
+          if (time !== undefined) {
+            const fe = internal.options?.filterEnvelope as Record<string, unknown> | undefined;
+            if (fe) fe.octaves = value;
+            for (const v of voices) if (v.filterEnvelope) v.filterEnvelope.octaves = value;
+          } else synth.set({ filterEnvelope: { octaves: value } } as never);
+          break;
       }
     },
     releaseAll: () => synth.releaseAll(),

@@ -175,6 +175,7 @@ export default function StudioTimelineRows({ doc, width, pxPerBeat, snapGrid, ed
           })}
           {editing && tempoEdit && (
             <TempoEditor
+              key={tempoEdit}
               id={tempoEdit}
               ev={editing}
               left={editing.beat * pxPerBeat}

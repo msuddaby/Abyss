@@ -825,6 +825,10 @@ export function useSignalRListeners() {
       // from localStorage before SignalR connected, so ChannelSidebar's
       // joinChannel() call would have failed silently.
       rejoinActiveChannel(conn);
+      // Same for Studio channels: if StudioView mounted before SignalR connected, retry join now.
+      if (useStudioStore.getState().channelId && !useStudioStore.getState().confirmedDoc) {
+        void useStudioStore.getState().resync();
+      }
     }).catch(console.error);
   }, []);
 

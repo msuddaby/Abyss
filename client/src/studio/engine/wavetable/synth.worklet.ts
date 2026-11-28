@@ -84,6 +84,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
   private bpm = 120;
   private voices = Array.from({ length: MAX_VOICES }, () => new Voice());
   private events: { frame: number; on: boolean; id: number; pitch: number; vel: number }[] = [];
+  private paramEvents: { frame: number; key: string; value: number }[] = [];
   private nextId = 1;
   private lastPitch = -1;
   private globalLfo = [0, 0];
@@ -107,12 +108,24 @@ class WavetableProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e: MessageEvent) => {
       const m = e.data;
       if (m.type === 'params') { if (typeof m.bpm === 'number') this.bpm = m.bpm; this.setParams(m.p); }
-      else if (m.type === 'bpm') this.bpm = m.bpm;
+      else if (m.type === 'bpm') {
+        if (typeof m.time === 'number' && Math.round(m.time * sampleRate) > currentFrame) {
+          this.insertParam({ frame: Math.round(m.time * sampleRate), key: '__bpm__', value: m.bpm });
+        } else {
+          this.bpm = m.bpm;
+        }
+      }
       else if (m.type === 'note') this.queueNote(m.time, m.pitch, m.vel, m.dur);
       else if (m.type === 'off') this.allOff();
       else if (m.type === 'liveOn') this.insert({ frame: currentFrame, on: true, id: LIVE_ID + m.pitch, pitch: m.pitch, vel: m.vel });
       else if (m.type === 'liveOff') this.insert({ frame: currentFrame, on: false, id: LIVE_ID + m.pitch, pitch: m.pitch, vel: 0 });
-      else if (m.type === 'param') this.setParams({ ...this.p, [m.key]: m.value });
+      else if (m.type === 'param') {
+        if (typeof m.time === 'number' && Math.round(m.time * sampleRate) > currentFrame) {
+          this.insertParam({ frame: Math.round(m.time * sampleRate), key: m.key, value: m.value });
+        } else {
+          this.applySingleParam(m.key, m.value);
+        }
+      }
       else if (m.type === 'bend') this.bend = m.semis;
       else if (m.type === 'modwheel') this.modWheel = m.value;
     };
@@ -168,6 +181,33 @@ class WavetableProcessor extends AudioWorkletProcessor {
     this.events.splice(i, 0, ev);
   }
 
+  private insertParam(ev: { frame: number; key: string; value: number }) {
+    let i = this.paramEvents.length;
+    while (i > 0 && this.paramEvents[i - 1].frame > ev.frame) i--;
+    this.paramEvents.splice(i, 0, ev);
+  }
+
+  private applySingleParam(key: string, value: number) {
+    if (key === '__bpm__') { this.bpm = value; return; }
+    this.p[key] = value;
+    if (key === 'volume') { this.master = Math.pow(10, value / 20); return; }
+    if (key === 'aPos') { this.oscA.pos = value; return; }
+    if (key === 'bPos') { this.oscB.pos = value; return; }
+    if (key === 'aLevel') { this.oscA.level = value; return; }
+    if (key === 'bLevel') { this.oscB.level = value; return; }
+    if (key === 'aDet') { this.oscA.det = value; return; }
+    if (key === 'bDet') { this.oscB.det = value; return; }
+    if (key === 'aPan') { this.oscA.pan = value; return; }
+    if (key === 'bPan') { this.oscB.pan = value; return; }
+    if (key === 'aSemi') { this.oscA.semi = value; return; }
+    if (key === 'bSemi') { this.oscB.semi = value; return; }
+    if (key === 'aFine') { this.oscA.fine = value; return; }
+    if (key === 'bFine') { this.oscB.fine = value; return; }
+    if (key === 'fCutoff' || key === 'fRes' || key === 'fDrive' || key === 'subLevel' || key === 'noiseLevel'
+      || key === 'l1Rate' || key === 'l2Rate' || key === 'glide') return;
+    this.setParams(this.p);
+  }
+
   private allOff() {
     this.events = [];
     for (const v of this.voices) if (v.active) this.release(v);
@@ -205,6 +245,8 @@ class WavetableProcessor extends AudioWorkletProcessor {
       if (!v.active) v.ic.fill(0);
     }
     v.active = true;
+    // Populate pitch, osc increments/gains, and filter coefficients before sample 0.
+    this.control(v);
   }
 
   private noteOff(id: number) {
@@ -255,7 +297,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
       const w = this.uniW;
       for (let u = 0; u < o.uni; u++) {
         const off = o.uni > 1 ? (u / (o.uni - 1)) * 2 - 1 : 0;
-        inc[u] = (f * Math.pow(2, (off * det * 100) / 1200)) / sampleRate;
+        inc[u] = Math.min(0.4999, Math.max(0, (f * Math.pow(2, (off * det * 100) / 1200)) / sampleRate));
         w[u] = o.uni === 1 ? 1 : Math.abs(off) < 0.34 ? 1 - o.blend * 0.6 : o.blend;
         norm += w[u] * w[u];
       }
@@ -272,7 +314,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
     setupOsc(this.oscB, false);
 
     v.subLevel = clamp01(this.num('subLevel', 0) + m[T.sub]);
-    v.incSub = (440 * Math.pow(2, (basePitch + this.num('subOct', -1) * 12 - 69) / 12)) / sampleRate;
+    v.incSub = Math.min(0.4999, Math.max(0, (440 * Math.pow(2, (basePitch + this.num('subOct', -1) * 12 - 69) / 12)) / sampleRate));
     v.noiseLevel = clamp01(this.num('noiseLevel', 0) + m[T.noise]);
     v.amp = Math.max(0, (0.35 + 0.65 * v.vel) * (1 + m[T.amp]));
 
@@ -306,6 +348,10 @@ class WavetableProcessor extends AudioWorkletProcessor {
 
     for (let s = 0; s < n; s++) {
       const frame = currentFrame + s;
+      while (this.paramEvents.length && this.paramEvents[0].frame <= frame) {
+        const pe = this.paramEvents.shift()!;
+        this.applySingleParam(pe.key, pe.value);
+      }
       while (this.events.length && this.events[0].frame <= frame) {
         const ev = this.events.shift()!;
         if (ev.on) this.noteOn(ev.id, ev.pitch, ev.vel, frame); else this.noteOff(ev.id);
@@ -341,7 +387,7 @@ class WavetableProcessor extends AudioWorkletProcessor {
             const s0 = t0[i] + (t0[i + 1] - t0[i]) * fr, s1 = t1[i] + (t1[i + 1] - t1[i]) * fr;
             const x = s0 + (s1 - s0) * ft;
             l += x * v.gLA[u]; r += x * v.gRA[u];
-            v.phA[u] += v.incA[u]; if (v.phA[u] >= 1) v.phA[u] -= 1;
+            v.phA[u] += v.incA[u]; if (v.phA[u] >= 1) v.phA[u] -= Math.floor(v.phA[u]);
           }
         }
         if (B.on) {
@@ -351,14 +397,14 @@ class WavetableProcessor extends AudioWorkletProcessor {
             const s0 = t0[i] + (t0[i + 1] - t0[i]) * fr, s1 = t1[i] + (t1[i + 1] - t1[i]) * fr;
             const x = s0 + (s1 - s0) * ft;
             l += x * v.gLB[u]; r += x * v.gRB[u];
-            v.phB[u] += v.incB[u]; if (v.phB[u] >= 1) v.phB[u] -= 1;
+            v.phB[u] += v.incB[u]; if (v.phB[u] >= 1) v.phB[u] -= Math.floor(v.phB[u]);
           }
         }
         if (v.subLevel > 0) {
           const p = v.phSub;
           const x = subShape === 'square' ? (p < 0.5 ? 0.7 : -0.7) : subShape === 'tri' ? 1 - 4 * Math.abs(p - 0.5) : Math.sin(2 * Math.PI * p);
           l += x * v.subLevel * 0.7; r += x * v.subLevel * 0.7;
-          v.phSub += v.incSub; if (v.phSub >= 1) v.phSub -= 1;
+          v.phSub += v.incSub; if (v.phSub >= 1) v.phSub -= Math.floor(v.phSub);
         }
         if (v.noiseLevel > 0) { const x = (Math.random() * 2 - 1) * v.noiseLevel * 0.5; l += x; r += x; }
 
@@ -416,19 +462,31 @@ class SidechainCompressor extends AudioWorkletProcessor {
   private env = 0;
   private minEnv = 0;
   private sinceReport = 0;
+  private paramEvents: { frame: number; threshold: number; ratio: number; attack: number; release: number; knee: number; makeup: number }[] = [];
 
   constructor() {
     super();
     this.port.onmessage = (e: MessageEvent) => {
-      const m = e.data as { type: string; threshold: number; ratio: number; attack: number; release: number; knee: number; makeup: number };
+      const m = e.data as { type: string; time?: number; threshold: number; ratio: number; attack: number; release: number; knee: number; makeup: number };
       if (m.type !== 'params') return;
-      this.thr = m.threshold;
-      this.ratio = Math.max(1, m.ratio);
-      this.atk = Math.max(0.0001, m.attack / 1000);
-      this.rel = Math.max(0.001, m.release / 1000);
-      this.knee = Math.max(0, m.knee);
-      this.makeup = Math.pow(10, m.makeup / 20);
+      if (typeof m.time === 'number' && Math.round(m.time * sampleRate) > currentFrame) {
+        const ev = { frame: Math.round(m.time * sampleRate), threshold: m.threshold, ratio: m.ratio, attack: m.attack, release: m.release, knee: m.knee, makeup: m.makeup };
+        let i = this.paramEvents.length;
+        while (i > 0 && this.paramEvents[i - 1].frame > ev.frame) i--;
+        this.paramEvents.splice(i, 0, ev);
+      } else {
+        this.applyParams(m);
+      }
     };
+  }
+
+  private applyParams(m: { threshold: number; ratio: number; attack: number; release: number; knee: number; makeup: number }) {
+    this.thr = m.threshold;
+    this.ratio = Math.max(1, m.ratio);
+    this.atk = Math.max(0.0001, m.attack / 1000);
+    this.rel = Math.max(0.001, m.release / 1000);
+    this.knee = Math.max(0, m.knee);
+    this.makeup = Math.pow(10, m.makeup / 20);
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
@@ -436,11 +494,21 @@ class SidechainCompressor extends AudioWorkletProcessor {
     const key = inputs[1] ?? [];
     const out = outputs[0];
     const n = out[0]?.length ?? 128;
-    const aA = Math.exp(-1 / (this.atk * sampleRate));
-    const aR = Math.exp(-1 / (this.rel * sampleRate));
-    const slope = 1 / this.ratio - 1;
-    const knee = this.knee;
+    let aA = Math.exp(-1 / (this.atk * sampleRate));
+    let aR = Math.exp(-1 / (this.rel * sampleRate));
+    let slope = 1 / this.ratio - 1;
+    let knee = this.knee;
     for (let i = 0; i < n; i++) {
+      const frame = currentFrame + i;
+      if (this.paramEvents.length && this.paramEvents[0].frame <= frame) {
+        while (this.paramEvents.length && this.paramEvents[0].frame <= frame) {
+          this.applyParams(this.paramEvents.shift()!);
+        }
+        aA = Math.exp(-1 / (this.atk * sampleRate));
+        aR = Math.exp(-1 / (this.rel * sampleRate));
+        slope = 1 / this.ratio - 1;
+        knee = this.knee;
+      }
       let k = 0;
       for (let c = 0; c < key.length; c++) { const a = Math.abs(key[c][i]); if (a > k) k = a; }
       const db = k > 1e-6 ? 20 * Math.log10(k) : -120;

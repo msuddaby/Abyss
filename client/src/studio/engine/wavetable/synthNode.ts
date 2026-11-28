@@ -60,15 +60,15 @@ export function createWavetableSynth(params: StudioParams | undefined): Playable
     play: (pitch, dur, time, vel) => node.port.postMessage({ type: 'note', time, pitch, vel, dur }),
     noteOn: (pitch, vel) => node.port.postMessage({ type: 'liveOn', pitch, vel }),
     noteOff: (pitch) => node.port.postMessage({ type: 'liveOff', pitch }),
-    setParam: (key, value) => node.port.postMessage({ type: 'param', key, value }),
+    setParam: (key, value, time) => node.port.postMessage({ type: 'param', key, value, ...(time !== undefined ? { time } : {}) }),
     setPitchBend: (semis) => node.port.postMessage({ type: 'bend', semis }),
     setModWheel: (value) => node.port.postMessage({ type: 'modwheel', value }),
     releaseAll: () => node.port.postMessage({ type: 'off' }),
     update: (p) => { last = p; send(); },
-    setBpm: (b) => {
-      if (b === bpm) return;
-      bpm = b;
-      node.port.postMessage({ type: 'bpm', bpm });
+    setBpm: (b, time) => {
+      if (time === undefined && b === bpm) return;
+      if (time === undefined) bpm = b;
+      node.port.postMessage({ type: 'bpm', bpm: b, ...(time !== undefined ? { time } : {}) });
     },
     dispose: () => {
       node.port.postMessage({ type: 'off' });

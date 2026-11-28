@@ -89,17 +89,18 @@ const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 
 export function presetKey(kind: PresetKind, type: string) { return `${kind}:${type}`; }
+function cacheKey(channelId: string, kind: PresetKind, type: string) { return `${channelId}:${kind}:${type}`; }
 
 export async function loadPresets(channelId: string, kind: PresetKind, type: string): Promise<SavedPreset[]> {
   const res = await api.get<SavedPreset[]>(`/channels/${channelId}/studio/presets`, { params: { kind, type } });
-  cache.set(presetKey(kind, type), res.data);
+  cache.set(cacheKey(channelId, kind, type), res.data);
   notify();
   return res.data;
 }
 
 export async function savePreset(channelId: string, kind: PresetKind, type: string, name: string, params: StudioParams): Promise<SavedPreset> {
   const res = await api.post<SavedPreset>(`/channels/${channelId}/studio/presets`, { kind, type, name, params });
-  const key = presetKey(kind, type);
+  const key = cacheKey(channelId, kind, type);
   cache.set(key, [...(cache.get(key) ?? []), res.data].sort((a, b) => a.name.localeCompare(b.name)));
   notify();
   return res.data;
@@ -107,14 +108,14 @@ export async function savePreset(channelId: string, kind: PresetKind, type: stri
 
 export async function deletePreset(channelId: string, kind: PresetKind, type: string, id: string) {
   await api.delete(`/channels/${channelId}/studio/presets/${id}`);
-  const key = presetKey(kind, type);
+  const key = cacheKey(channelId, kind, type);
   cache.set(key, (cache.get(key) ?? []).filter((p) => p.id !== id));
   notify();
 }
 
 /** Saved presets for a device type (fetched when first needed). */
 export function useSavedPresets(channelId: string | null, kind: PresetKind, type: string, enabled: boolean): SavedPreset[] {
-  const key = presetKey(kind, type);
+  const key = channelId ? cacheKey(channelId, kind, type) : '';
   const [, force] = useState(0);
   useEffect(() => {
     const l = () => force((n) => n + 1);
@@ -124,5 +125,5 @@ export function useSavedPresets(channelId: string | null, kind: PresetKind, type
   useEffect(() => {
     if (enabled && channelId) loadPresets(channelId, kind, type).catch(() => {});
   }, [enabled, channelId, kind, type]);
-  return cache.get(key) ?? [];
+  return key ? cache.get(key) ?? [] : [];
 }

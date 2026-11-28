@@ -232,4 +232,46 @@ public class StudioSessionTests
         Assert.True(_svc.IsAssetReferenced(_ch, id));
         Assert.False(_svc.IsAssetReferenced(_ch, Guid.NewGuid().ToString()));
     }
+
+    [Fact]
+    public void Presence_MergesPartialUpdates_AndClearsOnLeave()
+    {
+        _session.Connections["conn-1"] = "user-1";
+        _svc.SetPresence(_ch, "user-1", JsonSerializer.SerializeToElement(new { editingClipId = "c1", editingSince = 1000L }));
+        _svc.SetPresence(_ch, "user-1", JsonSerializer.SerializeToElement(new { viewBeats = 12.5, playheadBeats = 4.0 }));
+
+        var p = _session.Presence["user-1"];
+        Assert.Equal("c1", p.GetProperty("editingClipId").GetString());
+        Assert.Equal(1000L, p.GetProperty("editingSince").GetInt64());
+        Assert.Equal(12.5, p.GetProperty("viewBeats").GetDouble());
+        Assert.Equal(4.0, p.GetProperty("playheadBeats").GetDouble());
+
+        // Explicit null clears a field
+        _svc.SetPresence(_ch, "user-1", JsonSerializer.SerializeToElement(new { editingClipId = (string?)null }));
+        Assert.Equal(JsonValueKind.Null, _session.Presence["user-1"].GetProperty("editingClipId").ValueKind);
+    }
+
+    [Fact]
+    public void Transport_ResetsToPausedWhenStudioEmpties()
+    {
+        _session.Connections["conn-1"] = "user-1";
+        _svc.SetTransport(_ch, true, 16, "user-1");
+        Assert.True(_session.Transport.IsPlaying);
+
+        Assert.True(_svc.Leave(_ch, "conn-1"));
+        Assert.False(_session.Transport.IsPlaying);
+        Assert.Null(_session.Transport.UserId);
+    }
+
+    [Fact]
+    public void PresetValidation_RejectsUnknownTypeAndNestedParams()
+    {
+        Assert.True(StudioSessionService.IsValidPresetType("instrument", "synth"));
+        Assert.True(StudioSessionService.IsValidPresetType("effect", "delay"));
+        Assert.False(StudioSessionService.IsValidPresetType("instrument", "delay"));
+        Assert.False(StudioSessionService.IsValidPresetType("effect", "vocoder"));
+
+        Assert.NotNull(StudioSessionService.ValidatePresetParams(JsonSerializer.SerializeToElement(new { mix = 50, mode = "pingpong", sync = true })));
+        Assert.Null(StudioSessionService.ValidatePresetParams(JsonSerializer.SerializeToElement(new { nested = new { a = 1 } })));
+    }
 }
