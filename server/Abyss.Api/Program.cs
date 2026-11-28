@@ -424,7 +424,7 @@ app.UseStaticFiles(new StaticFileOptions
     RequestPath = "/uploads/studio",
     ContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider
     {
-        Mappings = { [".webm"] = "audio/webm", [".m4a"] = "audio/mp4", [".flac"] = "audio/flac" },
+        Mappings = { [".webm"] = "audio/webm", [".m4a"] = "audio/mp4", [".flac"] = "audio/flac", [".sf2"] = "audio/x-soundfont" },
     },
     OnPrepareResponse = ctx =>
     {
