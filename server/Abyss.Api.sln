@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Abyss.Api", "Abyss.Api\Abyss.Api.csproj", "{CEB466C6-3974-42AE-AC0F-7E0106AED92A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Abyss.Api.Tests", "Abyss.Api.Tests\Abyss.Api.Tests.csproj", "{B7F7800E-6E75-4948-A7C3-34E8D07FF128}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,18 @@ Global
 		{CEB466C6-3974-42AE-AC0F-7E0106AED92A}.Release|x64.Build.0 = Release|Any CPU
 		{CEB466C6-3974-42AE-AC0F-7E0106AED92A}.Release|x86.ActiveCfg = Release|Any CPU
 		{CEB466C6-3974-42AE-AC0F-7E0106AED92A}.Release|x86.Build.0 = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|x64.Build.0 = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Debug|x86.Build.0 = Debug|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|x64.ActiveCfg = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|x64.Build.0 = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|x86.ActiveCfg = Release|Any CPU
+		{B7F7800E-6E75-4948-A7C3-34E8D07FF128}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

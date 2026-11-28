@@ -34,6 +34,12 @@ public class StudioSession
     public ConcurrentDictionary<string, JsonElement> Presence { get; } = new();
     public StudioTransportState Transport { get; set; } = new(false, 0, 0, null);
     public DateTime EmptySince { get; set; } = DateTime.UtcNow;
+    /// History rows not yet written (flushed with the doc)
+    public List<StudioChange> PendingChanges { get; } = new();
+    /// Latest snapshot (auto or named), for spacing automatic ones
+    public DateTime LastSnapshotAt { get; set; } = DateTime.MinValue;
+    public long LastSnapshotVersion { get; set; } = -1;
+    public DateTime LastPruneAt { get; set; } = DateTime.MinValue;
 }
 
 /// <summary>
@@ -45,16 +51,25 @@ public class StudioSession
 /// </summary>
 public class StudioSessionService
 {
-    public const int MaxTracks = 32;
+    public const int MaxTracks = 48;
+    public const int MaxMarkers = 200;
+    public const int MaxTempoEvents = 200;
+    public const int MaxSends = 16;
     public const int MaxClips = 2000;
     public const int MaxNotesPerClip = 4096;
     public const int MaxTotalNotes = 50000;
     public const int MaxOpsPerBatch = 500;
     private static readonly TimeSpan EvictAfter = TimeSpan.FromMinutes(10);
+    /// Automatic snapshots: at most one per interval while the project changes.
+    private static readonly TimeSpan AutoSnapshotEvery = TimeSpan.FromMinutes(30);
+    public const int MaxAutoSnapshots = 48;
+    public const int MaxNamedSnapshots = 100;
+    public const int MaxHistoryRows = 20000;
+    private static readonly TimeSpan HistoryRetention = TimeSpan.FromDays(90);
 
     private static readonly Regex IdRegex = new(@"^[A-Za-z0-9_-]{1,40}$", RegexOptions.Compiled);
     private static readonly HashSet<string> InstrumentTypes = new() { "synth", "fm", "am", "mono", "pluck", "drums", "bass", "sampler" };
-    private static readonly HashSet<string> EffectTypes = new() { "reverb", "delay", "eq", "compressor", "distortion", "chorus", "filter" };
+    private static readonly HashSet<string> EffectTypes = new() { "reverb", "delay", "eq", "compressor", "distortion", "chorus", "filter", "tape", "limiter" };
 
     private readonly ConcurrentDictionary<Guid, StudioSession> _sessions = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _loadLocks = new();
@@ -101,12 +116,23 @@ public class StudioSessionService
                 },
             },
             ["clips"] = new JsonObject(),
+            ["markers"] = new JsonObject(),
+            ["tempo"] = new JsonObject(),
         };
     }
 
     private static string NewId() => Guid.NewGuid().ToString("N")[..12];
 
     // ───────────────────────── Session lifecycle ─────────────────────────
+
+    /// <summary>Test hook: an in-memory session over <paramref name="doc"/> (no database).</summary>
+    internal StudioSession AttachForTest(Guid channelId, JsonObject doc)
+    {
+        EnsureShape(doc);
+        var session = new StudioSession { ChannelId = channelId, ProjectId = Guid.NewGuid(), Doc = doc };
+        _sessions[channelId] = session;
+        return session;
+    }
 
     public async Task<StudioSession> GetOrLoadAsync(Guid channelId)
     {
@@ -145,12 +171,16 @@ public class StudioSessionService
             }
             EnsureShape(doc);
 
+            var last = await db.StudioVersions.Where(v => v.ProjectId == project.Id)
+                .OrderByDescending(v => v.CreatedAt).Select(v => new { v.CreatedAt, v.DocVersion }).FirstOrDefaultAsync();
             var session = new StudioSession
             {
                 ChannelId = channelId,
                 ProjectId = project.Id,
                 Doc = doc,
                 Version = project.Version,
+                LastSnapshotAt = last?.CreatedAt ?? DateTime.MinValue,
+                LastSnapshotVersion = last?.DocVersion ?? -1,
             };
             _sessions[channelId] = session;
             return session;
@@ -214,34 +244,30 @@ public class StudioSessionService
         return state;
     }
 
+    public static bool DocReferences(string docJson, string assetId) =>
+        docJson.Contains(assetId, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Live doc JSON (null when the session isn't loaded).</summary>
+    public string? DocJson(Guid channelId)
+    {
+        if (!_sessions.TryGetValue(channelId, out var session)) return null;
+        lock (session.Lock) return session.Doc.ToJsonString();
+    }
+
     public bool IsAssetReferenced(Guid channelId, string assetId)
     {
         if (!_sessions.TryGetValue(channelId, out var session)) return false;
         lock (session.Lock)
         {
-            var clips = session.Doc["clips"] as JsonObject;
-            if (clips != null && clips.Any(kv => kv.Value is JsonObject c && c["assetId"]?.GetValue<string>() == assetId))
-                return true;
-            // Sampler instruments reference their sample by asset id too.
-            var tracks = session.Doc["tracks"] as JsonObject;
-            return tracks != null && tracks.Any(kv =>
-                (kv.Value as JsonObject)?["instrument"]?["params"]?["assetId"] is JsonValue v &&
-                v.TryGetValue<string>(out var id) && id == assetId);
+            // Clips, sampler instruments and drum-rack pads all reference assets by
+            // id; ids are GUIDs, so a text search can't false-positive.
+            return DocReferences(session.Doc.ToJsonString(), assetId);
         }
     }
 
     /// <summary>Replaces the doc with a fresh default (used by project reset). Returns the new doc and version.</summary>
-    public async Task<(JsonObject Doc, long Version)> ResetAsync(Guid channelId)
-    {
-        var session = await GetOrLoadAsync(channelId);
-        lock (session.Lock)
-        {
-            session.Doc = CreateDefaultDoc();
-            session.Version++;
-            session.Dirty = true;
-            return ((JsonObject)session.Doc.DeepClone(), session.Version);
-        }
-    }
+    public Task<(JsonObject Doc, long Version)> ResetAsync(Guid channelId, string userId) =>
+        ReplaceDocAsync(channelId, CreateDefaultDoc(), userId, "Reset the project", "Before reset");
 
     // ───────────────────────── Voice links ─────────────────────────
 
@@ -272,7 +298,7 @@ public class StudioSessionService
     /// accepted ops (in normalized form) are returned for broadcast. Returns
     /// null if nothing was accepted.
     /// </summary>
-    public (long Version, List<JsonObject> Accepted)? ApplyBatch(Guid channelId, List<StudioOp> ops)
+    public (long Version, List<JsonObject> Accepted)? ApplyBatch(Guid channelId, List<StudioOp> ops, string userId)
     {
         if (!_sessions.TryGetValue(channelId, out var session)) return null;
         if (ops.Count == 0 || ops.Count > MaxOpsPerBatch) return null;
@@ -280,15 +306,255 @@ public class StudioSessionService
         lock (session.Lock)
         {
             var accepted = new List<JsonObject>();
+            // Inverse ops per accepted op, captured from the doc just before it applied.
+            var inverses = new List<List<JsonObject>>();
+            var summary = new ChangeSummary();
             foreach (var op in ops)
             {
+                var inverse = CaptureInverse(session.Doc, op);
                 var normalized = TryApply(session.Doc, op);
-                if (normalized != null) accepted.Add(normalized);
+                if (normalized == null) continue;
+                accepted.Add(normalized);
+                inverses.Add(inverse);
+                summary.Add(op, inverse, session.Doc);
             }
             if (accepted.Count == 0) return null;
             session.Version++;
             session.Dirty = true;
+
+            inverses.Reverse();
+            session.PendingChanges.Add(new StudioChange
+            {
+                ProjectId = session.ProjectId,
+                Version = session.Version,
+                UserId = userId,
+                CreatedAt = DateTime.UtcNow,
+                Summary = summary.ToText(),
+                OpCount = accepted.Count,
+                OpsJson = new JsonArray(accepted.Select(a => (JsonNode)a.DeepClone()).ToArray()).ToJsonString(),
+                InverseJson = new JsonArray(inverses.SelectMany(x => x).Select(a => (JsonNode)a).ToArray()).ToJsonString(),
+            });
             return (session.Version, accepted);
+        }
+    }
+
+    // ───────────────────────── History ─────────────────────────
+
+    private static JsonNode? NodeAt(JsonObject doc, IReadOnlyList<string> path)
+    {
+        JsonNode? cur = doc;
+        foreach (var key in path)
+        {
+            if (cur is not JsonObject obj || !obj.TryGetPropertyValue(key, out var next)) return null;
+            cur = next;
+        }
+        return cur;
+    }
+
+    private static JsonObject InverseOp(IReadOnlyList<string> path, JsonNode? prev)
+    {
+        var o = new JsonObject
+        {
+            ["t"] = prev == null ? "del" : "set",
+            ["path"] = new JsonArray(path.Select(p => (JsonNode)JsonValue.Create(p)!).ToArray()),
+        };
+        if (prev != null) o["value"] = prev.DeepClone();
+        return o;
+    }
+
+    /// <summary>Ops that restore what <paramref name="op"/> is about to change (including cascades).</summary>
+    private static List<JsonObject> CaptureInverse(JsonObject doc, StudioOp op)
+    {
+        var list = new List<JsonObject>();
+        if (op.Path == null || op.Path.Count < 2) return list;
+        list.Add(InverseOp(op.Path, NodeAt(doc, op.Path)));
+        // Deleting a track also deletes its clips: restore them after the track.
+        if (op.T == "del" && op.Path.Count == 2 && op.Path[0] == "tracks" && doc["clips"] is JsonObject clips)
+        {
+            foreach (var (clipId, clip) in clips)
+                if ((clip as JsonObject)?["trackId"]?.GetValue<string>() == op.Path[1])
+                    list.Add(InverseOp(new[] { "clips", clipId }, clip));
+        }
+        return list;
+    }
+
+    /// <summary>Human-readable one-liner for a batch ("Added 2 clips on Bass · Changed tempo").</summary>
+    private sealed class ChangeSummary
+    {
+        private readonly Dictionary<string, int> _counts = new();
+        private readonly HashSet<string> _meta = new();
+        private readonly List<string> _tracks = new();
+
+        private void Count(string key, int n = 1) => _counts[key] = _counts.GetValueOrDefault(key) + n;
+        private void Track(string? name)
+        {
+            if (!string.IsNullOrEmpty(name) && !_tracks.Contains(name) && _tracks.Count < 3) _tracks.Add(name);
+        }
+
+        public void Add(StudioOp op, List<JsonObject> inverse, JsonObject docAfter)
+        {
+            var path = op.Path;
+            var existed = inverse.Count > 0 && inverse[0]["t"]?.GetValue<string>() == "set";
+            var prev = existed ? inverse[0]["value"] : null;
+            string? TrackName(string? trackId) =>
+                trackId == null ? null : (NodeAt(docAfter, new[] { "tracks", trackId, "name" }) ?? FindInInverse(inverse, trackId))?.GetValue<string>();
+
+            switch (path[0])
+            {
+                case "meta":
+                    _meta.Add(path[1] switch
+                    {
+                        "bpm" => "tempo",
+                        "timeSigNum" or "timeSigDen" => "time signature",
+                        "loopEnabled" or "loopStart" or "loopEnd" => "loop",
+                        "scaleRoot" or "scaleMode" => "scale",
+                        "masterEffects" => "master effects",
+                        "masterVolume" => "master volume",
+                        _ => path[1],
+                    });
+                    break;
+                case "tracks":
+                {
+                    var name = TrackName(path[1]) ?? (prev as JsonObject)?["name"]?.GetValue<string>();
+                    Track(name);
+                    if (path.Count == 2) Count(op.T == "del" ? "track-" : existed ? "track~" : "track+");
+                    else if (path.Count >= 3) Count(path[2] switch
+                    {
+                        "volume" or "pan" or "mute" or "solo" => "mixer",
+                        "instrument" => "instrument",
+                        "effects" => "effects",
+                        "automation" => "automation",
+                        "sends" => "sends",
+                        "output" => "routing",
+                        "name" => "rename",
+                        "color" => "color",
+                        _ => "track~",
+                    });
+                    break;
+                }
+                case "clips":
+                {
+                    var clip = NodeAt(docAfter, new[] { "clips", path[1] }) as JsonObject ?? prev as JsonObject;
+                    Track(TrackName(clip?["trackId"]?.GetValue<string>()));
+                    if (path.Count == 2) Count(op.T == "del" ? "clip-" : existed ? "clip~" : "clip+");
+                    else if (path.Count >= 4 && path[2] == "notes") Count("note");
+                    else Count("clip~");
+                    break;
+                }
+                case "markers":
+                    Count(path.Count == 2 && op.T == "del" ? "marker-" : path.Count == 2 && !existed ? "marker+" : "marker~");
+                    break;
+                case "tempo":
+                    Count("tempo-map");
+                    break;
+            }
+        }
+
+        private static JsonNode? FindInInverse(List<JsonObject> inverse, string trackId)
+        {
+            foreach (var inv in inverse)
+                if (inv["path"] is JsonArray p && p.Count == 2 && p[0]?.GetValue<string>() == "tracks" && p[1]?.GetValue<string>() == trackId)
+                    return (inv["value"] as JsonObject)?["name"];
+            return null;
+        }
+
+        public string ToText()
+        {
+            var parts = new List<string>();
+            string N(int n, string one, string many) => n == 1 ? one : $"{n} {many}";
+            foreach (var (key, n) in _counts)
+            {
+                parts.Add(key switch
+                {
+                    "track+" => $"Added {N(n, "a track", "tracks")}",
+                    "track-" => $"Deleted {N(n, "a track", "tracks")}",
+                    "track~" => "Changed track settings",
+                    "mixer" => "Mixer",
+                    "instrument" => "Instrument",
+                    "effects" => "Effects",
+                    "automation" => "Automation",
+                    "sends" => "Sends",
+                    "routing" => "Routing",
+                    "marker+" => $"Added {N(n, "a marker", "markers")}",
+                    "marker-" => $"Deleted {N(n, "a marker", "markers")}",
+                    "marker~" => "Edited markers",
+                    "tempo-map" => "Changed tempo map",
+                    "rename" => "Renamed",
+                    "color" => "Colour",
+                    "clip+" => $"Added {N(n, "a clip", "clips")}",
+                    "clip-" => $"Deleted {N(n, "a clip", "clips")}",
+                    "clip~" => $"Edited {N(n, "a clip", "clips")}",
+                    "note" => $"Edited {N(n, "a note", "notes")}",
+                    _ => key,
+                });
+            }
+            if (_meta.Count > 0) parts.Add("Changed " + string.Join(", ", _meta));
+            var text = string.Join(" · ", parts.Distinct());
+            if (_tracks.Count > 0) text += " — " + string.Join(", ", _tracks);
+            return text.Length > 300 ? text[..297] + "…" : text;
+        }
+    }
+
+    /// <summary>Snapshots the live doc as a version. Returns it, or null when the named limit is reached.</summary>
+    public async Task<StudioVersion?> SaveVersionAsync(Guid channelId, string name, string? userId, bool auto = false)
+    {
+        var session = await GetOrLoadAsync(channelId);
+        StudioVersion version;
+        lock (session.Lock)
+        {
+            version = new StudioVersion
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = session.ProjectId,
+                Name = name.Length > 80 ? name[..80] : name,
+                Auto = auto,
+                CreatedById = userId,
+                CreatedAt = DateTime.UtcNow,
+                DocVersion = session.Version,
+                DocJson = session.Doc.ToJsonString(),
+            };
+            session.LastSnapshotAt = version.CreatedAt;
+            session.LastSnapshotVersion = session.Version;
+        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!auto && await db.StudioVersions.CountAsync(v => v.ProjectId == session.ProjectId && !v.Auto) >= MaxNamedSnapshots) return null;
+        db.StudioVersions.Add(version);
+        await db.SaveChangesAsync();
+        if (auto) await PruneAutoSnapshotsAsync(db, session.ProjectId);
+        return version;
+    }
+
+    private static async Task PruneAutoSnapshotsAsync(AppDbContext db, Guid projectId)
+    {
+        var keep = await db.StudioVersions.Where(v => v.ProjectId == projectId && v.Auto)
+            .OrderByDescending(v => v.CreatedAt).Skip(MaxAutoSnapshots).Select(v => v.Id).ToListAsync();
+        if (keep.Count > 0) await db.StudioVersions.Where(v => keep.Contains(v.Id)).ExecuteDeleteAsync();
+    }
+
+    /// <summary>
+    /// Replaces the live doc wholesale (restore a version / reset). The current
+    /// state is snapshotted first so the replace itself can be undone.
+    /// </summary>
+    public async Task<(JsonObject Doc, long Version)> ReplaceDocAsync(Guid channelId, JsonObject doc, string userId, string summary, string beforeName)
+    {
+        await SaveVersionAsync(channelId, beforeName, null, auto: true);
+        var session = await GetOrLoadAsync(channelId);
+        EnsureShape(doc);
+        lock (session.Lock)
+        {
+            session.Doc = doc;
+            session.Version++;
+            session.Dirty = true;
+            session.PendingChanges.Add(new StudioChange
+            {
+                ProjectId = session.ProjectId,
+                Version = session.Version,
+                UserId = userId,
+                Kind = "restore",
+                Summary = summary.Length > 300 ? summary[..300] : summary,
+            });
+            return ((JsonObject)session.Doc.DeepClone(), session.Version);
         }
     }
 
@@ -308,7 +574,13 @@ public class StudioSessionService
         {
             case "meta":
             {
-                if (path.Count != 2 || !isSet) return null;
+                if (path.Count != 2) return null;
+                if (!isSet)
+                {
+                    // Optional meta fields can be cleared (reverting a first-time set).
+                    if (!OptionalMetaFields.Contains(path[1]) || !((JsonObject)doc["meta"]!).Remove(path[1])) return null;
+                    break;
+                }
                 value = ValidateMetaField(path[1], op.Value!.Value);
                 if (value == null) return null;
                 ((JsonObject)doc["meta"]!)[path[1]] = value;
@@ -337,10 +609,32 @@ public class StudioSessionService
                 }
                 else if (path.Count == 3)
                 {
-                    if (!isSet || tracks[id] is not JsonObject track) return null;
+                    if (tracks[id] is not JsonObject track) return null;
+                    if (!isSet)
+                    {
+                        // Optional fields can be cleared (reverting a first-time set).
+                        if (RequiredTrackFields.Contains(path[2]) || path[2] == "instrument" || !track.Remove(path[2])) return null;
+                        break;
+                    }
                     value = ValidateTrackField(path[2], op.Value!.Value, track["kind"]?.GetValue<string>());
                     if (value == null) return null;
                     track[path[2]] = value;
+                }
+                else if (path.Count == 4 && path[2] == "sends")
+                {
+                    // ["tracks", id, "sends", returnTrackId] — one send level
+                    if (tracks[id] is not JsonObject track || !IdRegex.IsMatch(path[3]) || path[3] == id) return null;
+                    if (track["kind"]?.GetValue<string>() == "return") return null; // returns don't send
+                    var sends = track["sends"] as JsonObject;
+                    if (isSet)
+                    {
+                        if (Num(op.Value!.Value, -60, 6) is not { } lvl) return null;
+                        value = JsonValue.Create(lvl);
+                        if (sends == null) { sends = new JsonObject(); track["sends"] = sends; }
+                        if (!sends.ContainsKey(path[3]) && sends.Count >= MaxSends) return null;
+                        sends[path[3]] = value;
+                    }
+                    else if (sends == null || !sends.Remove(path[3])) return null;
                 }
                 else if (path.Count == 4 && path[2] == "automation")
                 {
@@ -381,8 +675,13 @@ public class StudioSessionService
                 }
                 else if (path.Count == 3)
                 {
-                    if (!isSet || clips[id] is not JsonObject clip) return null;
+                    if (clips[id] is not JsonObject clip) return null;
                     if (path[2] == "notes") return null; // replace notes via whole-clip set
+                    if (!isSet)
+                    {
+                        if (RequiredClipFields.Contains(path[2]) || path[2] == "assetId" || !clip.Remove(path[2])) return null;
+                        break;
+                    }
                     value = ValidateClipField(path[2], op.Value!.Value, tracks, clip);
                     if (value == null) return null;
                     clip[path[2]] = value;
@@ -418,6 +717,45 @@ public class StudioSessionService
                 }
                 break;
             }
+            case "markers":
+            case "tempo":
+            {
+                var coll = doc[path[0]] as JsonObject;
+                if (coll == null) { coll = new JsonObject(); doc[path[0]] = coll; }
+                var id = path[1];
+                if (!IdRegex.IsMatch(id)) return null;
+                var isMarker = path[0] == "markers";
+                if (path.Count == 2)
+                {
+                    if (isSet)
+                    {
+                        if (!coll.ContainsKey(id) && coll.Count >= (isMarker ? MaxMarkers : MaxTempoEvents)) return null;
+                        value = isMarker ? ValidateMarker(op.Value!.Value) : ValidateTempoEvent(op.Value!.Value);
+                        if (value == null) return null;
+                        coll[id] = value;
+                    }
+                    else if (!coll.Remove(id)) return null;
+                }
+                else if (path.Count == 3)
+                {
+                    if (coll[id] is not JsonObject item) return null;
+                    if (!isSet)
+                    {
+                        // beat / name are required; tempo events keep at least one change
+                        if (path[2] is "beat" or "name" || !item.ContainsKey(path[2])) return null;
+                        var copy = (JsonObject)item.DeepClone();
+                        copy.Remove(path[2]);
+                        if (!isMarker && !TempoEventHasChange(copy)) return null;
+                        item.Remove(path[2]);
+                        break;
+                    }
+                    value = isMarker ? ValidateMarkerField(path[2], op.Value!.Value) : ValidateTempoField(path[2], op.Value!.Value);
+                    if (value == null) return null;
+                    item[path[2]] = value;
+                }
+                else return null;
+                break;
+            }
             default:
                 return null;
         }
@@ -439,7 +777,13 @@ public class StudioSessionService
         if (doc["meta"] is not JsonObject) doc["meta"] = CreateDefaultDoc()["meta"]!.DeepClone();
         if (doc["tracks"] is not JsonObject) doc["tracks"] = new JsonObject();
         if (doc["clips"] is not JsonObject) doc["clips"] = new JsonObject();
+        if (doc["markers"] is not JsonObject) doc["markers"] = new JsonObject();
+        if (doc["tempo"] is not JsonObject) doc["tempo"] = new JsonObject();
     }
+
+    private static readonly HashSet<string> OptionalMetaFields = new() { "scaleRoot", "scaleMode", "masterEffects", "masterVolume" };
+    private static readonly HashSet<string> RequiredTrackFields = new() { "name", "kind", "order", "volume", "pan", "mute", "solo" };
+    private static readonly HashSet<string> RequiredClipFields = new() { "trackId", "kind", "start", "length", "gain", "notes" };
 
     // ───────────────────────── Schema validation ─────────────────────────
 
@@ -469,7 +813,68 @@ public class StudioSessionService
         "timeSigDen" => Num(v, 1, 16) is { } d && d is 2 or 4 or 8 or 16 ? JsonValue.Create((int)d) : null,
         "loopEnabled" => Bool(v) is { } b ? JsonValue.Create(b) : null,
         "loopStart" or "loopEnd" => Num(v, 0, 100000) is { } d ? JsonValue.Create(d) : null,
+        "scaleRoot" => Num(v, 0, 11) is { } d && d == Math.Floor(d) ? JsonValue.Create((int)d) : null,
+        "scaleMode" => Str(v, 24) is { } m && ScaleModes.Contains(m) ? JsonValue.Create(m) : null,
+        "masterEffects" => ValidateEffects(v),
+        "masterVolume" => Num(v, -60, 12) is { } d ? JsonValue.Create(d) : null,
         _ => null,
+    };
+
+    private static JsonObject? ValidateMarker(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) return null;
+        var m = new JsonObject();
+        foreach (var prop in v.EnumerateObject())
+        {
+            var node = ValidateMarkerField(prop.Name, prop.Value);
+            if (node == null) return null;
+            m[prop.Name] = node;
+        }
+        if (m["beat"] == null) return null;
+        m["name"] ??= "Marker";
+        return m;
+    }
+
+    private static JsonNode? ValidateMarkerField(string field, JsonElement v) => field switch
+    {
+        "beat" => Num(v, 0, 100000) is { } d ? JsonValue.Create(d) : null,
+        "name" => Str(v, 40, allowEmpty: true) is { } s ? JsonValue.Create(s) : null,
+        "color" => Str(v, 7) is { } s && ColorRegex.IsMatch(s) ? JsonValue.Create(s) : null,
+        _ => null,
+    };
+
+    private static JsonObject? ValidateTempoEvent(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) return null;
+        var e = new JsonObject();
+        foreach (var prop in v.EnumerateObject())
+        {
+            var node = ValidateTempoField(prop.Name, prop.Value);
+            if (node == null) return null;
+            e[prop.Name] = node;
+        }
+        if (e["beat"] == null || !TempoEventHasChange(e)) return null;
+        // A signature needs both halves.
+        if ((e["num"] == null) != (e["den"] == null)) return null;
+        return e;
+    }
+
+    private static bool TempoEventHasChange(JsonObject e) => e["bpm"] != null || (e["num"] != null && e["den"] != null);
+
+    private static JsonNode? ValidateTempoField(string field, JsonElement v) => field switch
+    {
+        "beat" => Num(v, 1.0 / 64, 100000) is { } d ? JsonValue.Create(d) : null,
+        "bpm" => Num(v, 20, 400) is { } d ? JsonValue.Create(d) : null,
+        "num" => Num(v, 1, 16) is { } d && d == Math.Floor(d) ? JsonValue.Create((int)d) : null,
+        "den" => Num(v, 1, 16) is { } d && d is 2 or 4 or 8 or 16 ? JsonValue.Create((int)d) : null,
+        _ => null,
+    };
+
+    /// Must match client/src/studio/scales.ts.
+    private static readonly HashSet<string> ScaleModes = new()
+    {
+        "none", "major", "minor", "dorian", "phrygian", "lydian", "mixolydian", "locrian",
+        "harmonicMinor", "melodicMinor", "majorPentatonic", "minorPentatonic", "blues",
     };
 
     private static JsonObject? ValidateTrack(JsonElement v)
@@ -477,7 +882,7 @@ public class StudioSessionService
         if (v.ValueKind != JsonValueKind.Object) return null;
         if (!v.TryGetProperty("kind", out var kindEl)) return null;
         var kind = Str(kindEl, 16);
-        if (kind is not ("audio" or "instrument")) return null;
+        if (kind is not ("audio" or "instrument" or "return" or "group")) return null;
 
         var track = new JsonObject { ["kind"] = kind };
         foreach (var prop in v.EnumerateObject())
@@ -487,7 +892,7 @@ public class StudioSessionService
             if (node == null) return null;
             track[prop.Name] = node;
         }
-        track["name"] ??= kind == "audio" ? "Audio" : "Instrument";
+        track["name"] ??= kind switch { "audio" => "Audio", "return" => "Return", "group" => "Group", _ => "Instrument" };
         track["order"] ??= 0;
         track["volume"] ??= 0;
         track["pan"] ??= 0;
@@ -508,8 +913,28 @@ public class StudioSessionService
         "instrument" => kind == "instrument" ? ValidateInstrument(v) : null,
         "effects" => ValidateEffects(v),
         "automation" => ValidateAutomation(v),
+        // Group track this one feeds ("" = master). Dangling ids fall back to master on clients.
+        "output" => kind != "return" && Str(v, 40, allowEmpty: true) is { } o && (o.Length == 0 || IdRegex.IsMatch(o)) ? JsonValue.Create(o) : null,
+        "sends" => kind != "return" ? ValidateSends(v) : null,
+        "collapsed" => kind == "group" && Bool(v) is { } b ? JsonValue.Create(b) : null,
         _ => null,
     };
+
+    private static JsonObject? ValidateSends(JsonElement v)
+    {
+        if (v.ValueKind != JsonValueKind.Object) return null;
+        var result = new JsonObject();
+        foreach (var prop in v.EnumerateObject())
+        {
+            if (result.Count >= MaxSends || !IdRegex.IsMatch(prop.Name) || Num(prop.Value, -60, 6) is not { } lvl) return null;
+            result[prop.Name] = lvl;
+        }
+        return result;
+    }
+
+    /// Audio clips live on audio tracks, MIDI clips on instrument tracks; returns/groups hold none.
+    private static bool ClipFitsTrack(string? clipKind, string? trackKind) =>
+        (clipKind == "audio" && trackKind == "audio") || (clipKind == "midi" && trackKind == "instrument");
 
     public const int MaxLanes = 48;
     public const int MaxLanePoints = 4000;
@@ -561,7 +986,7 @@ public class StudioSessionService
         return inst;
     }
 
-    /// Flat map of up to 128 numeric/string/bool params (EQ Eight bands, wavetable synth + mod matrix).
+    /// Flat map of up to 256 numeric/string/bool params (EQ Eight bands, wavetable synth + mod matrix).
     private static JsonObject? ValidateParams(JsonElement v)
     {
         if (v.ValueKind != JsonValueKind.Object) return null;
@@ -569,8 +994,8 @@ public class StudioSessionService
         var count = 0;
         foreach (var prop in v.EnumerateObject())
         {
-            // EQ Eight carries 8 bands x 5 params plus globals.
-            if (++count > 128 || prop.Name.Length > 32) return null;
+            // EQ Eight carries 8 bands x 5 params; the Drum Rack up to 16 pads x 10.
+            if (++count > 256 || prop.Name.Length > 32) return null;
             JsonNode? node = prop.Value.ValueKind switch
             {
                 JsonValueKind.Number => Num(prop.Value, -1e6, 1e6) is { } d ? JsonValue.Create(d) : null,
@@ -613,9 +1038,7 @@ public class StudioSessionService
         if (!v.TryGetProperty("kind", out var kindEl) || Str(kindEl, 8) is not { } kind || kind is not ("audio" or "midi")) return null;
         if (!v.TryGetProperty("trackId", out var trackEl) || Str(trackEl, 40) is not { } trackId) return null;
         if (tracks[trackId] is not JsonObject track) return null;
-        // Audio clips live on audio tracks, MIDI clips on instrument tracks.
-        var trackKind = track["kind"]?.GetValue<string>();
-        if ((kind == "audio") != (trackKind == "audio")) return null;
+        if (!ClipFitsTrack(kind, track["kind"]?.GetValue<string>())) return null;
 
         var clip = new JsonObject { ["kind"] = kind, ["trackId"] = trackId };
         foreach (var prop in v.EnumerateObject())
@@ -652,8 +1075,7 @@ public class StudioSessionService
             case "trackId":
             {
                 if (Str(v, 40) is not { } id || tracks[id] is not JsonObject t) return null;
-                var trackKind = t["kind"]?.GetValue<string>();
-                return (kind == "audio") == (trackKind == "audio") ? JsonValue.Create(id) : null;
+                return ClipFitsTrack(kind, t["kind"]?.GetValue<string>()) ? JsonValue.Create(id) : null;
             }
             case "start": return Num(v, 0, 100000) is { } st ? JsonValue.Create(st) : null;
             case "length": return Num(v, 1.0 / 64, 100000) is { } len ? JsonValue.Create(len) : null;
@@ -664,6 +1086,10 @@ public class StudioSessionService
             // Audio-only fields are in seconds of source audio (clips play at native rate).
             case "offset": return kind == "audio" && Num(v, 0, 86400) is { } off ? JsonValue.Create(off) : null;
             case "fadeIn" or "fadeOut": return kind == "audio" && Num(v, 0, 600) is { } fd ? JsonValue.Create(fd) : null;
+            case "mute": return Bool(v) is { } mu ? JsonValue.Create(mu) : null;
+            case "warp" or "reverse": return kind == "audio" && Bool(v) is { } wb ? JsonValue.Create(wb) : null;
+            case "srcBpm": return kind == "audio" && Num(v, 20, 400) is { } sb ? JsonValue.Create(sb) : null;
+            case "pitch": return kind == "audio" && Num(v, -24, 24) is { } pt ? JsonValue.Create(pt) : null;
             default: return null;
         }
     }
@@ -719,12 +1145,30 @@ public class StudioSessionService
         {
             string json;
             long version;
+            List<StudioChange> changes;
             lock (session.Lock)
             {
                 json = session.Doc.ToJsonString();
                 version = session.Version;
                 session.Dirty = false;
+                changes = session.PendingChanges.ToList();
+                session.PendingChanges.Clear();
             }
+            if (changes.Count > 0)
+            {
+                try
+                {
+                    db.StudioChanges.AddRange(changes);
+                    await db.SaveChangesAsync(ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to write studio history for {ProjectId}", session.ProjectId);
+                    db.ChangeTracker.Clear();
+                    lock (session.Lock) { session.PendingChanges.InsertRange(0, changes); session.Dirty = true; }
+                }
+            }
+            await MaintainHistoryAsync(db, session, version, ct);
             try
             {
                 await db.StudioProjects
@@ -739,6 +1183,29 @@ public class StudioSessionService
                 _logger.LogError(ex, "Failed to flush studio project {ProjectId}", session.ProjectId);
                 lock (session.Lock) session.Dirty = true;
             }
+        }
+    }
+
+    /// <summary>Automatic snapshots while the project changes, and history retention.</summary>
+    private async Task MaintainHistoryAsync(AppDbContext db, StudioSession session, long version, CancellationToken ct)
+    {
+        try
+        {
+            if (version != session.LastSnapshotVersion && DateTime.UtcNow - session.LastSnapshotAt > AutoSnapshotEvery)
+                await SaveVersionAsync(session.ChannelId, "Auto-save", null, auto: true);
+            if (DateTime.UtcNow - session.LastPruneAt > TimeSpan.FromHours(1))
+            {
+                session.LastPruneAt = DateTime.UtcNow;
+                var cutoffTime = DateTime.UtcNow - HistoryRetention;
+                await db.StudioChanges.Where(c => c.ProjectId == session.ProjectId && c.CreatedAt < cutoffTime).ExecuteDeleteAsync(ct);
+                var cutoffId = await db.StudioChanges.Where(c => c.ProjectId == session.ProjectId)
+                    .OrderByDescending(c => c.Id).Skip(MaxHistoryRows).Select(c => (long?)c.Id).FirstOrDefaultAsync(ct);
+                if (cutoffId != null) await db.StudioChanges.Where(c => c.ProjectId == session.ProjectId && c.Id <= cutoffId).ExecuteDeleteAsync(ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Studio history maintenance failed for {ProjectId}", session.ProjectId);
         }
     }
 

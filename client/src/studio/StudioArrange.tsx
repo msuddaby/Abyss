@@ -1,16 +1,23 @@
+import { isMidiFile } from './midiImport';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useStudioStore, studioId, beatsToSeconds, secondsToBeats } from '@abyss/shared';
+import { useStudioStore, useToastStore, studioId, tempoMap, barsIn } from '@abyss/shared';
 import type { StudioDoc, StudioClip, StudioOp, StudioPresence } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import StudioTrackHeader from './StudioTrackHeader';
 import StudioClipView, { type ClipDragMode } from './StudioClip';
 import StudioAutomationLane from './StudioAutomationLane';
+import StudioTimelineRows from './StudioTimelineRows';
+import { displayOrder, clipSrcSeconds, clipBeatsForSrc, assetBeatsAt } from './engine/routing';
 import {
   HEADER_WIDTH, TRACK_HEIGHT, RULER_HEIGHT, MIN_CLIP_BEATS,
-  barBeats, snapBeats, floorBeats, colorForUser, memberName, uploadAudioFiles, audioClipOp,
+  snapBeats, colorForUser, memberName, uploadAudioFiles, audioClipOp, barBeatsAt, barFloor,
+  packLanes, compOps, clipFitsTrack, isDoubleTap,
 } from './studioUtils';
 
 export const ASSET_DRAG_TYPE = 'application/x-abyss-studio-asset';
+
+/** Height of one take lane when a track shows its takes */
+const TAKE_LANE_H = 44;
 
 interface Props {
   doc: StudioDoc;
@@ -33,9 +40,14 @@ interface Props {
   levels: Record<string, number>;
   peaksVersion: number;
   presence: Record<string, StudioPresence>;
+  /** Asset ids that still exist (clips pointing elsewhere are shown as missing) */
+  assetIds: Set<string>;
+  /** Collaborator whose view we follow (scroll position + playhead) */
+  followUserId: string | null;
   onSeek: (beats: number) => void;
   onOpenClip: (id: string) => void;
   onDeleteTrack: (id: string) => void;
+  onZoom?: (factor: number) => void;
 }
 
 interface DragState {
@@ -55,7 +67,7 @@ export default function StudioArrange(props: Props) {
   const {
     doc, trackIds, pxPerBeat, totalBeats, snapGrid, editable, engine, isPlaying, playheadBeats,
     selection, onSelectionChange, selectedTrackId, onSelectTrack, armedTrackIds, onArmTrack, recordingTakes,
-    levels, peaksVersion, presence, onSeek, onOpenClip, onDeleteTrack,
+    levels, peaksVersion, presence, assetIds, followUserId, onSeek, onOpenClip, onDeleteTrack, onZoom,
   } = props;
   const edit = useStudioStore((s) => s.edit);
   const assets = useStudioStore((s) => s.assets);
@@ -67,26 +79,43 @@ export default function StudioArrange(props: Props) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   /** trackId → automation lane shown under it */
   const [autoLanes, setAutoLanes] = useState<Record<string, string>>({});
+  /** Tracks showing their takes stacked */
+  const [takeTracks, setTakeTracks] = useState<string[]>([]);
   const toggleAutomation = (trackId: string) => setAutoLanes((m) => {
     const next = { ...m };
     if (next[trackId]) delete next[trackId];
     else next[trackId] = Object.keys(doc.tracks[trackId]?.automation ?? {}).find((k) => doc.tracks[trackId].automation![k].length) ?? 'vol';
     return next;
   });
+  const toggleTakes = (trackId: string) => setTakeTracks((t) => (t.includes(trackId) ? t.filter((x) => x !== trackId) : [...t, trackId]));
 
   const assetDur = useMemo(() => new Map(assets.map((a) => [a.id, a.durationSec])), [assets]);
-  const bpm = doc.meta.bpm;
-  const perBar = barBeats(doc.meta);
   const width = totalBeats * pxPerBeat;
+  const map = tempoMap(doc);
+
+  /** Visible rows: groups' children nested under them, collapsed ones hidden. */
+  const rows = useMemo(() => displayOrder(doc, trackIds).filter((r) => !r.hidden), [doc, trackIds]);
+  const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
+
+  /** Clips someone else is editing (piano roll open, or dragging): soft-locked for us. */
+  const locks = useMemo(() => {
+    const out: Record<string, { name: string; color: string }> = {};
+    for (const [uid, p] of Object.entries(presence)) {
+      const who = { name: memberName(uid), color: colorForUser(uid) };
+      if (p.editingClipId) out[p.editingClipId] = who;
+      if (p.drag?.clipId) out[p.drag.clipId] = who;
+    }
+    return out;
+  }, [presence]);
 
   // Latest values for window-level drag handlers
-  const live = useRef({ doc, trackIds, pxPerBeat, snapGrid, assetDur, bpm });
-  live.current = { doc, trackIds, pxPerBeat, snapGrid, assetDur, bpm };
+  const live = useRef({ doc, rowIds, pxPerBeat, snapGrid, assetDur });
+  live.current = { doc, rowIds, pxPerBeat, snapGrid, assetDur };
 
   // ───────────── Clip drag (move / trim / alt-duplicate) ─────────────
 
   const computePreview = useCallback((d: DragState, clientX: number, clientY: number): Record<string, StudioClip> => {
-    const { doc, trackIds, pxPerBeat, snapGrid, assetDur, bpm } = live.current;
+    const { doc, rowIds, pxPerBeat, snapGrid, assetDur } = live.current;
     const dx = (clientX - d.startX) / pxPerBeat;
     const out: Record<string, StudioClip> = {};
     const prim = d.origin[d.primary];
@@ -97,14 +126,14 @@ export default function StudioArrange(props: Props) {
       delta = Math.max(delta, -minStart);
       // Target track = the lane under the pointer (rows vary in height with automation lanes).
       const hovered = (document.elementFromPoint(clientX, clientY)?.closest('[data-track-id]') as HTMLElement | null)?.dataset.trackId;
-      const rows = hovered ? trackIds.indexOf(hovered) - trackIds.indexOf(prim.trackId) : 0;
+      const rows = hovered ? rowIds.indexOf(hovered) - rowIds.indexOf(prim.trackId) : 0;
       for (const id of d.ids) {
         const o = d.origin[id];
         let trackId = o.trackId;
         if (rows !== 0) {
-          const target = trackIds[trackIds.indexOf(o.trackId) + rows];
+          const target = rowIds[rowIds.indexOf(o.trackId) + rows];
           const t = target ? doc.tracks[target] : undefined;
-          if (t && (t.kind === 'audio') === (o.kind === 'audio')) trackId = target;
+          if (t && clipFitsTrack(o.kind, t.kind)) trackId = target;
         }
         out[id] = { ...o, start: o.start + delta, trackId };
       }
@@ -114,9 +143,9 @@ export default function StudioArrange(props: Props) {
     const end = prim.start + prim.length;
     if (d.mode === 'trim-end') {
       let length = Math.max(MIN_CLIP_BEATS, snapBeats(end + dx, snapGrid) - prim.start);
-      if (prim.kind === 'audio' && prim.assetId) {
+      if (prim.kind === 'audio' && prim.assetId && !prim.reverse) {
         const dur = assetDur.get(prim.assetId);
-        if (dur) length = Math.min(length, secondsToBeats(dur - (prim.offset ?? 0), bpm));
+        if (dur) length = Math.min(length, clipBeatsForSrc(doc, prim, 0, dur - (prim.offset ?? 0)));
       }
       out[d.primary] = { ...prim, length: Math.max(MIN_CLIP_BEATS, length) };
       return out;
@@ -127,9 +156,17 @@ export default function StudioArrange(props: Props) {
     start = Math.min(start, end - MIN_CLIP_BEATS);
     start = Math.max(0, start);
     if (prim.kind === 'audio') {
-      start = Math.max(start, prim.start - secondsToBeats(prim.offset ?? 0, bpm));
-      const shift = start - prim.start;
-      out[d.primary] = { ...prim, start, length: end - start, offset: Math.max(0, (prim.offset ?? 0) + beatsToSeconds(shift, bpm)) };
+      if (!prim.reverse) {
+        // Can't extend left past the start of the source.
+        const maxLeft = clipBeatsForSrc(doc, prim, 0, prim.offset ?? 0);
+        start = Math.max(start, prim.start - maxLeft);
+        const shift = start - prim.start;
+        const srcShift = shift >= 0 ? clipSrcSeconds(doc, prim, 0, shift) : -clipSrcSeconds(doc, { ...prim, start }, 0, -shift);
+        out[d.primary] = { ...prim, start, length: end - start, offset: Math.max(0, (prim.offset ?? 0) + srcShift) };
+      } else {
+        // Reversed: the left edge reads the source's end; the offset stays put.
+        out[d.primary] = { ...prim, start, length: end - start };
+      }
     } else {
       const shift = start - prim.start;
       const notes: Record<string, NonNullable<StudioClip['notes']>[string]> = {};
@@ -188,7 +225,11 @@ export default function StudioArrange(props: Props) {
     if (clip) onSelectTrack(clip.trackId);
     if (!editable) return;
 
-    const ids = mode === 'move' ? sel.filter((s) => doc.clips[s]) : [id];
+    const ids = mode === 'move' ? sel.filter((s) => doc.clips[s] && !locks[s]) : [id];
+    if (locks[id]) {
+      useToastStore.getState().addToast(`${locks[id].name} is editing that clip right now.`, 'info');
+      return;
+    }
     const origin: Record<string, StudioClip> = {};
     for (const s of ids) origin[s] = doc.clips[s];
     const d: DragState = { mode, ids, primary: id, startX: e.clientX, startY: e.clientY, origin, duplicate: e.altKey, moved: false };
@@ -213,7 +254,7 @@ export default function StudioArrange(props: Props) {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
-  }, [selection, onSelectionChange, onSelectTrack, editable, computePreview, finishDrag, setLocalPresence]);
+  }, [selection, onSelectionChange, onSelectTrack, editable, computePreview, finishDrag, setLocalPresence, locks]);
 
   // ───────────── Lanes: create MIDI clips, drops ─────────────
 
@@ -225,9 +266,9 @@ export default function StudioArrange(props: Props) {
   const onLaneDoubleClick = (e: React.MouseEvent, trackId: string) => {
     const track = doc.tracks[trackId];
     if (!editable || track?.kind !== 'instrument') return;
-    const at = floorBeats(beatsAtClientX(e.clientX, e.currentTarget as HTMLElement), perBar);
+    const at = barFloor(doc, beatsAtClientX(e.clientX, e.currentTarget as HTMLElement));
     const id = studioId();
-    edit([{ t: 'set', path: ['clips', id], value: { trackId, kind: 'midi', start: at, length: perBar, gain: 0, notes: {}, name: track.name } }]);
+    edit([{ t: 'set', path: ['clips', id], value: { trackId, kind: 'midi', start: at, length: barBeatsAt(doc, at), gain: 0, notes: {}, name: track.name } }]);
     onSelectionChange([id]);
     onOpenClip(id);
   };
@@ -248,23 +289,25 @@ export default function StudioArrange(props: Props) {
     const assetId = e.dataTransfer.getData(ASSET_DRAG_TYPE);
     if (assetId) {
       const asset = assets.find((a) => a.id === assetId);
-      if (asset) edit([audioClipOp(asset, trackId, at, bpm)]);
+      if (asset) edit([audioClipOp(asset, trackId, at, doc)]);
       return;
     }
-    const files = Array.from(e.dataTransfer.files);
+    // MIDI files bubble up to the studio view, which imports them.
+    const files = Array.from(e.dataTransfer.files).filter((f) => !isMidiFile(f));
     if (!files.length) return;
     const created = await uploadAudioFiles(files);
-    const latestBpm = useStudioStore.getState().doc?.meta.bpm ?? bpm;
+    const latest = useStudioStore.getState().doc ?? doc;
     const ops: StudioOp[] = [];
     for (const asset of created) {
-      ops.push(audioClipOp(asset, trackId, at, latestBpm));
-      at += secondsToBeats(asset.durationSec, latestBpm);
+      ops.push(audioClipOp(asset, trackId, at, latest));
+      at += assetBeatsAt(latest, at, asset.durationSec);
     }
     if (ops.length) useStudioStore.getState().edit(ops);
   };
 
   const onLanePointerDown = (e: React.PointerEvent, trackId: string) => {
     if (e.button !== 0) return;
+    if (isDoubleTap(e, `lane:${trackId}`)) { onLaneDoubleClick(e, trackId); return; }
     onSelectTrack(trackId);
     if (!e.shiftKey) onSelectionChange([]);
   };
@@ -305,27 +348,88 @@ export default function StudioArrange(props: Props) {
     window.addEventListener('pointerup', up);
   };
 
-  // ───────────── Follow playhead while playing ─────────────
+  // ───────────── Follow playhead / a collaborator's view ─────────────
 
+  const followed = followUserId ? presence[followUserId] : undefined;
   useEffect(() => {
-    if (!isPlaying || dragRef.current) return;
+    if (dragRef.current) return;
     const el = scrollRef.current;
     if (!el) return;
+    // Following someone: show what they see (their scroll), or their playhead while they play.
+    if (followed) {
+      const target = followed.playheadBeats ?? followed.viewBeats;
+      if (target == null) return;
+      const x = target * pxPerBeat;
+      if (followed.playheadBeats == null) { el.scrollLeft = Math.max(0, x); return; }
+      const viewRight = el.scrollLeft + el.clientWidth - HEADER_WIDTH;
+      if (x > viewRight - 40 || x < el.scrollLeft) el.scrollLeft = Math.max(0, x - 40);
+      return;
+    }
+    if (!isPlaying) return;
     const x = HEADER_WIDTH + playheadBeats * pxPerBeat;
     const viewRight = el.scrollLeft + el.clientWidth;
     if (x > viewRight - 40 || x < el.scrollLeft + HEADER_WIDTH) {
       el.scrollLeft = Math.max(0, x - HEADER_WIDTH - 40);
     }
-  }, [isPlaying, playheadBeats, pxPerBeat]);
+  }, [isPlaying, playheadBeats, pxPerBeat, followed]);
+
+  // Share where we're looking (for others' "follow"), throttled.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let t = 0;
+    const onScroll = () => {
+      if (t) return;
+      t = window.setTimeout(() => { t = 0; setLocalPresence({ viewBeats: Math.round((el.scrollLeft / pxPerBeat) * 4) / 4 }); }, 300);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); if (t) clearTimeout(t); };
+  }, [pxPerBeat, setLocalPresence]);
+
+  // Pinch / ctrl+wheel zoom (touchpads send ctrl+wheel for pinch).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !onZoom) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      onZoom(Math.exp(-e.deltaY * 0.01));
+    };
+    const touches = new Map<number, number>();
+    let lastDist = 0;
+    const onDown = (e: PointerEvent) => { if (e.pointerType === 'touch') touches.set(e.pointerId, e.clientX); };
+    const onMove = (e: PointerEvent) => {
+      if (!touches.has(e.pointerId)) return;
+      touches.set(e.pointerId, e.clientX);
+      if (touches.size !== 2) return;
+      const [a, b] = [...touches.values()];
+      const dist = Math.abs(a - b);
+      if (lastDist > 0 && dist > 0) onZoom(dist / lastDist);
+      lastDist = dist;
+    };
+    const onUp = (e: PointerEvent) => { touches.delete(e.pointerId); if (touches.size < 2) lastDist = 0; };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointercancel', onUp);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointercancel', onUp);
+    };
+  }, [onZoom]);
 
   // ───────────── Derived render data ─────────────
 
   const remoteSelections = useMemo(() => {
-    const map: Record<string, string[]> = {};
+    const out: Record<string, string[]> = {};
     for (const [uid, p] of Object.entries(presence)) {
-      for (const id of p.selection ?? []) (map[id] ??= []).push(colorForUser(uid));
+      for (const id of p.selection ?? []) (out[id] ??= []).push(colorForUser(uid));
     }
-    return map;
+    return out;
   }, [presence]);
 
   const remoteGhosts = useMemo(() => {
@@ -339,74 +443,105 @@ export default function StudioArrange(props: Props) {
   }, [presence, doc.clips]);
 
   const clipsByTrack = useMemo(() => {
-    const map: Record<string, [string, StudioClip][]> = {};
+    const out: Record<string, [string, StudioClip][]> = {};
     for (const [id, clip] of Object.entries(doc.clips)) {
       if (preview?.[id] && !(dragRef.current?.duplicate)) continue; // rendered from preview
-      (map[clip.trackId] ??= []).push([id, clip]);
+      (out[clip.trackId] ??= []).push([id, clip]);
     }
     if (preview) {
       for (const [id, clip] of Object.entries(preview)) {
-        (map[clip.trackId] ??= []).push([dragRef.current?.duplicate ? `dup-${id}` : id, clip]);
+        (out[clip.trackId] ??= []).push([dragRef.current?.duplicate ? `dup-${id}` : id, clip]);
       }
     }
-    return map;
+    return out;
   }, [doc.clips, preview]);
 
-  const bars = useMemo(() => {
-    const list: number[] = [];
-    const step = pxPerBeat * perBar < 40 ? Math.ceil(40 / (pxPerBeat * perBar)) : 1;
-    for (let b = 0; b * perBar < totalBeats; b += step) list.push(b);
-    return list;
-  }, [pxPerBeat, perBar, totalBeats]);
+  /** Children of each group, for the group lane's overview. */
+  const groupChildren = useMemo(() => {
+    const out: Record<string, string[]> = {};
+    const all = displayOrder(doc, trackIds);
+    const stack: { id: string; depth: number }[] = [];
+    for (const r of all) {
+      while (stack.length && stack[stack.length - 1].depth >= r.depth) stack.pop();
+      for (const s of stack) (out[s.id] ??= []).push(r.id);
+      if (doc.tracks[r.id]?.kind === 'group') stack.push(r);
+    }
+    return out;
+  }, [doc, trackIds]);
 
-  const gridStyle = {
-    backgroundSize: `${pxPerBeat * perBar}px 100%, ${pxPerBeat}px 100%`,
-  };
+  const bars = useMemo(() => {
+    const list = barsIn(map, 0, totalBeats);
+    const avg = totalBeats / Math.max(1, list.length);
+    const step = pxPerBeat * avg < 40 ? Math.ceil(40 / (pxPerBeat * avg)) : 1;
+    return { all: list, labels: list.filter((b) => b.bar % step === 0) };
+  }, [map, pxPerBeat, totalBeats]);
+  const irregular = map.sigs.length > 1;
+  const perBar = bars.all[0]?.len ?? 4;
+
+  // With signature changes the bar lines come from the map, not a repeating background.
+  const gridStyle = irregular
+    ? { backgroundImage: 'linear-gradient(90deg, var(--studio-grid-beat) 1px, transparent 1px)', backgroundSize: `${pxPerBeat}px 100%` }
+    : { backgroundSize: `${pxPerBeat * perBar}px 100%, ${pxPerBeat}px 100%` };
 
   const loopShown = loopDrag ?? (doc.meta.loopEnabled ? { a: doc.meta.loopStart, b: doc.meta.loopEnd } : null);
+  const markers = Object.values(doc.markers ?? {});
+  const srcSecOf = (c: StudioClip) => (c.kind === 'audio' ? clipSrcSeconds(doc, c, 0, c.length) : 0);
 
   return (
     <div className="studio-arrange" ref={scrollRef}>
       <div className="studio-arrange-inner" style={{ width: HEADER_WIDTH + width }}>
-        <div className="studio-ruler-row" style={{ height: RULER_HEIGHT }}>
-          <div className="studio-corner" style={{ width: HEADER_WIDTH }} />
-          <div className="studio-ruler" style={{ width }} onPointerDown={onRulerPointerDown} title={editable ? 'Click to seek · drag to set loop' : 'Click to seek'}>
-            {loopShown && (
-              <div
-                className={`studio-loop-region${doc.meta.loopEnabled || loopDrag ? '' : ' off'}`}
-                style={{ left: loopShown.a * pxPerBeat, width: (loopShown.b - loopShown.a) * pxPerBeat }}
-              />
-            )}
-            {bars.map((b) => (
-              <div key={b} className="studio-ruler-bar" style={{ left: b * perBar * pxPerBeat }}>{b + 1}</div>
-            ))}
+        <div className="studio-timeline-head">
+          <div className="studio-ruler-row" style={{ height: RULER_HEIGHT }}>
+            <div className="studio-corner" style={{ width: HEADER_WIDTH }} />
+            <div className="studio-ruler" style={{ width }} onPointerDown={onRulerPointerDown} title={editable ? 'Click to seek · drag to set loop' : 'Click to seek'}>
+              {loopShown && (
+                <div
+                  className={`studio-loop-region${doc.meta.loopEnabled || loopDrag ? '' : ' off'}`}
+                  style={{ left: loopShown.a * pxPerBeat, width: (loopShown.b - loopShown.a) * pxPerBeat }}
+                />
+              )}
+              {bars.labels.map((b) => (
+                <div key={b.bar} className="studio-ruler-bar" style={{ left: b.start * pxPerBeat }}>{b.bar + 1}</div>
+              ))}
+            </div>
           </div>
+          <StudioTimelineRows doc={doc} width={width} pxPerBeat={pxPerBeat} snapGrid={snapGrid} editable={editable} onSeek={onSeek} />
         </div>
 
-        {trackIds.map((trackId) => {
+        {rows.map(({ id: trackId, depth }) => {
           const track = doc.tracks[trackId];
           const autoLane = autoLanes[trackId];
+          const takes = takeTracks.includes(trackId) && (track.kind === 'audio' || track.kind === 'instrument');
+          const trackClips = clipsByTrack[trackId] ?? [];
+          const packed = takes ? packLanes(trackClips) : null;
+          const rowH = packed ? Math.max(TRACK_HEIGHT, packed.count * TAKE_LANE_H + 4) : TRACK_HEIGHT;
+          const kind = track.kind;
+          const children = kind === 'group' ? groupChildren[trackId] ?? [] : [];
           return (
             <Fragment key={trackId}>
-            <div className="studio-track-row" style={{ height: TRACK_HEIGHT }}>
+            <div className={`studio-track-row kind-${kind}`} style={{ height: rowH }}>
               <StudioTrackHeader
                 autoOpen={!!autoLane}
                 hasAutomation={Object.values(track.automation ?? {}).some((pts) => pts.length > 0)}
                 onToggleAutomation={() => toggleAutomation(trackId)}
                 trackId={trackId}
                 track={track}
+                depth={depth}
                 engine={engine}
                 editable={editable}
                 selected={selectedTrackId === trackId}
                 armed={armedTrackIds.includes(trackId)}
                 levelDb={levels[trackId] ?? -Infinity}
+                takesOpen={takes}
+                hasTakes={trackClips.some(([, c]) => c.mute)}
+                onToggleTakes={() => toggleTakes(trackId)}
                 onSelect={() => { onSelectTrack(trackId); onSelectionChange([]); }}
                 onArm={(additive) => onArmTrack(trackId, additive)}
                 onDelete={() => onDeleteTrack(trackId)}
               />
               <div
                 data-track-id={trackId}
-                className={`studio-lane${dropTarget === trackId ? ' drop-target' : ''}${selectedTrackId === trackId ? ' selected' : ''}`}
+                className={`studio-lane${dropTarget === trackId ? ' drop-target' : ''}${selectedTrackId === trackId ? ' selected' : ''}${takes ? ' takes' : ''}`}
                 style={{ width, ...gridStyle }}
                 onPointerDown={(e) => onLanePointerDown(e, trackId)}
                 onDoubleClick={(e) => onLaneDoubleClick(e, trackId)}
@@ -414,29 +549,37 @@ export default function StudioArrange(props: Props) {
                 onDragLeave={() => setDropTarget((t) => (t === trackId ? null : t))}
                 onDrop={(e) => void onLaneDrop(e, trackId)}
               >
-                {(clipsByTrack[trackId] ?? []).map(([id, clip]) => (
-                  <StudioClipView
-                    key={id}
-                    id={id.startsWith('dup-') ? id.slice(4) : id}
-                    clip={clip}
-                    pxPerBeat={pxPerBeat}
-                    bpm={bpm}
-                    color={clip.color ?? track.color ?? '#5865f2'}
-                    selected={selection.includes(id)}
-                    remoteColors={remoteSelections[id] ?? []}
-                    peaksVersion={peaksVersion}
-                    editable={editable}
-                    onPointerDown={onClipPointerDown}
-                    onDoubleClick={(cid) => { if (doc.clips[cid]?.kind === 'midi') onOpenClip(cid); }}
-                  />
-                ))}
+                {trackClips.map(([id, clip]) => {
+                  const realId = id.startsWith('dup-') ? id.slice(4) : id;
+                  return (
+                    <StudioClipView
+                      key={id}
+                      id={realId}
+                      clip={clip}
+                      pxPerBeat={pxPerBeat}
+                      srcSec={srcSecOf(clip)}
+                      color={clip.color ?? track.color ?? '#5865f2'}
+                      selected={selection.includes(id)}
+                      remoteColors={remoteSelections[id] ?? []}
+                      peaksVersion={peaksVersion}
+                      editable={editable}
+                      lockedBy={locks[realId] ?? null}
+                      missing={clip.kind === 'audio' && !!clip.assetId && assets.length > 0 && !assetIds.has(clip.assetId)}
+                      top={packed ? 2 + (packed.lane[id] ?? 0) * TAKE_LANE_H : undefined}
+                      height={packed ? TAKE_LANE_H - 4 : undefined}
+                      onComp={packed && editable ? (cid) => edit(compOps(doc, cid)) : undefined}
+                      onPointerDown={onClipPointerDown}
+                      onDoubleClick={(cid) => { if (doc.clips[cid]?.kind === 'midi') onOpenClip(cid); }}
+                    />
+                  );
+                })}
                 {recordingTakes.filter((r) => r.trackId === trackId).map((r) => (
                   <StudioClipView
                     key="recording-take"
                     id="recording-take"
                     clip={r.clip}
                     pxPerBeat={pxPerBeat}
-                    bpm={bpm}
+                    srcSec={0}
                     color="#ed4245"
                     selected={false}
                     remoteColors={[]}
@@ -452,7 +595,7 @@ export default function StudioArrange(props: Props) {
                     id={g.clipId}
                     clip={g.clip}
                     pxPerBeat={pxPerBeat}
-                    bpm={bpm}
+                    srcSec={srcSecOf(g.clip)}
                     color={g.clip.color ?? track.color ?? '#5865f2'}
                     selected={false}
                     remoteColors={[]}
@@ -462,10 +605,23 @@ export default function StudioArrange(props: Props) {
                     editable={false}
                   />
                 ))}
-                {track.kind === 'instrument' && editable && !(clipsByTrack[trackId]?.length) && (
+                {kind === 'group' && children.map((cid) => (clipsByTrack[cid] ?? []).filter(([, c]) => !c.mute).map(([id, c]) => (
+                  <div
+                    key={`${cid}-${id}`}
+                    className="studio-group-clip"
+                    style={{ left: c.start * pxPerBeat, width: Math.max(2, c.length * pxPerBeat), background: doc.tracks[cid]?.color ?? '#5865f2' }}
+                  />
+                )))}
+                {kind === 'group' && !children.length && (
+                  <div className="studio-lane-hint">Group — route tracks here from their Track panel (Output), or drag them in with “Group”</div>
+                )}
+                {kind === 'return' && (
+                  <div className="studio-lane-hint">Return — other tracks feed it with their Sends</div>
+                )}
+                {kind === 'instrument' && editable && !trackClips.length && (
                   <div className="studio-lane-hint">Double-click to add a MIDI clip</div>
                 )}
-                {track.kind === 'audio' && editable && !(clipsByTrack[trackId]?.length) && (
+                {kind === 'audio' && editable && !trackClips.length && (
                   <div className="studio-lane-hint">Drop audio here or record</div>
                 )}
               </div>
@@ -495,6 +651,12 @@ export default function StudioArrange(props: Props) {
         )}
 
         <div className="studio-overlay" style={{ left: HEADER_WIDTH, width }}>
+          {irregular && bars.all.map((b) => (
+            <div key={b.bar} className="studio-bar-line" style={{ left: b.start * pxPerBeat }} />
+          ))}
+          {markers.map((m, i) => (
+            <div key={i} className="studio-marker-line" style={{ left: m.beat * pxPerBeat, background: m.color ?? '#f59e0b' }} />
+          ))}
           <div className="studio-playhead" style={{ transform: `translateX(${playheadBeats * pxPerBeat}px)` }} />
           {Object.entries(presence).map(([uid, p]) => p.playheadBeats != null && (
             <div
@@ -509,4 +671,3 @@ export default function StudioArrange(props: Props) {
     </div>
   );
 }
-

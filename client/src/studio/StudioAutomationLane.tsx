@@ -24,7 +24,8 @@ interface Props {
 
 export default function StudioAutomationLane({ trackId, track, laneKey, width, pxPerBeat, snapGrid, editable, playheadBeats, onLaneChange, onClose }: Props) {
   const edit = useStudioStore((s) => s.edit);
-  const defs = useMemo(() => laneDefs(track), [track]);
+  const doc = useStudioStore((s) => s.doc);
+  const defs = useMemo(() => laneDefs(track, doc), [track, doc]);
   const def = defs.find((d) => d.key === laneKey) ?? defs[0];
   const stored = track.automation?.[def.key] ?? [];
   const [draft, setDraft] = useState<[number, number][] | null>(null);

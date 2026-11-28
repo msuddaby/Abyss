@@ -1,8 +1,28 @@
-import { useServerStore, useStudioStore, useToastStore, studioId, secondsToBeats } from '@abyss/shared';
+import { useServerStore, useStudioStore, useToastStore, studioId, tempoMap, barAt } from '@abyss/shared';
 import type { StudioAsset, StudioDoc, StudioClip, StudioMeta, StudioOp } from '@abyss/shared';
 import { decodeBlob, putBuffer } from './engine/assetCache';
+import { clipSrcSeconds, assetBeatsAt } from './engine/routing';
 
-export const HEADER_WIDTH = 220;
+/** Track header width; narrower on phones (matches --studio-header-w in App.css). */
+const narrow = () => typeof window !== 'undefined' && window.matchMedia?.('(max-width: 700px)').matches;
+export let HEADER_WIDTH = narrow() ? 132 : 220;
+/** Re-reads the header width after a resize; true when it changed (caller re-renders). */
+export function syncHeaderWidth(): boolean {
+  const w = narrow() ? 132 : 220;
+  if (w === HEADER_WIDTH) return false;
+  HEADER_WIDTH = w;
+  return true;
+}
+
+/** Double-tap detector for touch (dblclick is unreliable on touch screens). */
+let lastTap: { key: string; t: number; x: number; y: number } | null = null;
+export function isDoubleTap(e: React.PointerEvent, key: string): boolean {
+  if (e.pointerType !== 'touch') return false;
+  const now = performance.now();
+  const hit = !!lastTap && lastTap.key === key && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24;
+  lastTap = hit ? null : { key, t: now, x: e.clientX, y: e.clientY };
+  return hit;
+}
 export const TRACK_HEIGHT = 72;
 export const RULER_HEIGHT = 28;
 export const MIN_CLIP_BEATS = 1 / 16;
@@ -51,14 +71,24 @@ export function floorBeats(beats: number, grid: number): number {
   return grid > 0 ? Math.floor(beats / grid) * grid : beats;
 }
 
-/** "bar.beat.sixteenth" display of a beat position. */
-export function formatPosition(beats: number, meta: StudioMeta): string {
-  const perBar = barBeats(meta);
-  const bar = Math.floor(beats / perBar) + 1;
-  const inBar = beats - (bar - 1) * perBar;
-  const beat = Math.floor(inBar) + 1;
-  const sixteenth = Math.floor((inBar % 1) * 4) + 1;
-  return `${bar}.${beat}.${sixteenth}`;
+/** "bar.beat.sixteenth" display of a beat position (follows signature changes). */
+export function formatPosition(beats: number, doc: Pick<StudioDoc, 'meta' | 'tempo'>): string {
+  const b = barAt(tempoMap(doc), beats);
+  const unit = 4 / b.den;
+  const inBar = (beats - b.start) / unit;
+  const beat = Math.floor(inBar + 1e-6) + 1;
+  const sixteenth = Math.floor(((inBar * unit) % 1) * 4 + 1e-6) + 1;
+  return `${b.bar + 1}.${beat}.${sixteenth}`;
+}
+
+/** Bar length (beats) at a position, following signature changes. */
+export function barBeatsAt(doc: Pick<StudioDoc, 'meta' | 'tempo'>, beat: number): number {
+  return barAt(tempoMap(doc), beat).len;
+}
+
+/** Start of the bar containing `beat`. */
+export function barFloor(doc: Pick<StudioDoc, 'meta' | 'tempo'>, beat: number): number {
+  return barAt(tempoMap(doc), beat).start;
 }
 
 export function formatDuration(sec: number): string {
@@ -127,12 +157,13 @@ export async function uploadAudioFiles(files: File[], onProgress?: (name: string
 }
 
 /** Op that places an asset as a new clip on an audio track. */
-export function audioClipOp(asset: StudioAsset, trackId: string, startBeats: number, bpm: number) {
+export function audioClipOp(asset: StudioAsset, trackId: string, startBeats: number, doc: Pick<StudioDoc, 'meta' | 'tempo'>) {
+  const start = Math.max(0, startBeats);
   const clip: StudioClip = {
     trackId,
     kind: 'audio',
-    start: Math.max(0, startBeats),
-    length: Math.max(MIN_CLIP_BEATS, secondsToBeats(asset.durationSec, bpm)),
+    start,
+    length: Math.max(MIN_CLIP_BEATS, assetBeatsAt(doc, start, asset.durationSec)),
     assetId: asset.id,
     offset: 0,
     gain: 0,
@@ -150,20 +181,7 @@ export function audioClipOp(asset: StudioAsset, trackId: string, startBeats: num
  */
 export function carveRangeOps(doc: StudioDoc, trackId: string, start: number, end: number): StudioOp[] {
   const ops: StudioOp[] = [];
-  const bpm = doc.meta.bpm;
-  /** The part of clip `c` between clip-relative beats [from, to) */
-  const slice = (c: StudioClip, from: number, to: number): StudioClip => {
-    const out: StudioClip = { ...c, start: c.start + from, length: to - from };
-    if (c.kind === 'audio') out.offset = (c.offset ?? 0) + (from * 60) / bpm;
-    else {
-      const notes: NonNullable<StudioClip['notes']> = {};
-      for (const [id, n] of Object.entries(c.notes ?? {})) {
-        if (n.start >= from && n.start < to) notes[id] = { ...n, start: n.start - from, len: Math.min(n.len, to - n.start) };
-      }
-      out.notes = notes;
-    }
-    return out;
-  };
+  const slice = (c: StudioClip, from: number, to: number) => sliceClip(doc, c, from, to);
   for (const [id, c] of Object.entries(doc.clips)) {
     if (c.trackId !== trackId) continue;
     const cEnd = c.start + c.length;
@@ -178,4 +196,71 @@ export function carveRangeOps(doc: StudioDoc, trackId: string, start: number, en
     }
   }
   return ops;
+}
+
+/** The part of clip `c` between clip-relative beats [from, to). */
+export function sliceClip(doc: Pick<StudioDoc, 'meta' | 'tempo'>, c: StudioClip, from: number, to: number): StudioClip {
+  const out: StudioClip = { ...c, start: c.start + from, length: to - from };
+  if (c.kind === 'audio') {
+    // A reversed clip reads its source backwards: trimming the start eats the source's end.
+    if (!c.reverse) out.offset = (c.offset ?? 0) + clipSrcSeconds(doc, c, 0, from);
+    else out.offset = (c.offset ?? 0) + clipSrcSeconds(doc, c, to, c.length);
+  } else {
+    const notes: NonNullable<StudioClip['notes']> = {};
+    for (const [id, n] of Object.entries(c.notes ?? {})) {
+      if (n.start >= from && n.start < to) notes[id] = { ...n, start: n.start - from, len: Math.min(n.len, to - n.start) };
+    }
+    out.notes = notes;
+  }
+  return out;
+}
+
+/**
+ * Non-destructive version of carveRangeOps for takes: active clips under
+ * [start, end) are split at the range edges and the covered parts muted, so
+ * every earlier take stays available for comping. `except` is left alone.
+ */
+export function muteRangeOps(doc: StudioDoc, trackId: string, start: number, end: number, except?: string): StudioOp[] {
+  const ops: StudioOp[] = [];
+  for (const [id, c] of Object.entries(doc.clips)) {
+    if (c.trackId !== trackId || id === except || c.mute) continue;
+    const cEnd = c.start + c.length;
+    if (cEnd <= start + 1e-9 || c.start >= end - 1e-9) continue;
+    const a = Math.max(0, start - c.start), b = Math.min(c.length, end - c.start);
+    const pieces: StudioClip[] = [];
+    if (a > 1e-9) pieces.push(sliceClip(doc, c, 0, a));
+    pieces.push({ ...sliceClip(doc, c, a, b), mute: true });
+    if (b < c.length - 1e-9) pieces.push(sliceClip(doc, c, b, c.length));
+    pieces.forEach((p, i) => ops.push({ t: 'set', path: ['clips', i === 0 ? id : studioId()], value: p }));
+  }
+  return ops;
+}
+
+/** Make a take the active one for its range: unmute it, mute what it covers. */
+export function compOps(doc: StudioDoc, clipId: string): StudioOp[] {
+  const c = doc.clips[clipId];
+  if (!c) return [];
+  return [
+    ...muteRangeOps(doc, c.trackId, c.start, c.start + c.length, clipId),
+    ...(c.mute ? [{ t: 'del' as const, path: ['clips', clipId, 'mute'] }] : []),
+  ];
+}
+
+/** Stacks overlapping clips into lanes (take view). Returns clipId → lane and the lane count. */
+export function packLanes(clips: [string, StudioClip][]): { lane: Record<string, number>; count: number } {
+  const sorted = [...clips].sort((a, b) => a[1].start - b[1].start || Number(!!a[1].mute) - Number(!!b[1].mute));
+  const ends: number[] = [];
+  const lane: Record<string, number> = {};
+  for (const [id, c] of sorted) {
+    let i = ends.findIndex((e) => e <= c.start + 1e-9);
+    if (i < 0) { i = ends.length; ends.push(0); }
+    ends[i] = c.start + c.length;
+    lane[id] = i;
+  }
+  return { lane, count: Math.max(1, ends.length) };
+}
+
+/** The tracks clips can live on, by kind. */
+export function clipFitsTrack(clipKind: StudioClip['kind'], trackKind: string | undefined): boolean {
+  return (clipKind === 'audio' && trackKind === 'audio') || (clipKind === 'midi' && trackKind === 'instrument');
 }

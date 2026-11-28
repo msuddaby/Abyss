@@ -263,6 +263,10 @@ builder.Services.AddSignalR(options =>
     // When the client sends a burst of state-refresh calls on tab-focus,
     // a lightweight Ping gets stuck behind heavy DB queries and times out.
     options.MaximumParallelInvocationsPerClient = 10;
+    // Default is 32 KB, which is only ~400 inline notes: big pastes and MIDI
+    // imports in the studio were rejected outright. Studio batches are still
+    // capped by count (StudioSessionService.MaxOpsPerBatch / note limits).
+    options.MaximumReceiveMessageSize = 1024 * 1024;
     options.AddFilter<RateLimitFilter>();
 });
 

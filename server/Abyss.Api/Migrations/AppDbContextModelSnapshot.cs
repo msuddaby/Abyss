@@ -1119,6 +1119,97 @@ namespace Abyss.Api.Migrations
                     b.ToTable("StudioAssets");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.StudioChange", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InverseJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<int>("OpCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OpsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Id");
+
+                    b.ToTable("StudioChanges");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.StudioPreset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedById")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<string>("ParamsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("ServerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServerId", "Kind", "Type");
+
+                    b.ToTable("StudioPresets");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.StudioProject", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1144,6 +1235,43 @@ namespace Abyss.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("StudioProjects");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.StudioVersion", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("Auto")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedById")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DocJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<long>("DocVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "CreatedAt");
+
+                    b.ToTable("StudioVersions");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserChannelNotificationSetting", b =>
@@ -1962,6 +2090,17 @@ namespace Abyss.Api.Migrations
                     b.Navigation("Project");
                 });
 
+            modelBuilder.Entity("Abyss.Api.Models.StudioChange", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.StudioProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
+                });
+
             modelBuilder.Entity("Abyss.Api.Models.StudioProject", b =>
                 {
                     b.HasOne("Abyss.Api.Models.Channel", "Channel")
@@ -1971,6 +2110,17 @@ namespace Abyss.Api.Migrations
                         .IsRequired();
 
                     b.Navigation("Channel");
+                });
+
+            modelBuilder.Entity("Abyss.Api.Models.StudioVersion", b =>
+                {
+                    b.HasOne("Abyss.Api.Models.StudioProject", "Project")
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Abyss.Api.Models.UserChannelNotificationSetting", b =>

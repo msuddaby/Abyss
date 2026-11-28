@@ -86,6 +86,18 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: 'Timeline, takes and mixing',
+    note: 'Mouse and touch.',
+    items: [
+      { keys: k('Double-click marker row'), action: 'Add a marker (drag to move, double-click to rename)' },
+      { keys: k('Double-click tempo row'), action: 'Add a tempo / time-signature change' },
+      { keys: k('T'), action: '(track button) Show takes; ★ on a take makes it the active one' },
+      { keys: k(`${MOD}+Wheel`, 'Pinch'), action: 'Zoom the arrangement' },
+      { keys: k('Double-tap'), action: 'Touch: same as double-click (new MIDI clip, open in piano roll)' },
+      { keys: k('Click avatar'), action: "Follow a collaborator's view" },
+    ],
+  },
+  {
     title: 'Piano roll',
     note: 'When the piano roll has focus (click inside it).',
     items: [

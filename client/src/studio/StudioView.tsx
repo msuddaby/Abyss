@@ -2,29 +2,49 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Tone from 'tone';
 import {
   useStudioStore, useAuthStore, useServerStore, useToastStore, getApiBase,
-  hasChannelPermission, Permission, studioId, sortedTrackIds, arrangementEnd, secondsToBeats, beatsToSeconds,
+  hasChannelPermission, Permission, studioId, sortedTrackIds, arrangementEnd, tempoMap, beatToSec, secToBeat,
 } from '@abyss/shared';
-import type { StudioOp, StudioClip, StudioAsset, StudioNote, StudioParams } from '@abyss/shared';
-import { isMobile } from '../stores/mobileStore';
+import type { StudioOp, StudioClip, StudioAsset, StudioParams, StudioTrack } from '@abyss/shared';
 import ConfirmModal from '../components/ConfirmModal';
-import { StudioEngine } from './engine/StudioEngine';
+import { StudioEngine, MASTER_ID } from './engine/StudioEngine';
 import { loadAsset, onAssetLoaded } from './engine/assetCache';
-import { renderProjectToWav } from './engine/exportWav';
+import { renderProjectToWav, renderStemsZip } from './engine/exportWav';
+import { EFFECT_DEFS } from './engine/effects';
+import { exportMidi } from './midiExport';
 import { usedAssetIds } from './engine/instruments';
 import StudioArrange from './StudioArrange';
 import PianoRoll from './PianoRoll';
 import StudioAssetBin from './StudioAssetBin';
 import StudioTrackInspector from './StudioTrackInspector';
+import { masterTrack } from './engine/routing';
 import StudioShortcutsModal from './StudioShortcutsModal';
 import { setAutomationContext } from './automation';
 import { useStudioInput, inputTargets } from './useStudioInput';
 import { restoreMidi, setMidiHandler } from './midiInput';
 import StudioMidiMenu from './StudioMidiMenu';
+import StudioInputMenu from './StudioInputMenu';
+import StudioHistoryPanel from './StudioHistoryPanel';
+import StudioClipProps from './StudioClipProps';
+import { useLiveInput, useInputPrefs } from './audioInput';
+import MidiImportModal from './MidiImportModal';
+import { parseMidi, midiImportOps, batchOps, isMidiFile, type MidiFileInfo } from './midiImport';
 import { useStudioRecorder, getRecordLatencyMs, setRecordLatencyMs } from './useStudioRecorder';
 import {
   SNAP_OPTIONS, snapSize, formatPosition, barBeats, nextTrackOrder, nextTrackColor,
-  keyBelongsToTarget, colorForUser, audioClipOp,
+  keyBelongsToTarget, colorForUser, audioClipOp, sliceClip, memberName, clipFitsTrack, barFloor, syncHeaderWidth,
 } from './studioUtils';
+
+const MAX_TRACKS = 48;
+const COUNT_IN_KEY = 'studio.countIn';
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 interface Props {
   channelId: string;
@@ -32,7 +52,7 @@ interface Props {
   compact?: boolean;
 }
 
-type PanelTab = 'audio' | 'track' | 'editor';
+type PanelTab = 'audio' | 'track' | 'editor' | 'history' | 'master';
 
 /** Ableton-style computer MIDI keyboard: physical key → semitone above the octave's C. */
 const MIDI_KEYS: Record<string, number> = {
@@ -42,6 +62,15 @@ const MIDI_KEYS: Record<string, number> = {
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 const PANEL_HEIGHT_KEY = 'studio.panelHeight';
+const LOCAL_VOLUME_KEY = 'studio.localVolume';
+
+function readLocalVolume(): { level: number; muted: boolean } {
+  try {
+    const v = JSON.parse(localStorage.getItem(LOCAL_VOLUME_KEY) ?? 'null') as { level?: unknown; muted?: unknown } | null;
+    const level = typeof v?.level === 'number' && v.level >= 0 && v.level <= 1 ? v.level : 1;
+    return { level, muted: v?.muted === true };
+  } catch { return { level: 1, muted: false }; }
+}
 const PANEL_MIN = 120;
 
 /** Clip clipboard, shared across studios in this session. */
@@ -84,6 +113,8 @@ export default function StudioView({ channelId, compact }: Props) {
 
   const [engine, setEngine] = useState<StudioEngine | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const isPlayingRef = useRef(false);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
   const [playhead, setPlayhead] = useState(0);
   const [levels, setLevels] = useState<Record<string, number>>({});
   const [peaksVersion, setPeaksVersion] = useState(0);
@@ -100,11 +131,18 @@ export default function StudioView({ channelId, compact }: Props) {
   });
   const [editingClipId, setEditingClipId] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelTab>('audio');
-  const [panelOpen, setPanelOpen] = useState(!compact);
+  // Phones start with the arrangement visible (the panel opens from its tabs).
+  const [panelOpen, setPanelOpen] = useState(() => !compact && !window.matchMedia?.('(max-width: 700px)').matches);
+  const [toolbarMore, setToolbarMore] = useState(false);
   const [panelHeight, setPanelHeight] = useState(() => {
     try { const v = Number(localStorage.getItem(PANEL_HEIGHT_KEY)); return v >= PANEL_MIN ? v : (compact ? 220 : 340); } catch { return compact ? 220 : 340; }
   });
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [countIn, setCountIn] = useState(() => { try { return Number(localStorage.getItem(COUNT_IN_KEY)) || 0; } catch { return 0; } });
+  const [countingIn, setCountingIn] = useState(false);
+  const [followUserId, setFollowUserId] = useState<string | null>(null);
+  /** Clip we chose to edit even though someone else has it open */
+  const [lockOverride, setLockOverride] = useState<string | null>(null);
   const [needsUnlock, setNeedsUnlock] = useState(false);
   const [confirmDeleteTrack, setConfirmDeleteTrack] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -116,13 +154,30 @@ export default function StudioView({ channelId, compact }: Props) {
   const heldKeys = useRef(new Map<string, number>());
   const [bpmDraft, setBpmDraft] = useState<string | null>(null);
   const [latencyMs, setLatencyMs] = useState(getRecordLatencyMs);
+  /** What you hear, only on this device: never synced to collaborators or the export. */
+  const [localVolume, setLocalVolume] = useState(readLocalVolume);
   const recorder = useStudioRecorder(engine);
   const input = useStudioInput({ engine, doc, armedTrackIds, selectedTrackId, recQuantize });
 
   const canManage = hasChannelPermission(channel?.permissions, Permission.ManageStudio);
-  const editable = canEditPerm && !isMobile();
+  const editable = canEditPerm;
+  const armedAudioId = doc ? armedTrackIds.find((id) => doc.tracks[id]?.kind === 'audio') ?? null : null;
+  const [inputMenuOpen, setInputMenuOpen] = useState(false);
+  const inputPrefs = useInputPrefs();
+  // Open the input as soon as an audio track is armed, so the meter shows and
+  // recording starts without a permission/device delay.
+  const { live: liveInput, error: inputError } = useLiveInput(editable && (!!armedAudioId || inputMenuOpen));
 
   // ───────────── Lifecycle ─────────────
+
+  // Narrow screens use a slimmer track header (phones, split windows).
+  const [, setLayoutTick] = useState(0);
+  useEffect(() => {
+    const onResize = () => { if (syncHeaderWidth()) setLayoutTick((n) => n + 1); };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const [hasClipboard, setHasClipboard] = useState(() => !!clipboard?.length);
 
   useEffect(() => {
     void join(channelId);
@@ -140,8 +195,18 @@ export default function StudioView({ channelId, compact }: Props) {
   }, [engine, doc]);
 
   useEffect(() => {
+    engine?.monitorInput(inputPrefs.monitor && armedAudioId ? armedAudioId : null, liveInput?.output ?? null);
+  }, [engine, liveInput, inputPrefs.monitor, armedAudioId, doc?.tracks]);
+
+  useEffect(() => {
     if (engine) engine.setMetronome(metronome);
   }, [engine, metronome]);
+
+  useEffect(() => {
+    const { level, muted } = localVolume;
+    engine?.setMonitorVolume(muted || level <= 0 ? -Infinity : 20 * Math.log10(level));
+    try { localStorage.setItem(LOCAL_VOLUME_KEY, JSON.stringify(localVolume)); } catch { /* ignore */ }
+  }, [engine, localVolume]);
 
   // Decode every asset the arrangement uses; re-sync once each lands.
   useEffect(() => {
@@ -169,7 +234,11 @@ export default function StudioView({ channelId, compact }: Props) {
   }, [doc, editingClipId, selectedTrackId, armedTrackIds]);
 
   useEffect(() => { setLocalPresence({ selection }); }, [selection, setLocalPresence]);
-  useEffect(() => { setLocalPresence({ editingClipId }); }, [editingClipId, setLocalPresence]);
+  const editingSince = useRef<number | null>(null);
+  useEffect(() => {
+    editingSince.current = editingClipId ? Date.now() + useStudioStore.getState().serverClockOffset : null;
+    setLocalPresence({ editingClipId, editingSince: editingSince.current });
+  }, [editingClipId, setLocalPresence]);
 
   // ───────────── Playhead + meters ─────────────
 
@@ -192,6 +261,19 @@ export default function StudioView({ channelId, compact }: Props) {
       setLocalPresence({ playheadBeats: null });
     };
   }, [engine, isPlaying, setLocalPresence]);
+
+  // The transport is the source of truth: if the UI ever disagrees with it
+  // (an error mid-play, a remount), resync so Stop always reflects reality.
+  useEffect(() => {
+    if (!engine) return;
+    const id = window.setInterval(() => {
+      const actual = engine.isPlaying;
+      if (actual === isPlayingRef.current) return;
+      if (!actual) setPlayhead(engine.getPositionBeats());
+      setIsPlaying(actual);
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [engine]);
 
   // ───────────── Transport ─────────────
 
@@ -250,7 +332,9 @@ export default function StudioView({ channelId, compact }: Props) {
     }
     const offset = useStudioStore.getState().serverClockOffset;
     const elapsed = Math.max(0, (Date.now() + offset - transport.serverTimeMs) / 1000);
-    let pos = transport.positionBeats + secondsToBeats(elapsed, meta?.bpm ?? 120);
+    const doc0 = useStudioStore.getState().doc;
+    const map = doc0 ? tempoMap(doc0) : null;
+    let pos = map ? secToBeat(map, beatToSec(map, transport.positionBeats) + elapsed) : transport.positionBeats;
     if (meta?.loopEnabled && meta.loopEnd > meta.loopStart && pos >= meta.loopEnd) {
       pos = meta.loopStart + ((pos - meta.loopStart) % (meta.loopEnd - meta.loopStart));
     }
@@ -269,8 +353,10 @@ export default function StudioView({ channelId, compact }: Props) {
     const t = useStudioStore.getState().transport;
     if (t.isPlaying) {
       const offset = useStudioStore.getState().serverClockOffset;
-      const bpm = useStudioStore.getState().doc?.meta.bpm ?? 120;
-      void play(t.positionBeats + secondsToBeats(Math.max(0, (Date.now() + offset - t.serverTimeMs) / 1000), bpm), false);
+      const d = useStudioStore.getState().doc;
+      const elapsed = Math.max(0, (Date.now() + offset - t.serverTimeMs) / 1000);
+      const map = d ? tempoMap(d) : null;
+      void play(map ? secToBeat(map, beatToSec(map, t.positionBeats) + elapsed) : t.positionBeats, false);
     }
   };
 
@@ -285,9 +371,14 @@ export default function StudioView({ channelId, compact }: Props) {
       return;
     }
     if (isPlaying) stop(true);
+    if (countIn > 0 && engine) {
+      // Clicks only you hear; recording starts on the downbeat after.
+      setCountingIn(true);
+      try { await engine.countIn(playhead, countIn); } finally { setCountingIn(false); }
+    }
     input.beginTake(midiTracks, playhead);
     setMidiRecording(midiTracks.length > 0);
-    if (audioTrack) await recorder.start(audioTrack, playhead);
+    if (audioTrack) await recorder.start(audioTrack, playhead, liveInput?.recordStream);
     else await play(playhead, true);
     setIsPlaying(true);
   };
@@ -303,20 +394,81 @@ export default function StudioView({ channelId, compact }: Props) {
   const trackIds = useMemo(() => (doc ? sortedTrackIds(doc) : []), [doc]);
   const grid = doc ? snapSize(snap, doc.meta) : 1;
 
-  const addTrack = (kind: 'audio' | 'instrument', instrument?: 'synth' | 'drums' | 'bass' | 'sampler', params?: StudioParams, name?: string) => {
+  const addTrack = (kind: StudioTrack['kind'], instrument?: 'synth' | 'drums' | 'bass' | 'sampler', params?: StudioParams, name?: string) => {
     if (!doc) return;
+    if (Object.keys(doc.tracks).length >= MAX_TRACKS) { useToastStore.getState().addToast(`A project can have up to ${MAX_TRACKS} tracks.`, 'info'); return; }
     const id = studioId();
     const count = Object.values(doc.tracks).filter((t) => t.kind === kind).length + 1;
-    const label = kind === 'audio' ? 'Audio' : instrument === 'drums' ? 'Drums' : instrument === 'bass' ? 'Bass' : instrument === 'sampler' ? 'Sampler' : 'Synth';
-    const trackName = (name ?? `${label} ${count}`).slice(0, 40);
-    edit([{
+    const label = kind === 'audio' ? 'Audio' : kind === 'group' ? 'Group' : instrument === 'drums' ? 'Drums' : instrument === 'bass' ? 'Bass' : instrument === 'sampler' ? 'Sampler' : 'Synth';
+    const trackName = (name ?? (kind === 'return' ? `${String.fromCharCode(64 + Math.min(26, count))}-Return` : `${label} ${count}`)).slice(0, 40);
+    const ops: StudioOp[] = [];
+    let order = nextTrackOrder(doc);
+    // A new group takes the selected track (and sits where it was).
+    const sel = selectedTrackId ? doc.tracks[selectedTrackId] : undefined;
+    if (kind === 'group' && sel && sel.kind !== 'return') {
+      order = sel.order - 0.5;
+      ops.push({ t: 'set', path: ['tracks', selectedTrackId!, 'output'], value: id });
+    }
+    // Returns start with a 100%-wet reverb (A) or delay (B), ready to send to.
+    const fxType = kind === 'return' ? (count % 2 === 0 ? 'delay' : 'reverb') : null;
+    const effects = fxType ? [{ id: studioId(), type: fxType, params: { ...Object.fromEntries(Object.entries(EFFECT_DEFS[fxType].defaults()).filter(([, v]) => typeof v !== 'object')), mix: 100 } }] : undefined;
+    ops.unshift({
       t: 'set', path: ['tracks', id], value: {
-        name: trackName, kind, order: nextTrackOrder(doc), color: nextTrackColor(doc),
-        volume: kind === 'audio' ? 0 : -6, pan: 0, mute: false, solo: false,
+        name: trackName, kind, order, color: kind === 'return' ? '#99aab5' : nextTrackColor(doc),
+        volume: kind === 'instrument' ? -6 : 0, pan: 0, mute: false, solo: false,
         ...(kind === 'instrument' ? { instrument: { type: instrument ?? 'synth', ...(params ? { params } : {}) } } : {}),
+        ...(effects ? { effects } : {}),
       },
-    }]);
+    });
+    edit(ops);
     setSelectedTrackId(id);
+  };
+
+  // ───────────── MIDI import ─────────────
+
+  const [midiImport, setMidiImport] = useState<{ name: string; info: MidiFileInfo } | null>(null);
+  const midiInputRef = useRef<HTMLInputElement>(null);
+
+  const openMidiFile = async (file: File) => {
+    if (!editable) return;
+    try {
+      if (file.size > 8 * 1024 * 1024) throw new Error('That MIDI file is too large (8 MB max).');
+      const info = parseMidi(await file.arrayBuffer());
+      if (!info.parts.length) throw new Error('No notes found in that MIDI file.');
+      setMidiImport({ name: file.name, info });
+    } catch (e) {
+      useToastStore.getState().addToast(e instanceof Error ? e.message : 'Could not read that MIDI file.', 'error');
+    }
+  };
+
+  const runMidiImport = (keys: string[], opts: { tempo: boolean; timeSig: boolean; atStart: boolean }) => {
+    if (!doc || !midiImport) return;
+    const { info } = midiImport;
+    const parts = info.parts.filter((p) => keys.includes(p.key));
+    const meta = { ...doc.meta, ...(opts.timeSig && info.timeSig ? { timeSigNum: info.timeSig.num, timeSigDen: info.timeSig.den } : {}) };
+    const bar = barBeats(meta);
+    const at = opts.atStart ? 0 : opts.timeSig && info.timeSig ? Math.floor(playhead / bar) * bar : barFloor(doc, playhead);
+    const { ops, trackIds: added } = midiImportOps(doc, parts, at, {
+      bpm: opts.tempo && info.bpm ? info.bpm : undefined,
+      timeSig: opts.timeSig && info.timeSig ? info.timeSig : undefined,
+    });
+    // Big files go out in several messages (each is its own undo step).
+    for (const batch of batchOps(ops)) edit(batch);
+    setMidiImport(null);
+    if (added[0]) setSelectedTrackId(added[0]);
+    const n = parts.reduce((a, p) => a + p.notes.length, 0);
+    useToastStore.getState().addToast(`Imported ${parts.length} track${parts.length === 1 ? '' : 's'} (${n} notes).`, 'success');
+  };
+
+  const onViewDragOver = (e: React.DragEvent) => {
+    if (editable && e.dataTransfer.types.includes('Files')) e.preventDefault();
+  };
+  const onViewDrop = (e: React.DragEvent) => {
+    if (!editable) return;
+    const midi = Array.from(e.dataTransfer.files).find(isMidiFile);
+    if (!midi) return;
+    e.preventDefault();
+    void openMidiFile(midi);
   };
 
   const deleteSelected = useCallback(() => {
@@ -354,19 +506,8 @@ export default function StudioView({ channelId, compact }: Props) {
     for (const id of targets) {
       const c = doc.clips[id];
       const leftLen = p - c.start;
-      const right: StudioClip = { ...c, start: p, length: c.length - leftLen };
-      const left: StudioClip = { ...c, length: leftLen };
-      if (c.kind === 'audio') {
-        right.offset = (c.offset ?? 0) + beatsToSeconds(leftLen, doc.meta.bpm);
-      } else {
-        const ln: Record<string, StudioNote> = {}, rn: Record<string, StudioNote> = {};
-        for (const [nid, n] of Object.entries(c.notes ?? {})) {
-          if (n.start < leftLen) ln[nid] = { ...n, len: Math.min(n.len, leftLen - n.start) };
-          else rn[nid] = { ...n, start: n.start - leftLen };
-        }
-        left.notes = ln;
-        right.notes = rn;
-      }
+      const left = sliceClip(doc, c, 0, leftLen);
+      const right = sliceClip(doc, c, leftLen, c.length);
       const rid = studioId();
       newIds.push(rid);
       ops.push({ t: 'set', path: ['clips', id], value: left }, { t: 'set', path: ['clips', rid], value: right });
@@ -383,7 +524,7 @@ export default function StudioView({ channelId, compact }: Props) {
       trackId = studioId();
       ops.push({ t: 'set', path: ['tracks', trackId], value: { name: 'Audio 1', kind: 'audio', order: nextTrackOrder(doc), color: nextTrackColor(doc), volume: 0, pan: 0, mute: false, solo: false } });
     }
-    ops.push(audioClipOp(asset, trackId, playhead, doc.meta.bpm));
+    ops.push(audioClipOp(asset, trackId, playhead, doc));
     edit(ops);
   };
 
@@ -394,22 +535,23 @@ export default function StudioView({ channelId, compact }: Props) {
     if (Number.isFinite(v) && v >= 20 && v <= 400 && v !== doc.meta.bpm) edit([{ t: 'set', path: ['meta', 'bpm'], value: v }]);
   };
 
-  const exportWav = async () => {
+  const runExport = async (what: 'wav' | 'stems' | 'midi') => {
     if (!doc || exporting) return;
-    setExporting(true);
+    const base = channel?.name ?? 'studio';
+    if (what === 'midi') {
+      if (!Object.values(doc.tracks).some((t) => t.kind === 'instrument')) { useToastStore.getState().addToast('No instrument tracks to export.', 'info'); return; }
+      download(exportMidi(doc), `${base}.mid`);
+      return;
+    }
+    setExporting(what === 'wav' ? 'Rendering…' : 'Stems…');
     try {
-      const blob = await renderProjectToWav(doc, assets);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${channel?.name ?? 'studio'}.wav`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      if (what === 'wav') download(await renderProjectToWav(doc, assets), `${base}.wav`);
+      else download(await renderStemsZip(doc, assets, (done, total) => setExporting(`Stems ${done}/${total}…`)), `${base} stems.zip`);
     } catch (e) {
       console.error('[studio] export failed', e);
       useToastStore.getState().addToast('Export failed.', 'error');
     } finally {
-      setExporting(false);
+      setExporting(null);
     }
   };
 
@@ -440,6 +582,7 @@ export default function StudioView({ channelId, compact }: Props) {
   const copySelection = () => {
     if (!doc || !selection.length) return false;
     clipboard = selection.map((id) => doc.clips[id]).filter(Boolean);
+    setHasClipboard(clipboard.length > 0);
     return clipboard.length > 0;
   };
 
@@ -454,9 +597,9 @@ export default function StudioView({ channelId, compact }: Props) {
     for (const c of clipboard) {
       let trackId = c.trackId;
       // A single-track clipboard follows the selected track if the kinds match.
-      if (singleTrack && sel && (sel.kind === 'audio') === (c.kind === 'audio')) trackId = selectedTrackId!;
+      if (singleTrack && sel && clipFitsTrack(c.kind, sel.kind)) trackId = selectedTrackId!;
       const t = doc.tracks[trackId];
-      if (!t || (t.kind === 'audio') !== (c.kind === 'audio')) continue;
+      if (!t || !clipFitsTrack(c.kind, t.kind)) continue;
       const id = studioId();
       const start = playhead + (c.start - anchor);
       ids.push(id);
@@ -652,7 +795,14 @@ export default function StudioView({ channelId, compact }: Props) {
   if (loading || !doc) return <div className="studio-view"><div className="studio-message">Loading studio…</div></div>;
 
   const meta = doc.meta;
-  const totalBeats = Math.max(arrangementEnd(doc) + barBeats(meta) * 8, barBeats(meta) * 32);
+  const markerEnd = Math.max(0, ...Object.values(doc.markers ?? {}).map((m) => m.beat), ...Object.values(doc.tempo ?? {}).map((t) => t.beat));
+  const totalBeats = Math.max(arrangementEnd(doc) + barBeats(meta) * 8, markerEnd + barBeats(meta) * 8, barBeats(meta) * 32);
+  const assetIds = new Set(assets.map((a) => a.id));
+  const following = followUserId && users.includes(followUserId) ? followUserId : null;
+  // Soft lock: whoever opened the clip first holds it; later openers see a banner.
+  const editLockedBy = editingClipId ? Object.entries(presence).find(([uid, p]) => uid !== myId && p.editingClipId === editingClipId
+    && (p.editingSince ?? 0) <= (editingSince.current ?? Infinity))?.[0] ?? null : null;
+  const rollEditable = editable && (!editLockedBy || lockOverride === editingClipId);
   const editingClip = editingClipId ? doc.clips[editingClipId] : undefined;
   const editingTrack = editingClip ? doc.tracks[editingClip.trackId] : undefined;
   const inspectedTrack = selectedTrackId ? doc.tracks[selectedTrackId] : undefined;
@@ -663,8 +813,10 @@ export default function StudioView({ channelId, compact }: Props) {
     <div
       className={`studio-view${compact ? ' compact' : ''}`}
       onChange={(e) => { if (e.target instanceof HTMLSelectElement) e.target.blur(); }}
+      onDragOver={onViewDragOver}
+      onDrop={onViewDrop}
     >
-      <div className="studio-toolbar">
+      <div className={`studio-toolbar${toolbarMore ? ' more' : ''}`}>
         <div className="studio-toolbar-group">
           <button className="studio-btn icon" onClick={() => seek(0)} title="Return to start (Enter)">⏮</button>
           <button className={`studio-btn icon primary${isPlaying && !recording ? ' on' : ''}`} onClick={togglePlay} title="Play / Stop (Space)">
@@ -682,12 +834,24 @@ export default function StudioView({ channelId, compact }: Props) {
           )}
           {editable && (
             <button
-              className={`studio-btn auto-arm${autoArm ? ' on' : ''}`}
+              className={`studio-btn auto-arm tb-extra${autoArm ? ' on' : ''}`}
               onClick={() => setAutoArm((a) => !a)}
               title="Automation arm (Shift+F9): while playing, moving volume, pan, effect or synth controls records automation"
             >● Auto</button>
           )}
-          <div className="studio-position" title="Bar.Beat.Sixteenth">{formatPosition(playhead, meta)}</div>
+          {editable && (
+            <select
+              className={`studio-select small tb-extra${countIn ? ' on' : ''}`}
+              value={countIn}
+              title="Count-in before recording (only you hear it)"
+              onChange={(e) => { const v = Number(e.target.value); setCountIn(v); try { localStorage.setItem(COUNT_IN_KEY, String(v)); } catch { /* ignore */ } }}
+            >
+              <option value={0}>No count-in</option>
+              <option value={1}>Count-in 1 bar</option>
+              <option value={2}>Count-in 2 bars</option>
+            </select>
+          )}
+          <div className={`studio-position${countingIn ? ' counting' : ''}`} title="Bar.Beat.Sixteenth">{countingIn ? 'Count-in…' : formatPosition(playhead, doc)}</div>
         </div>
 
         <div className="studio-toolbar-group">
@@ -729,8 +893,9 @@ export default function StudioView({ channelId, compact }: Props) {
           <select className="studio-select" value={snap} onChange={(e) => setSnap(Number(e.target.value))} title="Snap to grid">
             {SNAP_OPTIONS.map((o) => <option key={o.value} value={o.value}>Snap: {o.label}</option>)}
           </select>
-          <button className="studio-btn icon" onClick={() => setPxPerBeat((z) => Math.max(4, z / 1.25))} title="Zoom out">−</button>
-          <button className="studio-btn icon" onClick={() => setPxPerBeat((z) => Math.min(200, z * 1.25))} title="Zoom in">+</button>
+          <button className="studio-btn icon tb-extra" onClick={() => setPxPerBeat((z) => Math.max(4, z / 1.25))} title="Zoom out (or pinch)">−</button>
+          <button className="studio-btn icon tb-extra" onClick={() => setPxPerBeat((z) => Math.min(200, z * 1.25))} title="Zoom in (or pinch)">+</button>
+          <button className="studio-btn icon studio-more-btn" onClick={() => setToolbarMore((m) => !m)} title="More controls">{toolbarMore ? '✕' : '⋯'}</button>
         </div>
 
         {editable && (
@@ -742,10 +907,11 @@ export default function StudioView({ channelId, compact }: Props) {
               value=""
               onChange={(e) => {
                 const v = e.target.value;
-                if (v === 'audio') addTrack('audio');
+                if (v === 'midi') midiInputRef.current?.click();
+                else if (v === 'audio' || v === 'return' || v === 'group') addTrack(v);
                 else if (v) addTrack('instrument', v as 'synth' | 'drums' | 'bass' | 'sampler');
               }}
-              disabled={trackIds.length >= 32}
+              disabled={trackIds.length >= MAX_TRACKS}
               title="Add track"
             >
               <option value="">＋ Track</option>
@@ -754,36 +920,99 @@ export default function StudioView({ channelId, compact }: Props) {
               <option value="drums">Drums</option>
               <option value="bass">Bass</option>
               <option value="sampler">Sampler</option>
+              <option value="return">Return (send effects)</option>
+              <option value="group">Group{selectedTrackId && doc.tracks[selectedTrackId]?.kind !== 'return' ? ` (with “${doc.tracks[selectedTrackId].name}”)` : ''}</option>
+              <option value="midi">Import MIDI file…</option>
             </select>
+            {(selection.length > 0 || hasClipboard) && (
+              <span className="studio-clip-actions" title="Clip actions (also on the keyboard)">
+                {selection.length > 0 && <>
+                  <button className="studio-btn icon" onClick={splitAtPlayhead} title="Split at playhead (S / Ctrl+E)">✂</button>
+                  <button className="studio-btn icon" onClick={duplicateSelected} title="Duplicate (Ctrl+D)">⧉</button>
+                  <button className="studio-btn icon" onClick={() => copySelection()} title="Copy (Ctrl+C)">⎘</button>
+                  <button className="studio-btn icon" onClick={deleteSelected} title="Delete (Delete)">🗑</button>
+                </>}
+                {hasClipboard && <button className="studio-btn icon" onClick={paste} title="Paste at playhead (Ctrl+V)">📋</button>}
+              </span>
+            )}
+            <input
+              ref={midiInputRef} type="file" accept=".mid,.midi,.smf,.kar,audio/midi" hidden
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void openMidiFile(f); }}
+            />
           </div>
         )}
 
         <div className="studio-spacer" />
 
         <div className="studio-toolbar-group">
+          <div className="studio-local-volume tb-extra" title="Your volume: only changes what you hear">
+            <button
+              className={`studio-btn icon small${localVolume.muted ? ' on' : ''}`}
+              onClick={() => setLocalVolume((v) => ({ ...v, muted: !v.muted }))}
+              title={localVolume.muted ? 'Unmute (only you)' : 'Mute (only you)'}
+            >
+              {localVolume.muted || localVolume.level <= 0 ? '🔇' : localVolume.level < 0.5 ? '🔉' : '🔊'}
+            </button>
+            <input
+              type="range" min={0} max={1} step={0.01}
+              value={localVolume.muted ? 0 : localVolume.level}
+              onChange={(e) => setLocalVolume({ level: Number(e.target.value), muted: false })}
+              onDoubleClick={() => setLocalVolume({ level: 1, muted: false })}
+              aria-label="Your listening volume"
+            />
+          </div>
           <label className="studio-check" title="Share play/stop with everyone who has sync on, and follow theirs">
             <input type="checkbox" checked={followTransport} onChange={(e) => setFollowTransport(e.target.checked)} />
             Sync playback
           </label>
-          <StudioMidiMenu
+          {editable && (
+            <span className="tb-extra"><StudioInputMenu
+              open={inputMenuOpen}
+              onOpenChange={setInputMenuOpen}
+              live={liveInput}
+              error={inputError}
+              armedLabel={armedAudioId ? doc?.tracks[armedAudioId]?.name ?? null : null}
+              latencyMs={latencyMs}
+              onLatency={(v) => { setLatencyMs(v); setRecordLatencyMs(v); }}
+            /></span>
+          )}
+          <span className="tb-extra"><StudioMidiMenu
             targetLabel={inputLabel ?? null}
             recQuantize={recQuantize}
             onRecQuantize={(q) => { setRecQuantize(q); try { localStorage.setItem('studio.recQuantize', String(q)); } catch { /* ignore */ } }}
-          />
+          /></span>
           <button
-            className={`studio-btn${midiKeys ? ' on' : ''}`}
+            className={`studio-btn tb-extra${midiKeys ? ' on' : ''}`}
             onClick={toggleMidiKeys}
             title="Play notes with your computer keyboard (Ctrl+M). A–L = white keys, W E T Y U O P = black keys, Z/X = octave, C/V = velocity"
           >
             🎹 {midiKeys ? `${NOTE_NAMES[0]}${midiOctave} · ${midiVel}${inputLabel ? ` → ${inputLabel}` : ''}` : 'Keys'}
           </button>
-          <button className="studio-btn icon" onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)">⌨ ?</button>
-          <button className="studio-btn" onClick={() => void exportWav()} disabled={exporting} title="Render the project to a WAV file">
-            {exporting ? 'Rendering…' : '⤓ WAV'}
-          </button>
-          <div className="studio-avatars" title={`${users.length} in studio`}>
+          <button className="studio-btn icon tb-extra" onClick={() => setShowShortcuts(true)} title="Keyboard shortcuts (?)">⌨ ?</button>
+          <select
+            className="studio-select"
+            value=""
+            disabled={!!exporting}
+            title="Export"
+            onChange={(e) => { const v = e.target.value as 'wav' | 'stems' | 'midi' | ''; if (v) void runExport(v); }}
+          >
+            <option value="">{exporting ?? '⤓ Export'}</option>
+            <option value="wav">Mix (WAV)</option>
+            <option value="stems">Stems (ZIP of WAVs)</option>
+            <option value="midi">MIDI (.mid)</option>
+          </select>
+          <div className="studio-avatars" title={`${users.length} in studio — click someone to follow their view`}>
             {myId && users.includes(myId) && <Avatar userId={myId} />}
-            {others.slice(0, 6).map((u) => <Avatar key={u} userId={u} />)}
+            {others.slice(0, 6).map((u) => (
+              <button
+                key={u}
+                className={`studio-avatar-btn${following === u ? ' following' : ''}`}
+                onClick={() => setFollowUserId((f) => (f === u ? null : u))}
+                title={following === u ? `Stop following ${memberName(u)}` : `Follow ${memberName(u)}'s view`}
+              >
+                <Avatar userId={u} />
+              </button>
+            ))}
             {others.length > 6 && <div className="studio-avatar more">+{others.length - 6}</div>}
           </div>
           <span className={`studio-sync-dot${pendingCount ? ' pending' : ''}`} title={pendingCount ? 'Saving edits…' : 'All edits synced'} />
@@ -791,7 +1020,11 @@ export default function StudioView({ channelId, compact }: Props) {
       </div>
 
       {!canEditPerm && <div className="studio-banner">You can listen to this studio, but you don't have permission to edit it.</div>}
-      {canEditPerm && isMobile() && <div className="studio-banner">Editing is available on desktop. You can still listen here.</div>}
+      {following && (
+        <button className="studio-banner action" onClick={() => setFollowUserId(null)} style={{ borderColor: colorForUser(following) }}>
+          👁 Following {memberName(following)}'s view{presence[following]?.editingClipId ? ' (they have a clip open in the piano roll)' : ''} — click to stop
+        </button>
+      )}
       {needsUnlock && (
         <button className="studio-banner action" onClick={() => void unlockAndFollow()}>
           🔊 Someone is playing — click to listen along
@@ -821,9 +1054,12 @@ export default function StudioView({ channelId, compact }: Props) {
         levels={levels}
         peaksVersion={peaksVersion}
         presence={presence}
+        assetIds={assetIds}
+        followUserId={following}
         onSeek={seek}
         onOpenClip={openClip}
         onDeleteTrack={(id) => setConfirmDeleteTrack(id)}
+        onZoom={(f) => setPxPerBeat((z) => Math.min(200, Math.max(4, z * f)))}
       />
 
       <div className={`studio-panel${panelOpen ? ' open' : ''}`} style={panelOpen ? { height: panelHeight } : undefined}>
@@ -857,18 +1093,13 @@ export default function StudioView({ channelId, compact }: Props) {
           <button className={`studio-tab${panel === 'editor' && panelOpen ? ' active' : ''}`} onClick={() => { setPanel('editor'); setPanelOpen(true); }} disabled={!editingClip}>
             Piano roll
           </button>
+          <button className={`studio-tab${panel === 'master' && panelOpen ? ' active' : ''}`} onClick={() => { setPanel('master'); setPanelOpen(true); }} title="Master bus: limiter, glue compression, overall level">
+            Master{meta.masterEffects?.length ? ` (${meta.masterEffects.length})` : ''}
+          </button>
+          <button className={`studio-tab${panel === 'history' && panelOpen ? ' active' : ''}`} onClick={() => { setPanel('history'); setPanelOpen(true); }} title="Who changed what, revert changes, saved versions">
+            History
+          </button>
           <div className="studio-spacer" />
-          {panel === 'audio' && panelOpen && editable && (
-            <label className="studio-field small" title="Shifts recorded takes earlier to compensate for input latency">
-              <span>Rec latency</span>
-              <input
-                type="number" min={0} max={1000} step={5}
-                value={latencyMs}
-                onChange={(e) => { const v = Number(e.target.value); setLatencyMs(v); setRecordLatencyMs(v); }}
-              />
-              <span>ms</span>
-            </label>
-          )}
           <button className="studio-btn icon small" onClick={() => setPanelOpen((o) => !o)} title={panelOpen ? 'Hide panel' : 'Show panel'}>
             {panelOpen ? '▾' : '▴'}
           </button>
@@ -887,10 +1118,24 @@ export default function StudioView({ channelId, compact }: Props) {
                 }}
               />
             )}
+            {panel === 'track' && selection.length === 1 && doc.clips[selection[0]] && (
+              <StudioClipProps doc={doc} clipId={selection[0]} clip={doc.clips[selection[0]]} editable={editable} />
+            )}
             {panel === 'track' && inspectedTrack && selectedTrackId && (
-              <StudioTrackInspector trackId={selectedTrackId} track={inspectedTrack} editable={editable} engine={engine} />
+              <StudioTrackInspector trackId={selectedTrackId} track={inspectedTrack} editable={editable} canManage={canManage} engine={engine} onAddReturn={() => addTrack('return')} />
+            )}
+            {panel === 'master' && (
+              <StudioTrackInspector trackId={MASTER_ID} track={masterTrack(meta.masterEffects, meta.masterVolume)} editable={editable} canManage={canManage} engine={engine} />
             )}
             {panel === 'track' && !inspectedTrack && <div className="studio-message small">Select a track to edit its instrument and effects.</div>}
+            {panel === 'editor' && editingClip && editingClipId && editLockedBy && editable && (
+              <div className="studio-lock-banner" style={{ borderColor: colorForUser(editLockedBy) }}>
+                🔒 {memberName(editLockedBy)} has this clip open too.
+                {lockOverride === editingClipId
+                  ? <span> You're both editing — the last change to each note wins.</span>
+                  : <button className="studio-btn small" onClick={() => setLockOverride(editingClipId)}>Edit anyway</button>}
+              </div>
+            )}
             {panel === 'editor' && editingClip && editingTrack && editingClipId && (
               <PianoRoll
                 clipId={editingClipId}
@@ -899,22 +1144,34 @@ export default function StudioView({ channelId, compact }: Props) {
                 trackId={editingClip.trackId}
                 meta={meta}
                 engine={engine}
-                editable={editable}
-                snapGrid={grid > barBeats(meta) / 2 ? 0.25 : grid}
+                editable={rollEditable}
                 playheadInClip={playhead >= editingClip.start && playhead <= editingClip.start + editingClip.length ? playhead - editingClip.start : null}
                 onClose={() => { setEditingClipId(null); setPanel('audio'); }}
               />
             )}
             {panel === 'editor' && !editingClip && <div className="studio-message small">Double-click a MIDI clip to edit its notes.</div>}
+            {panel === 'history' && (
+              <StudioHistoryPanel channelId={channelId} doc={doc} editable={editable} canManage={canManage} myId={myId} />
+            )}
           </div>
         )}
       </div>
 
       {showShortcuts && <StudioShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {midiImport && doc && (
+        <MidiImportModal
+          fileName={midiImport.name}
+          info={midiImport.info}
+          roomForTracks={Math.max(0, MAX_TRACKS - trackIds.length)}
+          projectBpm={doc.meta.bpm}
+          onImport={runMidiImport}
+          onClose={() => setMidiImport(null)}
+        />
+      )}
       {confirmDeleteTrack && doc.tracks[confirmDeleteTrack] && (
         <ConfirmModal
           title="Delete track"
-          message={`Delete "${doc.tracks[confirmDeleteTrack].name}" and its clips for everyone? You can undo this.`}
+          message={`Delete "${doc.tracks[confirmDeleteTrack].name}"${doc.tracks[confirmDeleteTrack].kind === 'group' ? ' (the tracks inside go back to the master)' : ' and its clips'} for everyone? You can undo this.`}
           confirmLabel="Delete"
           danger
           onConfirm={() => { edit([{ t: 'del', path: ['tracks', confirmDeleteTrack] }]); }}

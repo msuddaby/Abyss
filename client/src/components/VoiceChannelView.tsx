@@ -192,7 +192,7 @@ function VoiceChannelViewInner() {
             <button className="studio-btn small" onClick={() => setStudioHidden(true)}>Show call</button>
             <button className="studio-btn small" onClick={closeStudio}>Close studio</button>
           </div>
-          <StudioView channelId={linkedStudio.id} compact />
+          <StudioView key={linkedStudio.id} channelId={linkedStudio.id} compact />
         </div>
       ) : isWatching ? (
         <div className={`vcv-watching-layout${showParticipants ? ' panel-open' : ''}`}>

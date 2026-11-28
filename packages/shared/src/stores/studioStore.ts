@@ -56,7 +56,8 @@ interface StudioState {
   undo: () => void;
   redo: () => void;
   uploadAsset: (file: Blob, fileName: string, durationSec: number, onProgress?: (pct: number) => void) => Promise<StudioAsset>;
-  deleteAsset: (assetId: string) => Promise<void>;
+  /** force: delete even though saved versions use it (server answers 409 otherwise) */
+  deleteAsset: (assetId: string, force?: boolean) => Promise<void>;
   resetProject: () => Promise<void>;
 
   setLocalPresence: (presence: StudioPresence) => void;
@@ -72,6 +73,9 @@ interface StudioState {
   receiveAssetAdded: (channelId: string, asset: StudioAsset) => void;
   receiveAssetRemoved: (channelId: string, assetId: string) => void;
   receiveReset: (channelId: string, doc: StudioDoc, version: number) => void;
+  /** Bumped when saved versions change (someone saved, deleted or restored one) */
+  versionsTick: number;
+  receiveVersionsChanged: (channelId: string) => void;
 
   setVoiceLinks: (links: Record<string, string>) => void;
   setVoiceLink: (voiceChannelId: string, studioChannelId: string | null) => void;
@@ -142,6 +146,7 @@ export const useStudioStore = create<StudioState>((set, get) => {
     undoStack: [],
     redoStack: [],
     voiceLinks: {},
+    versionsTick: 0,
 
     join: async (channelId) => {
       const prev = get().channelId;
@@ -228,10 +233,10 @@ export const useStudioStore = create<StudioState>((set, get) => {
       return asset;
     },
 
-    deleteAsset: async (assetId) => {
+    deleteAsset: async (assetId, force) => {
       const { channelId } = get();
       if (!channelId) return;
-      await api.delete(`/channels/${channelId}/studio/assets/${assetId}`);
+      await api.delete(`/channels/${channelId}/studio/assets/${assetId}`, force ? { params: { force: true } } : undefined);
       get().receiveAssetRemoved(channelId, assetId);
     },
 
@@ -324,6 +329,10 @@ export const useStudioStore = create<StudioState>((set, get) => {
     receiveReset: (channelId, doc, version) => {
       if (channelId !== get().channelId) return;
       set({ confirmedDoc: doc, doc, version, pending: [], undoStack: [], redoStack: [] });
+    },
+
+    receiveVersionsChanged: (channelId) => {
+      if (channelId === get().channelId) set((s) => ({ versionsTick: s.versionsTick + 1 }));
     },
 
     setVoiceLinks: (links) => set({ voiceLinks: links }),

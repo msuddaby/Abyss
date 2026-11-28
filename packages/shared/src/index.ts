@@ -65,3 +65,5 @@ export {
 export type { SoundboardFx, SoundboardFxPreset } from './utils/soundboardFx.js';
 export { parseValidationErrors, getFieldError, getGeneralError, hasFieldError } from './utils/validation.js';
 export { applyOp, applyOps, invertOps, getAt, studioId, sortedTrackIds, beatsToSeconds, secondsToBeats, arrangementEnd } from './utils/studioOps.js';
+export { tempoMap, buildTempoMap, bpmAt, beatToSec, secToBeat, spanSec, spanBeats, sigAt, sigBarBeats, barAt, barStart, barsIn, formatBarBeat, hasTempoChanges } from './utils/studioTempo.js';
+export type { TempoMap, TempoSeg, SigSeg, BarInfo } from './utils/studioTempo.js';

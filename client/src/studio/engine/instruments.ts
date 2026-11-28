@@ -2,6 +2,7 @@ import * as Tone from 'tone';
 import type { StudioDoc, StudioInstrument, StudioInstrumentType, StudioParams } from '@abyss/shared';
 import { getBuffer } from './assetCache';
 import { createWavetableSynth } from './wavetable/synthNode';
+import { createDrumRack, DRUM_PADS, drumSampleIds } from './drumRack';
 
 // Built-in instruments and effects. Everything here is constructed against the
 // *current* Tone context so the same factories work for offline export.
@@ -28,7 +29,7 @@ export interface PlayableInstrument {
 }
 
 /** Instrument types that take param changes live via update(). */
-export const LIVE_UPDATE_TYPES = new Set<StudioInstrumentType>(['synth']);
+export const LIVE_UPDATE_TYPES = new Set<StudioInstrumentType>(['synth', 'fm', 'am', 'mono', 'pluck', 'bass', 'drums']);
 
 export const INSTRUMENT_LABELS: Record<StudioInstrumentType, string> = {
   synth: 'Wavetable',
@@ -37,108 +38,114 @@ export const INSTRUMENT_LABELS: Record<StudioInstrumentType, string> = {
   mono: 'Mono Lead',
   pluck: 'Pluck',
   bass: 'Bass',
-  drums: 'Drum Kit',
+  drums: 'Drum Rack',
   sampler: 'Sampler',
 };
 
 export const OSC_TYPES = ['sine', 'triangle', 'sawtooth', 'square'] as const;
 
 /** GM-ish drum map used by the drum kit and the piano roll's row labels. */
-export const DRUM_MAP: Record<number, string> = {
-  36: 'Kick',
-  38: 'Snare',
-  39: 'Clap',
-  42: 'Closed Hat',
-  46: 'Open Hat',
-  45: 'Low Tom',
-  48: 'Mid Tom',
-  50: 'High Tom',
-  49: 'Crash',
-  51: 'Ride',
-};
+export const DRUM_MAP: Record<number, string> = Object.fromEntries(DRUM_PADS.map((p) => [p.pitch, p.name]));
 
 function num(params: StudioParams | undefined, key: string, fallback: number): number {
   const v = params?.[key];
   return typeof v === 'number' ? v : fallback;
 }
 
-function osc(params: StudioParams | undefined, fallback: string): string {
-  const v = params?.oscillator;
-  return typeof v === 'string' && (OSC_TYPES as readonly string[]).includes(v) ? v : fallback;
+export type ClassicType = 'fm' | 'am' | 'mono' | 'pluck' | 'bass';
+export const CLASSIC_TYPES: ClassicType[] = ['fm', 'am', 'mono', 'pluck', 'bass'];
+
+/** Defaults per classic synth (these match how projects sounded before the params existed). */
+export const CLASSIC_DEFAULTS: Record<ClassicType, Record<string, number | string>> = {
+  fm: { oscillator: 'sine', modWave: 'square', harmonicity: 3, modulationIndex: 10, attack: 0.01, decay: 0.4, sustain: 0.3, release: 0.8, tone: 20000, glide: 0, volume: 0 },
+  am: { oscillator: 'sine', modWave: 'square', harmonicity: 2, attack: 0.4, decay: 0.3, sustain: 0.7, release: 1.5, tone: 20000, glide: 0, volume: 0 },
+  mono: {
+    oscillator: 'square', attack: 0.01, decay: 0.2, sustain: 0.5, release: 0.3,
+    cutoff: 300, res: 1, envAmt: 4, fAttack: 0.01, fDecay: 0.3, fSustain: 0.4, fRelease: 0.4, glide: 0, volume: 0,
+  },
+  pluck: { oscillator: 'triangle', attack: 0.002, decay: 0.35, sustain: 0, release: 0.3, tone: 20000, glide: 0, volume: 0 },
+  bass: {
+    oscillator: 'sawtooth', attack: 0.005, decay: 0.2, sustain: 0.6, release: 0.15,
+    cutoff: 120, res: 1, envAmt: 3, fAttack: 0.005, fDecay: 0.2, fSustain: 0.3, fRelease: 0.2, glide: 0, volume: 0,
+  },
+};
+
+/** A classic synth's params with defaults filled in. */
+export function resolveClassic(type: ClassicType, p: StudioParams | undefined): Record<string, number | string> {
+  const d = CLASSIC_DEFAULTS[type];
+  const out: Record<string, number | string> = { ...d };
+  for (const k of Object.keys(d)) {
+    const v = p?.[k];
+    if (typeof v === typeof d[k]) out[k] = v as number | string;
+  }
+  if (typeof out.oscillator === 'string' && !(OSC_TYPES as readonly string[]).includes(out.oscillator)) out.oscillator = d.oscillator;
+  if (typeof out.modWave === 'string' && !(OSC_TYPES as readonly string[]).includes(out.modWave)) out.modWave = d.modWave;
+  return out;
 }
 
-function envelope(params: StudioParams | undefined, d: { attack: number; decay: number; sustain: number; release: number }) {
-  return {
-    attack: num(params, 'attack', d.attack),
-    decay: num(params, 'decay', d.decay),
-    sustain: num(params, 'sustain', d.sustain),
-    release: num(params, 'release', d.release),
-  };
+function classicOptions(type: ClassicType, r: Record<string, number | string>) {
+  const n = (k: string) => Number(r[k]);
+  const envelope = { attack: n('attack'), decay: n('decay'), sustain: n('sustain'), release: n('release') };
+  const oscillator = { type: r.oscillator as OscillatorType };
+  const portamento = n('glide');
+  switch (type) {
+    case 'fm': return { oscillator, modulation: { type: r.modWave as OscillatorType }, harmonicity: n('harmonicity'), modulationIndex: n('modulationIndex'), envelope, portamento };
+    case 'am': return { oscillator, modulation: { type: r.modWave as OscillatorType }, harmonicity: n('harmonicity'), envelope, portamento };
+    case 'mono':
+    case 'bass':
+      return {
+        oscillator, envelope, portamento, filter: { Q: n('res') },
+        filterEnvelope: { attack: n('fAttack'), decay: n('fDecay'), sustain: n('fSustain'), release: n('fRelease'), baseFrequency: n('cutoff'), octaves: n('envAmt') },
+      };
+    case 'pluck':
+    default:
+      return { oscillator, envelope, portamento };
+  }
 }
 
-function polyInstrument(synth: Tone.PolySynth): PlayableInstrument {
+/** FM / AM / Mono / Pluck / Bass: a PolySynth with live param updates and a scope tap. */
+function classicInstrument(type: ClassicType, p: StudioParams | undefined): PlayableInstrument {
+  const r = resolveClassic(type, p);
+  const voice = type === 'fm' ? Tone.FMSynth : type === 'am' ? Tone.AMSynth : type === 'pluck' ? Tone.Synth : Tone.MonoSynth;
+  const synth = new Tone.PolySynth(voice as typeof Tone.Synth, classicOptions(type, r) as Partial<Tone.SynthOptions>);
   synth.maxPolyphony = 24;
+  const tone = new Tone.Filter({ type: 'lowpass', frequency: Number(r.tone ?? 20000), rolloff: -12 });
+  const out = new Tone.Volume(Number(r.volume));
+  const analyser = new Tone.Analyser('waveform', 1024);
+  synth.chain(tone, out);
+  out.connect(analyser);
   const hz = (pitch: number) => Tone.Frequency(pitch, 'midi').toFrequency();
+  const last: Record<string, number> = {};
   return {
-    output: synth,
+    output: out,
+    analyser,
     play: (pitch, dur, time, vel) => synth.triggerAttackRelease(hz(pitch), dur, time, vel),
     noteOn: (pitch, vel, time) => synth.triggerAttack(hz(pitch), time, vel),
     noteOff: (pitch, time) => synth.triggerRelease(hz(pitch), time),
     setPitchBend: (semis) => synth.set({ detune: semis * 100 }),
-    releaseAll: () => synth.releaseAll(),
-    dispose: () => synth.dispose(),
-  };
-}
-
-function drumKit(): PlayableInstrument {
-  const out = new Tone.Gain(1);
-  const kick = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.1 } }).connect(out);
-  const tom = new Tone.MembraneSynth({ pitchDecay: 0.08, octaves: 3, envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 } }).connect(out);
-  const snareFilter = new Tone.Filter(1800, 'bandpass').connect(out);
-  const snare = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.18, sustain: 0 } }).connect(snareFilter);
-  const snareBody = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.001, decay: 0.1, sustain: 0, release: 0.05 } }).connect(out);
-  const clap = new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.12, sustain: 0 } }).connect(snareFilter);
-  const hatFilter = new Tone.Filter(7000, 'highpass').connect(out);
-  const hat = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0 } }).connect(hatFilter);
-  const openHat = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.35, sustain: 0 } }).connect(hatFilter);
-  const cymbal = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 1.2, release: 0.3 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).connect(out);
-  cymbal.volume.value = -14;
-  const nodes = [kick, tom, snare, snareBody, clap, hat, openHat, cymbal, snareFilter, hatFilter];
-
-  const tomFreq: Record<number, number> = { 41: 80, 43: 95, 45: 110, 47: 130, 48: 150, 50: 180 };
-  // Drum voices are monophonic; Tone throws if one is retriggered at the same
-  // (or an earlier) time, which happens at loop wraps and with stacked notes.
-  const last = new Map<object, number>();
-  const at = (voice: object, time: number) => {
-    const prev = last.get(voice) ?? -Infinity;
-    const t = time > prev ? time : prev + 0.001;
-    last.set(voice, t);
-    return t;
-  };
-
-  return {
-    output: out,
-    play: (pitch, _dur, time, vel) => {
-      switch (pitch) {
-        case 35: case 36: kick.triggerAttackRelease('C1', 0.3, at(kick, time), vel); break;
-        case 37: case 38: case 40:
-          snare.triggerAttackRelease(0.18, at(snare, time), vel);
-          snareBody.triggerAttackRelease(180, 0.08, at(snareBody, time), vel * 0.6);
-          break;
-        case 39: clap.triggerAttackRelease(0.12, at(clap, time), vel); break;
-        case 42: case 44: hat.triggerAttackRelease(0.05, at(hat, time), vel * 0.7); break;
-        case 46: openHat.triggerAttackRelease(0.35, at(openHat, time), vel * 0.7); break;
-        case 49: case 51: case 52: case 55: case 57: case 59:
-          cymbal.triggerAttackRelease(pitch === 51 || pitch === 59 ? 400 : 300, 0.6, at(cymbal, time), vel);
-          break;
-        default: {
-          const f = tomFreq[pitch] ?? Tone.Frequency(pitch, 'midi').toFrequency();
-          tom.triggerAttackRelease(f, 0.25, at(tom, time), vel);
-        }
+    update: (params) => {
+      const next = resolveClassic(type, params);
+      synth.set(classicOptions(type, next) as Partial<Tone.SynthOptions>);
+      tone.frequency.rampTo(Number(next.tone ?? 20000), 0.03);
+      out.volume.rampTo(Number(next.volume), 0.03);
+    },
+    // Automation: tone/volume ramp; the rest are set on every voice (control rate).
+    setParam: (key, value) => {
+      if (key === 'tone') { tone.frequency.rampTo(value, 0.03); return; }
+      if (key === 'volume') { out.volume.rampTo(value, 0.03); return; }
+      if (last[key] !== undefined && Math.abs(last[key] - value) < 1e-4) return;
+      last[key] = value;
+      switch (key) {
+        case 'harmonicity': synth.set({ harmonicity: value } as never); break;
+        case 'modulationIndex': synth.set({ modulationIndex: value } as never); break;
+        case 'glide': synth.set({ portamento: value }); break;
+        case 'cutoff': synth.set({ filterEnvelope: { baseFrequency: value } } as never); break;
+        case 'res': synth.set({ filter: { Q: value } } as never); break;
+        case 'envAmt': synth.set({ filterEnvelope: { octaves: value } } as never); break;
       }
     },
-    releaseAll: () => {},
-    dispose: () => { for (const n of nodes) n.dispose(); out.dispose(); },
+    releaseAll: () => synth.releaseAll(),
+    dispose: () => { synth.dispose(); tone.dispose(); out.dispose(); analyser.dispose(); },
   };
 }
 
@@ -155,6 +162,7 @@ export function usedAssetIds(doc: StudioDoc): Set<string> {
   for (const t of Object.values(doc.tracks)) {
     const id = samplerAssetId(t.instrument);
     if (id) ids.add(id);
+    if (t.instrument?.type === 'drums') for (const sid of drumSampleIds(t.instrument.params)) ids.add(sid);
   }
   return ids;
 }
@@ -249,35 +257,13 @@ export function createInstrument(inst: StudioInstrument | undefined): PlayableIn
   const p = inst?.params;
   switch (inst?.type ?? 'synth') {
     case 'fm':
-      return polyInstrument(new Tone.PolySynth(Tone.FMSynth, {
-        harmonicity: num(p, 'harmonicity', 3),
-        modulationIndex: num(p, 'modulationIndex', 10),
-        envelope: envelope(p, { attack: 0.01, decay: 0.4, sustain: 0.3, release: 0.8 }),
-      }));
     case 'am':
-      return polyInstrument(new Tone.PolySynth(Tone.AMSynth, {
-        harmonicity: num(p, 'harmonicity', 2),
-        envelope: envelope(p, { attack: 0.4, decay: 0.3, sustain: 0.7, release: 1.5 }),
-      }));
     case 'mono':
-      return polyInstrument(new Tone.PolySynth(Tone.MonoSynth, {
-        oscillator: { type: osc(p, 'square') as OscillatorType },
-        envelope: envelope(p, { attack: 0.01, decay: 0.2, sustain: 0.5, release: 0.3 }),
-        filterEnvelope: { attack: 0.01, decay: 0.3, sustain: 0.4, release: 0.4, baseFrequency: num(p, 'cutoff', 300), octaves: 4 },
-      }));
     case 'pluck':
-      return polyInstrument(new Tone.PolySynth(Tone.Synth, {
-        oscillator: { type: osc(p, 'triangle') as OscillatorType },
-        envelope: envelope(p, { attack: 0.002, decay: 0.35, sustain: 0, release: 0.3 }),
-      }));
     case 'bass':
-      return polyInstrument(new Tone.PolySynth(Tone.MonoSynth, {
-        oscillator: { type: osc(p, 'sawtooth') as OscillatorType },
-        envelope: envelope(p, { attack: 0.005, decay: 0.2, sustain: 0.6, release: 0.15 }),
-        filterEnvelope: { attack: 0.005, decay: 0.2, sustain: 0.3, release: 0.2, baseFrequency: num(p, 'cutoff', 120), octaves: 3 },
-      }));
+      return classicInstrument(inst!.type as ClassicType, p);
     case 'drums':
-      return drumKit();
+      return createDrumRack(p);
     case 'sampler':
       return sampler(p);
     case 'synth':

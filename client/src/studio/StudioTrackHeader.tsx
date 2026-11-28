@@ -20,7 +20,14 @@ interface Props {
   autoOpen: boolean;
   hasAutomation: boolean;
   onToggleAutomation: () => void;
+  /** Nesting depth under groups */
+  depth?: number;
+  takesOpen?: boolean;
+  hasTakes?: boolean;
+  onToggleTakes?: () => void;
 }
+
+const KIND_ICON: Record<string, string> = { audio: '🎙️', return: '↩', group: '📁' };
 
 /** Meter: −60 dB … +6 dB mapped to 0…100% */
 function levelPct(db: number): number {
@@ -28,7 +35,7 @@ function levelPct(db: number): number {
   return Math.max(0, Math.min(100, ((db + 60) / 66) * 100));
 }
 
-export default function StudioTrackHeader({ trackId, track, engine, editable, selected, armed, levelDb, onSelect, onArm, onDelete, autoOpen, hasAutomation, onToggleAutomation }: Props) {
+export default function StudioTrackHeader({ trackId, track, engine, editable, selected, armed, levelDb, onSelect, onArm, onDelete, autoOpen, hasAutomation, onToggleAutomation, depth = 0, takesOpen, hasTakes, onToggleTakes }: Props) {
   const edit = useStudioStore((s) => s.edit);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(track.name);
@@ -45,15 +52,27 @@ export default function StudioTrackHeader({ trackId, track, engine, editable, se
 
   return (
     <div
-      className={`studio-track-header${selected ? ' selected' : ''}`}
-      style={{ ['--track-color' as string]: track.color ?? '#5865f2' }}
+      className={`studio-track-header kind-${track.kind}${selected ? ' selected' : ''}`}
+      style={{ ['--track-color' as string]: track.color ?? '#5865f2', paddingLeft: depth * 12 }}
       onPointerDown={onSelect}
     >
       <div className="studio-track-color" />
       <div className="studio-track-main">
         <div className="studio-track-title-row">
-          <span className="studio-track-kind" title={track.kind === 'audio' ? 'Audio track' : INSTRUMENT_LABELS[track.instrument?.type ?? 'synth']}>
-            {track.kind === 'audio' ? '🎙️' : track.instrument?.type === 'drums' ? '🥁' : '🎹'}
+          {track.kind === 'group' && (
+            <button
+              className="studio-icon-btn studio-group-fold"
+              title={track.collapsed ? 'Show the tracks in this group' : 'Fold the group'}
+              disabled={!editable}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); set('collapsed', !track.collapsed); }}
+            >{track.collapsed ? '▸' : '▾'}</button>
+          )}
+          <span
+            className="studio-track-kind"
+            title={track.kind === 'audio' ? 'Audio track' : track.kind === 'return' ? 'Return track' : track.kind === 'group' ? 'Group track' : INSTRUMENT_LABELS[track.instrument?.type ?? 'synth']}
+          >
+            {KIND_ICON[track.kind] ?? (track.instrument?.type === 'drums' ? '🥁' : '🎹')}
           </span>
           {renaming ? (
             <input
@@ -96,12 +115,21 @@ export default function StudioTrackHeader({ trackId, track, engine, editable, se
             disabled={!editable}
             onClick={() => set('solo', !track.solo)}
           >S</button>
-          <button
-            className={`studio-toggle arm${armed ? ' on' : ''}`}
-            title={track.kind === 'audio' ? 'Arm for audio recording (Ctrl/⌘-click to arm several)' : 'Arm for MIDI recording and input (Ctrl/⌘-click to arm several)'}
-            disabled={!editable}
-            onClick={(e) => onArm(e.ctrlKey || e.metaKey)}
-          >●</button>
+          {(track.kind === 'audio' || track.kind === 'instrument') && (
+            <button
+              className={`studio-toggle arm${armed ? ' on' : ''}`}
+              title={track.kind === 'audio' ? 'Arm for audio recording (Ctrl/⌘-click to arm several)' : 'Arm for MIDI recording and input (Ctrl/⌘-click to arm several)'}
+              disabled={!editable}
+              onClick={(e) => onArm(e.ctrlKey || e.metaKey)}
+            >●</button>
+          )}
+          {(track.kind === 'audio' || track.kind === 'instrument') && onToggleTakes && (
+            <button
+              className={`studio-toggle takes${takesOpen ? ' on' : ''}${hasTakes ? ' has' : ''}`}
+              title={hasTakes ? 'Show takes (this track has earlier takes to comp from)' : 'Show takes'}
+              onClick={onToggleTakes}
+            >T</button>
+          )}
           <button
             className={`studio-toggle auto${autoOpen ? ' on' : ''}${hasAutomation ? ' has' : ''}`}
             title={hasAutomation ? 'Automation (this track has automation)' : 'Show automation'}

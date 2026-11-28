@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef } from 'react';
-import { useStudioStore, studioId, secondsToBeats } from '@abyss/shared';
+import { useStudioStore, studioId, tempoMap, beatToSec, secToBeat, barAt } from '@abyss/shared';
 import type { StudioDoc, StudioClip, StudioNote, StudioOp } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
-import { barBeats, carveRangeOps } from './studioUtils';
+import { muteRangeOps } from './studioUtils';
 
 // Live note input (hardware MIDI + computer keyboard), Ableton-style:
 //  • notes play on the armed instrument tracks, or the selected instrument
@@ -121,14 +121,15 @@ export function useStudioInput(opts: InputOptions) {
   /** Clip range a take covers: the loop if it wrapped, otherwise whole bars around it. */
   const takeRange = (t: Take, doc: StudioDoc, endBeat: number, notes: RecNote[]) => {
     const m = doc.meta;
-    const bar = barBeats(m);
+    const map = tempoMap(doc);
     const loop = m.loopEnabled && m.loopEnd > m.loopStart;
-    const elapsed = secondsToBeats((performance.now() - t.startWall) / 1000, m.bpm);
-    if (loop && t.startBeat < m.loopEnd && t.startBeat + elapsed > m.loopEnd) return { start: m.loopStart, end: m.loopEnd };
+    const reached = secToBeat(map, beatToSec(map, t.startBeat) + (performance.now() - t.startWall) / 1000);
+    if (loop && t.startBeat < m.loopEnd && reached > m.loopEnd) return { start: m.loopStart, end: m.loopEnd };
     const lo = Math.min(t.startBeat, ...notes.map((n) => n.start));
     const hi = Math.max(endBeat, ...notes.map((n) => n.start + n.len));
-    const start = Math.floor(lo / bar + 1e-9) * bar;
-    return { start, end: Math.max(start + bar, Math.ceil(hi / bar - 1e-9) * bar) };
+    const first = barAt(map, lo);
+    const last = barAt(map, Math.max(lo, hi - 1e-9));
+    return { start: first.start, end: Math.max(first.start + first.len, last.start + last.len) };
   };
 
   /** Close open notes, then write one clip per track (replacing what was under it). */
@@ -157,7 +158,8 @@ export function useStudioInput(opts: InputOptions) {
         notes[studioId()] = { pitch: n.pitch, start: s, len: Math.min(n.len, end - start - s), vel: Math.round(n.vel * 100) / 100 };
       }
       if (!Object.keys(notes).length) continue;
-      ops.push(...carveRangeOps(doc, trackId, start, end));
+      // Earlier material under the take is muted (kept as a take to comp from), not deleted.
+      ops.push(...muteRangeOps(doc, trackId, start, end));
       const clip: StudioClip = { trackId, kind: 'midi', start, length: end - start, gain: 0, notes, name: `${track.name} take` };
       ops.push({ t: 'set', path: ['clips', studioId()], value: clip });
     }

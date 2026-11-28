@@ -15,6 +15,8 @@ interface Props {
   color: string;
   onPreview: (p: Resolved) => void;
   onCommit: (p: Resolved) => void;
+  /** Compressor: tracks that can key it */
+  sidechainOptions?: { id: string; name: string }[];
 }
 
 function Spectrum({ engine, trackId, fxId, color }: { engine: StudioEngine | null; trackId: string; fxId: string; color: string }) {
@@ -75,7 +77,7 @@ function CompressorDisplay({ p, engine, trackId, fxId, color }: { p: Resolved; e
   return <canvas ref={ref} className="studio-device-transfer" title="Transfer curve · gain reduction" />;
 }
 
-export default function EffectDevice({ type, params, editable, engine, trackId, fxId, color, onPreview, onCommit }: Props) {
+export default function EffectDevice({ type, params, editable, engine, trackId, fxId, color, onPreview, onCommit, sidechainOptions }: Props) {
   const def = EFFECT_DEFS[type];
   const [draft, setDraft] = useState<Resolved | null>(null);
   const p = draft ?? params;
@@ -91,7 +93,27 @@ export default function EffectDevice({ type, params, editable, engine, trackId, 
       <div className="studio-device-display">
         <Spectrum engine={engine} trackId={trackId} fxId={fxId} color={color} />
         {type === 'compressor' && <CompressorDisplay p={p} engine={engine} trackId={trackId} fxId={fxId} color={color} />}
+        {type === 'limiter' && (
+          <CompressorDisplay
+            p={{ threshold: Number(p.ceiling) - Number(p.gain), ratio: 20, knee: 0, makeup: Number(p.gain) }}
+            engine={engine} trackId={trackId} fxId={fxId} color={color}
+          />
+        )}
       </div>
+      {sidechainOptions && (
+        <label className="studio-sidechain" title="Key the compressor from another track (tapped after its devices, before its fader — so a muted or silent key track still ducks)">
+          <span>Sidechain</span>
+          <select
+            className="studio-select small"
+            value={typeof p.sidechain === 'string' ? p.sidechain : ''}
+            disabled={!editable}
+            onChange={(e) => commit({ ...params, sidechain: e.target.value })}
+          >
+            <option value="">Off (own input)</option>
+            {sidechainOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+        </label>
+      )}
       {choices.length > 0 && (
         <div className="studio-device-choices">
           {choices.map((c) => (

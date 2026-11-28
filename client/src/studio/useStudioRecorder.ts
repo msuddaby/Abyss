@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
-import { useStudioStore, studioId, secondsToBeats } from '@abyss/shared';
+import { useStudioStore, studioId, tempoMap, spanBeats } from '@abyss/shared';
 import type { StudioEngine } from './engine/StudioEngine';
 import { decodeBlob, putBuffer } from './engine/assetCache';
-import { carveRangeOps } from './studioUtils';
+import { muteRangeOps } from './studioUtils';
 
 const LATENCY_KEY = 'studio.recordLatencyMs';
 
@@ -38,28 +38,29 @@ export type RecorderState = 'idle' | 'recording' | 'uploading';
 export function useStudioRecorder(engine: StudioEngine | null) {
   const [state, setState] = useState<RecorderState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const recRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; trackId: string; startBeats: number; chunks: Blob[] } | null>(null);
+  const recRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; ownsStream: boolean; trackId: string; startBeats: number; chunks: Blob[] } | null>(null);
 
-  const start = useCallback(async (trackId: string, fromBeats: number) => {
+  /** `input`: an already-open live input (preferred); otherwise the default mic is opened. */
+  const start = useCallback(async (trackId: string, fromBeats: number, input?: MediaStream) => {
     if (!engine || recRef.current) return;
     setError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = input ?? await navigator.mediaDevices.getUserMedia({
         // Raw signal — voice-chat processing ruins instruments.
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
       const mimeType = pickMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 256_000 });
       const chunks: Blob[] = [];
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-      recRef.current = { recorder, stream, trackId, startBeats: fromBeats, chunks };
+      recRef.current = { recorder, stream, ownsStream: !input, trackId, startBeats: fromBeats, chunks };
       recorder.start(250);
       await engine.play(fromBeats);
       setState('recording');
     } catch (e) {
       console.error('[studio] record start failed', e);
       setError('Microphone unavailable. Check permissions.');
-      recRef.current?.stream.getTracks().forEach((t) => t.stop());
+      if (recRef.current?.ownsStream) recRef.current.stream.getTracks().forEach((t) => t.stop());
       recRef.current = null;
       setState('idle');
     }
@@ -74,7 +75,7 @@ export function useStudioRecorder(engine: StudioEngine | null) {
     const stopped = new Promise<void>((resolve) => { rec.recorder.onstop = () => resolve(); });
     rec.recorder.stop();
     await stopped;
-    rec.stream.getTracks().forEach((t) => t.stop());
+    if (rec.ownsStream) rec.stream.getTracks().forEach((t) => t.stop());
 
     const mime = rec.recorder.mimeType || 'audio/webm';
     const blob = new Blob(rec.chunks, { type: mime });
@@ -92,9 +93,9 @@ export function useStudioRecorder(engine: StudioEngine | null) {
       if (!doc?.tracks[rec.trackId]) return;
       const latency = getRecordLatencyMs() / 1000;
       const usable = Math.max(0.05, buffer.duration - latency);
-      const length = secondsToBeats(usable, doc.meta.bpm);
-      // Arrangement record replaces whatever was under the take.
-      useStudioStore.getState().edit([...carveRangeOps(doc, rec.trackId, rec.startBeats, rec.startBeats + length), {
+      const length = spanBeats(tempoMap(doc), rec.startBeats, usable);
+      // Earlier takes under the new one are muted, not deleted, so they can be comped (T on the track).
+      useStudioStore.getState().edit([...muteRangeOps(doc, rec.trackId, rec.startBeats, rec.startBeats + length), {
         t: 'set',
         path: ['clips', studioId()],
         value: {

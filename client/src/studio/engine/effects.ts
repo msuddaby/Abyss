@@ -1,12 +1,13 @@
 import * as Tone from 'tone';
 import type { StudioEffectType, StudioParams } from '@abyss/shared';
+import { isSynthReady } from './wavetable/synthNode';
 
 // Effect "devices" in the spirit of Ableton's: each has a parameter schema
 // (drives the knobs), a live-updatable Tone.js graph, and an output analyser
 // for the spectrum display. Param changes call update() on the running device;
 // only `structKey` changes (e.g. delay mode) force a rebuild.
 
-export type ParamUnit = 'Hz' | 'dB' | 'ms' | 's' | '%' | ':1' | 'beats' | 'bits' | '°' | 'st' | 'ct' | 'oct' | 'x' | '';
+export type ParamUnit = 'Hz' | 'dB' | 'ms' | 's' | '%' | ':1' | 'beats' | 'bits' | '°' | 'st' | 'ct' | 'oct' | 'octw' | 'x' | '';
 
 export interface KnobDef {
   kind: 'knob';
@@ -42,6 +43,8 @@ export interface FxDevice {
   update: (p: Resolved, bpm: number) => void;
   /** Compressor gain reduction in dB (≤ 0) */
   getReduction?: () => number;
+  /** Sidechain key input (compressor in sidechain mode); the engine wires the key track here */
+  sidechain?: Tone.Gain;
   dispose: () => void;
 }
 
@@ -242,11 +245,6 @@ export interface EffectDef {
   build: (p: Resolved, bpm: number) => FxDevice;
 }
 
-const DELAY_SYNC_OPTIONS = [
-  { value: '0.25', label: '1/16' }, { value: '0.5', label: '1/8' }, { value: '0.75', label: '1/8 D' },
-  { value: '1', label: '1/4' }, { value: '1.5', label: '1/4 D' }, { value: '2', label: '1/2' }, { value: '4', label: '1 bar' },
-];
-
 function defaultsFrom(params: ParamDef[]): Resolved {
   return Object.fromEntries(params.map((d) => [d.key, d.def]));
 }
@@ -261,6 +259,12 @@ const COMP_PARAMS: ParamDef[] = [
   mix,
 ];
 
+const LIMITER_PARAMS: ParamDef[] = [
+  { kind: 'knob', key: 'gain', label: 'Gain', min: 0, max: 24, def: 0, unit: 'dB' },
+  { kind: 'knob', key: 'ceiling', label: 'Ceiling', min: -12, max: 0, def: -0.3, unit: 'dB' },
+  { kind: 'knob', key: 'release', label: 'Release', min: 10, max: 1000, def: 100, unit: 'ms', log: true },
+];
+
 const REVERB_PARAMS: ParamDef[] = [
   { kind: 'knob', key: 'decay', label: 'Decay', min: 0.2, max: 20, def: 2.5, unit: 's', log: true },
   { kind: 'knob', key: 'predelay', label: 'Pre-Delay', min: 0, max: 250, def: 20, unit: 'ms' },
@@ -269,16 +273,81 @@ const REVERB_PARAMS: ParamDef[] = [
   { ...mix, def: 30 },
 ];
 
+// Ableton-style Delay: two delay lines, each synced (16th-note divisions plus
+// a ±33% swing offset) or free (ms). Link makes the right follow the left.
+export const DELAY_DIVISIONS = [1, 2, 3, 4, 5, 6, 8, 16];
+export const DELAY_MAX_SEC = 5;
+
 const DELAY_PARAMS: ParamDef[] = [
   { kind: 'choice', key: 'mode', label: 'Mode', def: 'stereo', options: [{ value: 'stereo', label: 'Stereo' }, { value: 'pingpong', label: 'Ping Pong' }] },
-  { kind: 'choice', key: 'sync', label: 'Time', def: 'sync', options: [{ value: 'sync', label: 'Sync' }, { value: 'free', label: 'ms' }] },
-  { kind: 'choice', key: 'beats', label: 'Division', def: '0.5', options: DELAY_SYNC_OPTIONS, when: (p) => p.sync !== 'free' },
-  { kind: 'knob', key: 'ms', label: 'Time', min: 1, max: 2000, def: 250, unit: 'ms', log: true, when: (p) => p.sync === 'free' },
+  { kind: 'knob', key: 'lMs', label: 'L Time', min: 1, max: 5000, def: 250, unit: 'ms', log: true },
+  { kind: 'knob', key: 'lOff', label: 'L Offset', min: -33, max: 33, def: 0, unit: '%' },
+  { kind: 'knob', key: 'rMs', label: 'R Time', min: 1, max: 5000, def: 250, unit: 'ms', log: true },
+  { kind: 'knob', key: 'rOff', label: 'R Offset', min: -33, max: 33, def: 0, unit: '%' },
   { kind: 'knob', key: 'feedback', label: 'Feedback', min: 0, max: 95, def: 35, unit: '%' },
-  { kind: 'knob', key: 'lowcut', label: 'Low Cut', min: 20, max: 2000, def: 200, unit: 'Hz', log: true },
-  { kind: 'knob', key: 'highcut', label: 'High Cut', min: 1000, max: 20000, def: 8000, unit: 'Hz', log: true },
+  { kind: 'knob', key: 'fFreq', label: 'Filter Freq', min: 50, max: 18000, def: 1000, unit: 'Hz', log: true },
+  { kind: 'knob', key: 'fWidth', label: 'Filter Width', min: 0.5, max: 9, def: 6, unit: 'octw' },
   { ...mix, def: 25 },
 ];
+
+function delayDefaults(): Resolved {
+  return {
+    ...defaultsFrom(DELAY_PARAMS),
+    link: true, lSync: true, rSync: true, lDiv: 3, rDiv: 4,
+    filterOn: true, freeze: false,
+  };
+}
+
+/** One side's delay time in seconds. */
+export function delaySideSeconds(p: Resolved, side: 'l' | 'r', bpm: number): number {
+  const s = p.link === true ? 'l' : side;
+  const sec = p[`${s}Sync`] === false
+    ? Number(p[`${s}Ms`]) / 1000
+    : (Number(p[`${s}Div`]) * (1 + Number(p[`${s}Off`]) / 100) * 60) / bpm / 4;
+  return Math.min(DELAY_MAX_SEC, Math.max(0.001, sec));
+}
+
+// Retro tape / vinyl: saturation, head bump, high-end loss, wow & flutter,
+// hiss and crackle (the noises follow the signal, so silence stays silent).
+const TAPE_PARAMS: ParamDef[] = [
+  { kind: 'knob', key: 'drive', label: 'Drive', min: 0, max: 24, def: 6, unit: 'dB' },
+  { kind: 'knob', key: 'bump', label: 'Bump', min: 0, max: 9, def: 3, unit: 'dB' },
+  { kind: 'knob', key: 'age', label: 'Age', min: 0, max: 100, def: 30, unit: '%' },
+  { kind: 'knob', key: 'wow', label: 'Wow', min: 0, max: 100, def: 25, unit: '%' },
+  { kind: 'knob', key: 'flutter', label: 'Flutter', min: 0, max: 100, def: 20, unit: '%' },
+  { kind: 'knob', key: 'hiss', label: 'Hiss', min: 0, max: 100, def: 15, unit: '%' },
+  { kind: 'knob', key: 'crackle', label: 'Crackle', min: 0, max: 100, def: 0, unit: '%' },
+  { kind: 'knob', key: 'output', label: 'Output', min: -18, max: 6, def: 0, unit: 'dB' },
+  { ...mix, def: 100 },
+];
+
+/** Constant tape delay that wow/flutter modulate around (dry is aligned to it). */
+const TAPE_BASE_DELAY = 0.006;
+
+/** A few seconds of sparse vinyl clicks and pops, looped. */
+function crackleBuffer(sampleRate: number): AudioBuffer {
+  const len = Math.floor(sampleRate * 4.7);
+  const buf = new AudioBuffer({ length: len, numberOfChannels: 2, sampleRate });
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      const r = Math.random();
+      if (r < 0.0006) {
+        // A click: a short decaying burst, occasionally a bigger pop.
+        const amp = (Math.random() < 0.08 ? 0.9 : 0.3) * (Math.random() * 0.7 + 0.3);
+        const n = 20 + Math.floor(Math.random() * 120);
+        for (let k = 0; k < n && i + k < len; k++) d[i + k] += (Math.random() * 2 - 1) * amp * Math.exp(-k / (n / 4));
+      }
+    }
+  }
+  return buf;
+}
+
+function tanhCurve(driveDb: number) {
+  const k = Tone.dbToGain(driveDb);
+  const norm = Math.tanh(k);
+  return (x: number) => Math.tanh(k * x) / norm;
+}
 
 const SAT_PARAMS: ParamDef[] = [
   { kind: 'choice', key: 'curve', label: 'Type', def: 'soft', options: [
@@ -334,9 +403,11 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
     label: 'Compressor',
     width: 452,
     params: COMP_PARAMS,
-    defaults: () => defaultsFrom(COMP_PARAMS),
-    structKey: () => 'comp',
+    // sidechain: id of the track that keys the compressor ('' = its own input)
+    defaults: () => ({ ...defaultsFrom(COMP_PARAMS), sidechain: '' }),
+    structKey: (p) => (p.sidechain ? `comp-sc|${isSynthReady()}` : 'comp'),
     build: (p) => {
+      if (p.sidechain) return buildSidechainComp(p);
       const b = base('comp');
       const dw = dryWet(b.input, b.output);
       const comp = new Tone.Compressor();
@@ -361,6 +432,43 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
           return typeof r === 'number' ? r : 0;
         },
         dispose: () => { comp.dispose(); makeup.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
+      };
+    },
+  },
+
+  limiter: {
+    label: 'Limiter',
+    width: 300,
+    params: LIMITER_PARAMS,
+    defaults: () => defaultsFrom(LIMITER_PARAMS),
+    structKey: () => 'limiter',
+    build: (p) => {
+      const b = base('limiter');
+      const drive = new Tone.Gain(1);
+      // Fast-attack, high-ratio compression at the ceiling, then a hard clip
+      // as the final safety so nothing exceeds it.
+      const comp = new Tone.Compressor({ ratio: 20, attack: 0.001, knee: 0 });
+      const clip = new Tone.WaveShaper((x) => Math.max(-1, Math.min(1, x)), 1024);
+      const pre = new Tone.Gain(1);
+      const post = new Tone.Gain(1);
+      b.input.chain(drive, comp, pre, clip, post, b.output);
+      const update = (p: Resolved) => {
+        const ceil = num(p, 'ceiling');
+        drive.gain.rampTo(Tone.dbToGain(num(p, 'gain')), 0.02);
+        comp.threshold.rampTo(ceil - 1, 0.02);
+        comp.release.rampTo(num(p, 'release') / 1000, 0.02);
+        // clip at the ceiling: scale up into the shaper, back down after
+        pre.gain.rampTo(1 / Tone.dbToGain(ceil), 0.02);
+        post.gain.rampTo(Tone.dbToGain(ceil), 0.02);
+      };
+      update(p);
+      return {
+        ...b, ready: Promise.resolve(), update,
+        getReduction: () => {
+          const r = (comp as unknown as { reduction?: number }).reduction;
+          return typeof r === 'number' ? r : 0;
+        },
+        dispose: () => { drive.dispose(); comp.dispose(); clip.dispose(); pre.dispose(); post.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
       };
     },
   },
@@ -397,31 +505,72 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
 
   delay: {
     label: 'Delay',
-    width: 340,
+    width: 470,
     params: DELAY_PARAMS,
-    defaults: () => defaultsFrom(DELAY_PARAMS),
-    structKey: (p) => `delay:${p.mode}`,
+    defaults: delayDefaults,
+    structKey: () => 'delay2',
     build: (p, bpm) => {
-      const b = base(`delay:${p.mode}`);
+      const b = base('delay2');
       const dw = dryWet(b.input, b.output);
-      const delay = p.mode === 'pingpong'
-        ? new Tone.PingPongDelay({ delayTime: 0.25, feedback: 0.3, wet: 1, maxDelay: 4 })
-        : new Tone.FeedbackDelay({ delayTime: 0.25, feedback: 0.3, wet: 1, maxDelay: 4 });
-      const hp = new Tone.Filter({ type: 'highpass', frequency: 200, rolloff: -12 });
-      const lp = new Tone.Filter({ type: 'lowpass', frequency: 8000, rolloff: -12 });
-      b.input.chain(delay, hp, lp, dw.wet);
+      const split = new Tone.Split(2);
+      const merge = new Tone.Merge(2);
+      b.input.connect(split);
+      const g = (v = 0) => new Tone.Gain(v);
+      // Input routing (stereo: L→L, R→R; ping pong: mono sum into the left line)
+      const inLL = g(), inRR = g(), inRL = g();
+      // Feedback routing (stereo: each line into itself; ping pong: L→R, R→L)
+      const fbLL = g(), fbRR = g(), xLR = g(), xRL = g();
+      const sumL = g(1), sumR = g(1);
+      split.connect(inLL, 0); split.connect(inRR, 1); split.connect(inRL, 1);
+      inLL.connect(sumL); inRL.connect(sumL); inRR.connect(sumR);
+      const line = (sum: Tone.Gain) => {
+        const delay = new Tone.Delay({ delayTime: 0.25, maxDelay: DELAY_MAX_SEC });
+        const hp = new Tone.Filter({ type: 'highpass', frequency: 20, rolloff: -12 });
+        const lp = new Tone.Filter({ type: 'lowpass', frequency: 20000, rolloff: -12 });
+        sum.chain(delay, hp, lp);
+        return { delay, hp, lp, out: lp };
+      };
+      const L = line(sumL), R = line(sumR);
+      L.out.connect(fbLL); fbLL.connect(sumL);
+      R.out.connect(fbRR); fbRR.connect(sumR);
+      L.out.connect(xLR); xLR.connect(sumR);
+      R.out.connect(xRL); xRL.connect(sumL);
+      L.out.connect(merge, 0, 0);
+      R.out.connect(merge, 0, 1);
+      merge.connect(dw.wet);
+
       const update = (p: Resolved, bpm: number) => {
-        const sec = p.sync === 'free' ? num(p, 'ms') / 1000 : (Number(p.beats) * 60) / bpm;
-        delay.delayTime.rampTo(Math.min(4, Math.max(0.001, sec)), 0.05);
-        delay.feedback.rampTo(num(p, 'feedback') / 100, 0.02);
-        hp.frequency.rampTo(num(p, 'lowcut'), 0.02);
-        lp.frequency.rampTo(num(p, 'highcut'), 0.02);
+        L.delay.delayTime.rampTo(delaySideSeconds(p, 'l', bpm), 0.05);
+        R.delay.delayTime.rampTo(delaySideSeconds(p, 'r', bpm), 0.05);
+        const freeze = p.freeze === true;
+        const pp = p.mode === 'pingpong';
+        const fb = freeze ? 1 : Math.min(0.95, num(p, 'feedback') / 100);
+        const inGain = freeze ? 0 : 1;
+        const set = (n: Tone.Gain, v: number) => n.gain.rampTo(v, 0.02);
+        set(inLL, inGain * (pp ? 0.5 : 1));
+        set(inRL, pp ? inGain * 0.5 : 0);
+        set(inRR, pp ? 0 : inGain);
+        set(fbLL, pp ? 0 : fb);
+        set(fbRR, pp ? 0 : fb);
+        set(xLR, pp ? 1 : 0);
+        set(xRL, pp ? fb : 0);
+        // Band-pass in the feedback loop, so each repeat gets darker/thinner.
+        // Bypassed while frozen so the loop holds instead of fading.
+        const filt = p.filterOn === true && !freeze;
+        const half = Math.pow(2, num(p, 'fWidth') / 2);
+        const lo = filt ? Math.max(20, num(p, 'fFreq') / half) : 10;
+        const hi = filt ? Math.min(20000, num(p, 'fFreq') * half) : 22000;
+        for (const side of [L, R]) {
+          side.hp.frequency.rampTo(lo, 0.02);
+          side.lp.frequency.rampTo(hi, 0.02);
+        }
         dw.set(num(p, 'mix') / 100);
       };
       update(p, bpm);
+      const nodes = [split, merge, inLL, inRR, inRL, fbLL, fbRR, xLR, xRL, sumL, sumR, L.delay, L.hp, L.lp, R.delay, R.hp, R.lp];
       return {
         ...b, ready: Promise.resolve(), update,
-        dispose: () => { delay.dispose(); hp.dispose(); lp.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
+        dispose: () => { for (const n of nodes) n.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose(); },
       };
     },
   },
@@ -489,6 +638,85 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
     },
   },
 
+  tape: {
+    label: 'Tape',
+    width: 330,
+    params: TAPE_PARAMS,
+    defaults: () => defaultsFrom(TAPE_PARAMS),
+    structKey: () => 'tape',
+    build: (p) => {
+      const b = base('tape');
+      const ctx = Tone.getContext();
+      // Dry path delayed by the same constant tape delay, so Mix < 100% doesn't comb.
+      const dryDelay = new Tone.Delay(TAPE_BASE_DELAY, 0.05);
+      const dry = new Tone.Gain(0), wet = new Tone.Gain(1);
+      b.input.connect(dryDelay); dryDelay.connect(dry); dry.connect(b.output);
+      wet.connect(b.output);
+
+      let driveDb = num(p, 'drive');
+      const shaper = new Tone.WaveShaper(tanhCurve(driveDb), 4096);
+      shaper.oversample = '4x';
+      const bump = new Tone.Filter({ type: 'peaking', frequency: 90, Q: 0.9, gain: 3 });
+      const lp = new Tone.Filter({ type: 'lowpass', frequency: 20000, rolloff: -12, Q: 0.5 });
+      const hp = new Tone.Filter({ type: 'highpass', frequency: 25, rolloff: -12 });
+      const tape = new Tone.Delay(TAPE_BASE_DELAY, 0.05);
+      const out = new Tone.Gain(1);
+      b.input.chain(shaper, bump, hp, lp, tape, out, wet);
+
+      // Wow (slow) + flutter (fast) sum onto the delay time.
+      const wow = new Tone.LFO({ frequency: 0.6, min: TAPE_BASE_DELAY, max: TAPE_BASE_DELAY, type: 'sine' }).start();
+      const flutter = new Tone.LFO({ frequency: 9, min: 0, max: 0, type: 'triangle' }).start();
+      wow.connect(tape.delayTime);
+      flutter.connect(tape.delayTime);
+
+      // Noise beds, gated by the input level (fast attack, slow release).
+      const follower = new Tone.Follower(0.4);
+      const gate = new Tone.WaveShaper((x) => Math.min(1, Math.max(0, x * 60)), 1024);
+      b.input.connect(follower); follower.connect(gate);
+      const noiseGate = new Tone.Gain(0);
+      gate.connect(noiseGate.gain);
+      const hiss = new Tone.Noise('pink').start();
+      const hissHp = new Tone.Filter({ type: 'highpass', frequency: 3000, rolloff: -12 });
+      const hissLevel = new Tone.Gain(0);
+      hiss.chain(hissHp, hissLevel, noiseGate);
+      const crackle = new Tone.Player({ url: new Tone.ToneAudioBuffer(crackleBuffer(ctx.sampleRate)), loop: true });
+      crackle.start();
+      const crackleBp = new Tone.Filter({ type: 'bandpass', frequency: 2500, Q: 0.7 });
+      const crackleLevel = new Tone.Gain(0);
+      crackle.chain(crackleBp, crackleLevel, noiseGate);
+      noiseGate.connect(wet);
+
+      const update = (p: Resolved) => {
+        if (num(p, 'drive') !== driveDb) { driveDb = num(p, 'drive'); shaper.setMap(tanhCurve(driveDb)); }
+        // Drive adds level; pull it back so the knob mostly changes colour.
+        out.gain.rampTo(Tone.dbToGain(num(p, 'output') - driveDb * 0.5), 0.03);
+        bump.gain.rampTo(num(p, 'bump'), 0.03);
+        const age = num(p, 'age') / 100;
+        lp.frequency.rampTo(20000 * Math.pow(2500 / 20000, age), 0.05);
+        hp.frequency.rampTo(25 + age * 90, 0.05);
+        const w = num(p, 'wow') / 100, f = num(p, 'flutter') / 100;
+        wow.min = TAPE_BASE_DELAY - w * 0.003; wow.max = TAPE_BASE_DELAY + w * 0.003;
+        wow.frequency.rampTo(0.4 + w * 0.6, 0.1);
+        flutter.min = -f * 0.00035; flutter.max = f * 0.00035;
+        hissLevel.gain.rampTo(Tone.dbToGain(-62 + (num(p, 'hiss') / 100) * 32) * (num(p, 'hiss') > 0 ? 1 : 0), 0.05);
+        crackleLevel.gain.rampTo((num(p, 'crackle') / 100) * 0.35, 0.05);
+        const m = Math.max(0, Math.min(1, num(p, 'mix') / 100));
+        dry.gain.rampTo(Math.cos((m * Math.PI) / 2), 0.03);
+        wet.gain.rampTo(Math.sin((m * Math.PI) / 2), 0.03);
+      };
+      update(p);
+      const nodes = [dryDelay, dry, wet, shaper, bump, lp, hp, tape, out, wow, flutter, follower, gate, noiseGate, hiss, hissHp, hissLevel, crackle, crackleBp, crackleLevel];
+      return {
+        ...b, ready: Promise.resolve(), update,
+        dispose: () => {
+          try { hiss.stop(); crackle.stop(); } catch { /* not started */ }
+          for (const n of nodes) n.dispose();
+          b.input.dispose(); b.output.dispose(); b.analyser.dispose();
+        },
+      };
+    },
+  },
+
   filter: {
     label: 'Auto Filter',
     width: 326,
@@ -521,6 +749,42 @@ export const EFFECT_DEFS: Record<StudioEffectType, EffectDef> = {
   },
 };
 
+/** Compressor keyed by another track (AudioWorklet; passes audio through until it loads). */
+function buildSidechainComp(p: Resolved): FxDevice {
+  // Must equal EFFECT_DEFS.compressor.structKey(p), or the engine rebuilds it every sync.
+  const b = base(`comp-sc|${isSynthReady()}`);
+  const dw = dryWet(b.input, b.output);
+  const sidechain = new Tone.Gain(1);
+  const ctx = Tone.getContext();
+  let reduction = 0;
+  let node: AudioWorkletNode | null = null;
+  if (isSynthReady(ctx)) {
+    node = ctx.createAudioWorkletNode('abyss-sidechain', { numberOfInputs: 2, numberOfOutputs: 1, outputChannelCount: [2] });
+    Tone.connect(b.input, node, 0, 0);
+    Tone.connect(sidechain, node, 0, 1);
+    Tone.connect(node, dw.wet);
+    node.port.onmessage = (e: MessageEvent) => { if (typeof e.data === 'number') reduction = e.data; };
+  } else {
+    b.input.connect(dw.wet);
+  }
+  const update = (p: Resolved) => {
+    node?.port.postMessage({
+      type: 'params', threshold: num(p, 'threshold'), ratio: num(p, 'ratio'), attack: num(p, 'attack'),
+      release: num(p, 'release'), knee: num(p, 'knee'), makeup: num(p, 'makeup'),
+    });
+    dw.set(num(p, 'mix') / 100);
+  };
+  update(p);
+  return {
+    ...b, ready: Promise.resolve(), update, sidechain,
+    getReduction: () => reduction,
+    dispose: () => {
+      if (node) { node.port.onmessage = null; node.disconnect(); node.port.close(); }
+      sidechain.dispose(); dw.dispose(); b.input.dispose(); b.output.dispose(); b.analyser.dispose();
+    },
+  };
+}
+
 /**
  * Full parameter set for a device: defaults overlaid with stored params, with
  * older project formats mapped onto the current schema.
@@ -538,17 +802,35 @@ export function resolveParams(type: StudioEffectType, raw: StudioParams | undefi
     return p;
   }
   for (const [k, v] of Object.entries(r)) if (k in p) p[k] = v;
+  if (type === 'delay' && !('lDiv' in r) && ('beats' in r || 'sync' in r || 'ms' in r || 'lowcut' in r)) migrateDelayV1(p, r);
   // Projects saved before devices had 0..1 'wet' and no 'mix' key.
   const legacy = type !== 'eq' && !('mix' in r);
   if (legacy) {
     if (typeof r.wet === 'number') p.mix = r.wet * 100;
-    if (type === 'delay' && typeof r.time === 'number') p.beats = String(r.time);
+    if (type === 'delay' && typeof r.time === 'number') { p.lDiv = r.time * 4; p.rDiv = r.time * 4; }
     if (type === 'delay' && typeof r.feedback === 'number') p.feedback = r.feedback * 100;
     if (type === 'distortion' && typeof r.amount === 'number') p.drive = r.amount * 36;
     if (type === 'chorus' && typeof r.frequency === 'number') p.rate = r.frequency;
     if (type === 'chorus' && typeof r.depth === 'number') p.depth = r.depth * 100;
   }
   return p;
+}
+
+/** Single-time delay (one Division or ms value, low/high cut) → linked L/R. */
+function migrateDelayV1(p: Resolved, r: StudioParams) {
+  const free = r.sync === 'free';
+  const div = Number(r.beats ?? 0.5) * 4; // beats were quarter notes; divisions are 16ths
+  const ms = Number(r.ms ?? 250);
+  p.link = true;
+  p.lSync = p.rSync = !free;
+  p.lDiv = p.rDiv = Number.isFinite(div) && div > 0 ? div : 2;
+  p.lMs = p.rMs = Number.isFinite(ms) ? ms : 250;
+  const lo = Number(r.lowcut ?? 200), hi = Number(r.highcut ?? 8000);
+  if (lo > 0 && hi > lo) {
+    p.filterOn = true;
+    p.fFreq = Math.sqrt(lo * hi);
+    p.fWidth = Math.min(9, Math.max(0.5, Math.log2(hi / lo)));
+  }
 }
 
 export function buildDevice(type: StudioEffectType, params: Resolved, bpm: number): FxDevice {
@@ -570,6 +852,7 @@ export function formatParam(v: number, unit: ParamUnit): string {
     case 'st': return `${v > 0 ? '+' : ''}${Math.round(v)} st`;
     case 'ct': return `${v > 0 ? '+' : ''}${Math.round(v)} ct`;
     case 'oct': return `${v > 0 ? '+' : ''}${Math.round(v)} oct`;
+    case 'octw': return `${v.toFixed(1)} oct`;
     case 'x': return `${Math.round(v)}`;
     default: return v.toFixed(2);
   }

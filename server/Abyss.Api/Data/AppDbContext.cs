@@ -43,6 +43,9 @@ public class AppDbContext : IdentityDbContext<AppUser>
     public DbSet<MessageSplat> MessageSplats => Set<MessageSplat>();
     public DbSet<StudioProject> StudioProjects => Set<StudioProject>();
     public DbSet<StudioAsset> StudioAssets => Set<StudioAsset>();
+    public DbSet<StudioChange> StudioChanges => Set<StudioChange>();
+    public DbSet<StudioVersion> StudioVersions => Set<StudioVersion>();
+    public DbSet<StudioPreset> StudioPresets => Set<StudioPreset>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -464,6 +467,26 @@ public class AppDbContext : IdentityDbContext<AppUser>
             .OnDelete(DeleteBehavior.Cascade);
         builder.Entity<StudioAsset>()
             .HasIndex(sa => new { sa.ProjectId, sa.CreatedAt });
+        builder.Entity<StudioChange>()
+            .HasOne(c => c.Project)
+            .WithMany()
+            .HasForeignKey(c => c.ProjectId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<StudioChange>()
+            .HasIndex(c => new { c.ProjectId, c.Id });
+        builder.Entity<StudioChange>().Property(c => c.OpsJson).HasColumnType("jsonb");
+        builder.Entity<StudioChange>().Property(c => c.InverseJson).HasColumnType("jsonb");
+        builder.Entity<StudioVersion>()
+            .HasOne(v => v.Project)
+            .WithMany()
+            .HasForeignKey(v => v.ProjectId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.Entity<StudioVersion>()
+            .HasIndex(v => new { v.ProjectId, v.CreatedAt });
+        builder.Entity<StudioVersion>().Property(v => v.DocJson).HasColumnType("jsonb");
+        builder.Entity<StudioPreset>()
+            .HasIndex(p => new { p.ServerId, p.Kind, p.Type });
+        builder.Entity<StudioPreset>().Property(p => p.ParamsJson).HasColumnType("jsonb");
 
         // WatchParty
         builder.Entity<WatchParty>()

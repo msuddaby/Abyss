@@ -12,7 +12,8 @@
     "cap:ios": "npm run cap:sync && npx cap open ios",
     "cap:android": "npm run cap:sync && npx cap open android",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@abyss/shared": "*",
@@ -61,6 +62,7 @@
     "globals": "^16.5.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^3.2.4"
   }
 }

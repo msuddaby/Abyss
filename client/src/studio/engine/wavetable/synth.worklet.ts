@@ -399,3 +399,72 @@ class WavetableProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('abyss-wavetable', WavetableProcessor);
+
+// ───────────────────────── Sidechain compressor ─────────────────────────
+// Input 0 is the signal to compress, input 1 the key (e.g. a kick track).
+// Feed-forward, peak-detecting, soft knee; gain reduction is smoothed with
+// separate attack / release and reported to the main thread for the meter.
+// Main thread sends: { type: 'params', threshold, ratio, attack, release, knee, makeup } (dB / ms)
+
+class SidechainCompressor extends AudioWorkletProcessor {
+  private thr = -18;
+  private ratio = 4;
+  private atk = 0.01;
+  private rel = 0.15;
+  private knee = 6;
+  private makeup = 1;
+  private env = 0;
+  private minEnv = 0;
+  private sinceReport = 0;
+
+  constructor() {
+    super();
+    this.port.onmessage = (e: MessageEvent) => {
+      const m = e.data as { type: string; threshold: number; ratio: number; attack: number; release: number; knee: number; makeup: number };
+      if (m.type !== 'params') return;
+      this.thr = m.threshold;
+      this.ratio = Math.max(1, m.ratio);
+      this.atk = Math.max(0.0001, m.attack / 1000);
+      this.rel = Math.max(0.001, m.release / 1000);
+      this.knee = Math.max(0, m.knee);
+      this.makeup = Math.pow(10, m.makeup / 20);
+    };
+  }
+
+  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    const main = inputs[0] ?? [];
+    const key = inputs[1] ?? [];
+    const out = outputs[0];
+    const n = out[0]?.length ?? 128;
+    const aA = Math.exp(-1 / (this.atk * sampleRate));
+    const aR = Math.exp(-1 / (this.rel * sampleRate));
+    const slope = 1 / this.ratio - 1;
+    const knee = this.knee;
+    for (let i = 0; i < n; i++) {
+      let k = 0;
+      for (let c = 0; c < key.length; c++) { const a = Math.abs(key[c][i]); if (a > k) k = a; }
+      const db = k > 1e-6 ? 20 * Math.log10(k) : -120;
+      const over = db - this.thr;
+      let gr: number;
+      if (2 * over < -knee) gr = 0;
+      else if (knee > 0 && 2 * Math.abs(over) <= knee) gr = (slope * (over + knee / 2) ** 2) / (2 * knee);
+      else gr = slope * over;
+      this.env = gr < this.env ? aA * this.env + (1 - aA) * gr : aR * this.env + (1 - aR) * gr;
+      if (this.env < this.minEnv) this.minEnv = this.env;
+      const g = Math.pow(10, this.env / 20) * this.makeup;
+      for (let c = 0; c < out.length; c++) {
+        const src = main[c] ?? main[0];
+        out[c][i] = src ? src[i] * g : 0;
+      }
+    }
+    this.sinceReport += n;
+    if (this.sinceReport >= 2048) {
+      this.port.postMessage(this.minEnv);
+      this.minEnv = 0;
+      this.sinceReport = 0;
+    }
+    return true;
+  }
+}
+
+registerProcessor('abyss-sidechain', SidechainCompressor);

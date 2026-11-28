@@ -323,7 +323,7 @@ export default function MainLayout() {
                 <span className="channel-studio-icon" aria-hidden="true">🎛️</span>
                 <span className="channel-name">{activeChannel.name}</span>
               </div>
-              <StudioView channelId={activeChannel.id} />
+              <StudioView key={activeChannel.id} channelId={activeChannel.id} />
             </div>
           ) : null
         ) : (

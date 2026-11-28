@@ -1,7 +1,8 @@
 import { useStudioStore } from '@abyss/shared';
-import type { StudioTrack } from '@abyss/shared';
+import type { StudioTrack, StudioDoc } from '@abyss/shared';
 import { EFFECT_DEFS, resolveParams, EQ_BANDS, bandKey, formatParam, type ParamUnit } from './engine/effects';
 import { resolveSynthParams } from './engine/wavetable/synthParams';
+import { resolveClassic, CLASSIC_TYPES, type ClassicType } from './engine/instruments';
 
 // Automation lanes: what can be automated on a track, how values map to the
 // lane's height, and the recorder that turns live knob moves into points.
@@ -55,8 +56,31 @@ const SYNTH_LANES: { key: string; label: string; min: number; max: number; log?:
   ...Array.from({ length: 8 }, (_, i) => ({ key: `m${i}amt`, label: `Mod ${i + 1} Amount`, min: -1, max: 1, unit: '%' as ParamUnit, scale: 100 })),
 ];
 
+type LaneSpec = { key: string; label: string; min: number; max: number; log?: boolean; unit: ParamUnit; scale?: number };
+const TONE: LaneSpec = { key: 'tone', label: 'Tone', min: 200, max: 20000, log: true, unit: 'Hz' };
+const VOL: LaneSpec = { key: 'volume', label: 'Synth Volume', min: -36, max: 6, unit: 'dB' };
+const FILTER_LANES: LaneSpec[] = [
+  { key: 'cutoff', label: 'Filter Cutoff', min: 20, max: 8000, log: true, unit: 'Hz' },
+  { key: 'res', label: 'Filter Res', min: 0.1, max: 20, log: true, unit: '' },
+  { key: 'envAmt', label: 'Filter Env Amount', min: 0, max: 8, unit: 'oct' },
+  { key: 'glide', label: 'Glide', min: 0, max: 1, unit: 's' },
+  VOL,
+];
+/** Automatable params of the classic synths (FM / AM / Mono / Pluck / Bass). */
+export const CLASSIC_LANES: Record<ClassicType, LaneSpec[]> = {
+  fm: [
+    { key: 'harmonicity', label: 'Harmonicity', min: 0.25, max: 8, log: true, unit: 'x' },
+    { key: 'modulationIndex', label: 'Mod Index', min: 0, max: 40, unit: '' },
+    TONE, { key: 'glide', label: 'Glide', min: 0, max: 1, unit: 's' }, VOL,
+  ],
+  am: [{ key: 'harmonicity', label: 'Harmonicity', min: 0.25, max: 8, log: true, unit: 'x' }, TONE, { key: 'glide', label: 'Glide', min: 0, max: 1, unit: 's' }, VOL],
+  mono: FILTER_LANES,
+  bass: FILTER_LANES,
+  pluck: [TONE, VOL],
+};
+
 /** Every automatable parameter on a track, grouped for the lane picker. */
-export function laneDefs(track: StudioTrack): LaneDef[] {
+export function laneDefs(track: StudioTrack, doc?: StudioDoc | null): LaneDef[] {
   const out: LaneDef[] = [
     { key: 'vol', label: 'Volume', group: 'Mixer', min: -60, max: 6, unit: 'dB', base: track.volume },
     { key: 'pan', label: 'Pan', group: 'Mixer', min: -1, max: 1, unit: '%', scale: 100, base: track.pan },
@@ -64,6 +88,18 @@ export function laneDefs(track: StudioTrack): LaneDef[] {
   if (track.kind === 'instrument' && (track.instrument?.type ?? 'synth') === 'synth') {
     const p = resolveSynthParams(track.instrument?.params);
     for (const l of SYNTH_LANES) out.push({ ...l, key: `inst:${l.key}`, group: 'Wavetable', base: Number(p[l.key]) });
+  }
+  const instType = track.instrument?.type;
+  if (track.kind === 'instrument' && instType && (CLASSIC_TYPES as string[]).includes(instType)) {
+    const t = instType as ClassicType;
+    const p = resolveClassic(t, track.instrument?.params);
+    for (const l of CLASSIC_LANES[t]) out.push({ ...l, key: `inst:${l.key}`, group: 'Instrument', base: Number(p[l.key]) });
+  }
+  if (doc && track.kind !== 'return') {
+    for (const [rid, rt] of Object.entries(doc.tracks)) {
+      if (rt.kind !== 'return') continue;
+      out.push({ key: `send:${rid}`, label: `Send → ${rt.name}`, group: 'Sends', min: -60, max: 6, unit: 'dB', base: track.sends?.[rid] ?? -60 });
+    }
   }
   for (const fx of track.effects ?? []) {
     const def = EFFECT_DEFS[fx.type];
@@ -88,8 +124,8 @@ export function laneDefs(track: StudioTrack): LaneDef[] {
   return out;
 }
 
-export function laneDef(track: StudioTrack, key: string): LaneDef | undefined {
-  return laneDefs(track).find((d) => d.key === key);
+export function laneDef(track: StudioTrack, key: string, doc?: StudioDoc | null): LaneDef | undefined {
+  return laneDefs(track, doc).find((d) => d.key === key);
 }
 
 // ───────────────────────── Recording ─────────────────────────

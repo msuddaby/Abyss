@@ -314,7 +314,7 @@ export function useSignalRListeners() {
         'SoundboardClipPlayed', 'SoundboardClipAdded', 'SoundboardClipUpdated', 'SoundboardClipRemoved',
         'ArchiveItemAdded', 'ArchiveItemUpdated', 'ArchiveItemDeleted', 'ArchiveAlbumsChanged',
         'StudioOps', 'StudioPresence', 'StudioTransportChanged', 'StudioUserJoined', 'StudioUserLeft',
-        'StudioAssetAdded', 'StudioAssetRemoved', 'StudioReset',
+        'StudioAssetAdded', 'StudioAssetRemoved', 'StudioReset', 'StudioVersionsChanged',
         'VoiceStudioOpened', 'VoiceStudioClosed', 'VoiceStudioLinkChanged',
       ];
       for (const e of events) conn.off(e);
@@ -815,6 +815,7 @@ export function useSignalRListeners() {
       conn.on('StudioAssetAdded', (channelId: string, asset: StudioAsset) => studio().receiveAssetAdded(channelId, asset));
       conn.on('StudioAssetRemoved', (channelId: string, assetId: string) => studio().receiveAssetRemoved(channelId, assetId));
       conn.on('StudioReset', (channelId: string, doc: StudioDoc, version: number) => studio().receiveReset(channelId, doc, version));
+      conn.on('StudioVersionsChanged', (channelId: string) => studio().receiveVersionsChanged(channelId));
       conn.on('VoiceStudioOpened', (voiceChannelId: string, studioChannelId: string) => studio().setVoiceLink(voiceChannelId, studioChannelId));
       conn.on('VoiceStudioClosed', (voiceChannelId: string) => studio().setVoiceLink(voiceChannelId, null));
       conn.on('VoiceStudioLinkChanged', (voiceChannelId: string, studioChannelId: string | null) => studio().setVoiceLink(voiceChannelId, studioChannelId));

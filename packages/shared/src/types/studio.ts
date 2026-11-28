@@ -1,10 +1,11 @@
 // Studio (collaborative DAW) types. The doc shape mirrors the server's
 // StudioSessionService schema — keep the two in sync.
 
-export type StudioTrackKind = 'audio' | 'instrument';
+/** 'return' tracks are fed by sends; 'group' tracks sum the tracks routed into them. Neither holds clips. */
+export type StudioTrackKind = 'audio' | 'instrument' | 'return' | 'group';
 export type StudioClipKind = 'audio' | 'midi';
 export type StudioInstrumentType = 'synth' | 'fm' | 'am' | 'mono' | 'pluck' | 'drums' | 'bass' | 'sampler';
-export type StudioEffectType = 'reverb' | 'delay' | 'eq' | 'compressor' | 'distortion' | 'chorus' | 'filter';
+export type StudioEffectType = 'reverb' | 'delay' | 'eq' | 'compressor' | 'distortion' | 'chorus' | 'filter' | 'tape' | 'limiter';
 export type StudioParams = Record<string, number | string | boolean>;
 
 export interface StudioMeta {
@@ -16,6 +17,34 @@ export interface StudioMeta {
   loopStart: number;
   /** Beats */
   loopEnd: number;
+  /** Project key: root pitch class (0 = C) */
+  scaleRoot?: number;
+  /** Project scale id (see client studio/scales.ts); 'none' or absent = no scale */
+  scaleMode?: string;
+  /** Master bus devices (after every track, before the output) */
+  masterEffects?: StudioEffect[];
+  /** Master fader, dB */
+  masterVolume?: number;
+}
+
+/** A named point on the timeline (Verse, Chorus…). */
+export interface StudioMarker {
+  /** Beats */
+  beat: number;
+  name: string;
+  color?: string;
+}
+
+/**
+ * A tempo and/or time-signature change from `beat` onwards. The project's
+ * starting values live in meta; signature changes must sit on a bar line.
+ */
+export interface StudioTempoEvent {
+  /** Beats (> 0) */
+  beat: number;
+  bpm?: number;
+  num?: number;
+  den?: number;
 }
 
 export interface StudioEffect {
@@ -48,6 +77,12 @@ export interface StudioTrack {
    * Keys: 'vol', 'pan', 'fx:{effectId}:{param}', 'inst:{param}'.
    */
   automation?: Record<string, [number, number][]>;
+  /** Group track this one feeds; absent/'' = master */
+  output?: string;
+  /** Post-fader send levels: return track id → dB */
+  sends?: Record<string, number>;
+  /** Group tracks: children hidden in the arrangement */
+  collapsed?: boolean;
 }
 
 export interface StudioNote {
@@ -77,6 +112,15 @@ export interface StudioClip {
   offset?: number;
   fadeIn?: number;
   fadeOut?: number;
+  /** Inactive (e.g. an unused take) — kept but silent */
+  mute?: boolean;
+  /** Audio: stretch to the project tempo (srcBpm = the recording's tempo) */
+  warp?: boolean;
+  srcBpm?: number;
+  /** Audio: transpose in semitones (keeps length when warped, otherwise repitches) */
+  pitch?: number;
+  /** Audio: play the source backwards */
+  reverse?: boolean;
   // MIDI clips
   notes?: Record<string, StudioNote>;
 }
@@ -85,6 +129,9 @@ export interface StudioDoc {
   meta: StudioMeta;
   tracks: Record<string, StudioTrack>;
   clips: Record<string, StudioClip>;
+  /** Absent in projects saved before markers existed */
+  markers?: Record<string, StudioMarker>;
+  tempo?: Record<string, StudioTempoEvent>;
 }
 
 export type StudioOp =
@@ -119,6 +166,10 @@ export interface StudioPresence {
   playheadBeats?: number | null;
   /** Clip open in the piano roll */
   editingClipId?: string | null;
+  /** When editingClipId was opened (server clock ms) — the earliest opener holds the soft lock */
+  editingSince?: number | null;
+  /** Left edge of the arrangement view in beats (for "follow") */
+  viewBeats?: number | null;
 }
 
 export interface StudioTransport {
@@ -137,4 +188,25 @@ export interface StudioJoinResult {
   users: string[];
   canEdit: boolean;
   serverTimeMs: number;
+}
+
+/** One entry in a studio's edit history (an accepted batch, or a whole-project restore). */
+export interface StudioChangeEntry {
+  id: number;
+  version: number;
+  userId: string;
+  createdAt: string;
+  kind: 'edit' | 'restore';
+  summary: string;
+  opCount: number;
+}
+
+/** A saved snapshot of a studio project. */
+export interface StudioVersionInfo {
+  id: string;
+  name: string;
+  auto: boolean;
+  createdById: string | null;
+  createdAt: string;
+  docVersion: number;
 }

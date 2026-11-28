@@ -1,5 +1,7 @@
+import { isMidiFile } from './midiImport';
 import { useEffect, useRef, useState } from 'react';
-import { useStudioStore, useAuthStore, useToastStore } from '@abyss/shared';
+import { api, useStudioStore, useAuthStore, useToastStore } from '@abyss/shared';
+import ConfirmModal from '../components/ConfirmModal';
 import type { StudioAsset } from '@abyss/shared';
 import { assetUrl } from './engine/assetCache';
 import { ASSET_DRAG_TYPE } from './StudioArrange';
@@ -21,9 +23,14 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
   const [playing, setPlaying] = useState<string | null>(null);
   const [uploads, setUploads] = useState<Record<string, number>>({});
   const [dragOver, setDragOver] = useState(false);
+  const [confirm, setConfirm] = useState<{ title: string; message: string; label: string; run: () => Promise<void> } | null>(null);
+  const channelId = useStudioStore((s) => s.channelId);
 
   const usage = new Map<string, number>();
   for (const c of Object.values(doc?.clips ?? {})) if (c.assetId) usage.set(c.assetId, (usage.get(c.assetId) ?? 0) + 1);
+  // Samplers and drum-rack pads use audio too (by id inside their params).
+  const instJson = JSON.stringify(Object.values(doc?.tracks ?? {}).map((t) => t.instrument?.params ?? null));
+  const inInstrument = (id: string) => instJson.includes(id);
 
   const upload = async (files: File[]) => {
     if (!files.length) return;
@@ -56,12 +63,45 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
     setPlaying(asset.id);
   };
 
-  const remove = async (asset: StudioAsset) => {
+  const remove = async (asset: StudioAsset, force = false) => {
     try {
-      await deleteAsset(asset.id);
+      await deleteAsset(asset.id, force);
     } catch (e: unknown) {
-      const msg = (e as { response?: { data?: unknown } })?.response?.data;
+      const res = (e as { response?: { status?: number; data?: unknown } })?.response;
+      if (res?.status === 409 && !force) {
+        const data = res.data as { message?: string } | undefined;
+        setConfirm({
+          title: 'Delete audio used by saved versions?',
+          message: `${data?.message ?? 'Saved versions use this audio.'} Delete “${asset.name}” anyway?`,
+          label: 'Delete anyway',
+          run: () => remove(asset, true),
+        });
+        return;
+      }
+      const msg = res?.data;
       useToastStore.getState().addToast(typeof msg === 'string' ? msg : 'Could not delete audio.', 'error');
+    }
+  };
+
+  /** Find files nothing uses (not the project, not any saved version) and offer to delete them. */
+  const cleanup = async () => {
+    if (!channelId) return;
+    try {
+      const res = await api.get<{ id: string; inProject: boolean; versions: number; fileSize: number }[]>(`/channels/${channelId}/studio/assets/usage`);
+      const unused = res.data.filter((u) => !u.inProject && u.versions === 0 && (canManage || assets.find((a) => a.id === u.id)?.uploadedById === myId));
+      if (!unused.length) { useToastStore.getState().addToast('Every audio file is in use (by the project or a saved version).', 'info'); return; }
+      const mb = unused.reduce((n, u) => n + u.fileSize, 0) / (1024 * 1024);
+      setConfirm({
+        title: 'Clean up unused audio',
+        message: `${unused.length} file${unused.length === 1 ? '' : 's'} (${mb.toFixed(1)} MB) aren't used by the project or any saved version${canManage ? '' : ' (only your uploads are included)'}. Delete them for everyone? This can't be undone.`,
+        label: 'Delete unused',
+        run: async () => {
+          const r = await api.post<{ deleted: number }>(`/channels/${channelId}/studio/assets/cleanup`);
+          useToastStore.getState().addToast(`Deleted ${r.data.deleted} unused file${r.data.deleted === 1 ? '' : 's'}.`, 'success');
+        },
+      });
+    } catch {
+      useToastStore.getState().addToast('Could not check audio usage.', 'error');
     }
   };
 
@@ -70,7 +110,7 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
       className={`studio-asset-bin${dragOver ? ' drag-over' : ''}`}
       onDragOver={(e) => { if (editable && e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={() => setDragOver(false)}
-      onDrop={(e) => { setDragOver(false); if (!editable) return; e.preventDefault(); void upload(Array.from(e.dataTransfer.files)); }}
+      onDrop={(e) => { setDragOver(false); if (!editable) return; e.preventDefault(); void upload(Array.from(e.dataTransfer.files).filter((f) => !isMidiFile(f))); }}
     >
       <div className="studio-panel-toolbar">
         <span className="studio-panel-title">🎵 Audio</span>
@@ -78,6 +118,7 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
         <div className="studio-spacer" />
         {editable && (
           <>
+            {assets.length > 0 && <button className="studio-btn small" onClick={() => void cleanup()} title="Delete audio files nothing uses">Clean up…</button>}
             <button className="studio-btn small" onClick={() => fileRef.current?.click()}>Upload audio</button>
             <input
               ref={fileRef}
@@ -123,12 +164,23 @@ export default function StudioAssetBin({ editable, canManage, onAddToTimeline, o
             {editable && (
               <button className="studio-icon-btn" onClick={() => onMakeSampler(a)} title="New sampler track playing this sound">🎹</button>
             )}
-            {(a.uploadedById === myId || canManage) && !usage.get(a.id) && (
+            {inInstrument(a.id) && <span className="studio-asset-uses" title="Used by a sampler or drum pad">🎹</span>}
+            {(a.uploadedById === myId || canManage) && !usage.get(a.id) && !inInstrument(a.id) && (
               <button className="studio-icon-btn danger" onClick={() => void remove(a)} title="Delete">🗑</button>
             )}
           </div>
         ))}
       </div>
+      {confirm && (
+        <ConfirmModal
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel={confirm.label}
+          danger
+          onConfirm={() => { void confirm.run().catch(() => useToastStore.getState().addToast('That failed.', 'error')); }}
+          onClose={() => setConfirm(null)}
+        />
+      )}
     </div>
   );
 }

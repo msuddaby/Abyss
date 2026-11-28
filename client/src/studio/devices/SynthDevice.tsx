@@ -121,7 +121,7 @@ function FilterView({ type, cutoff, res, on, editable, onPreview, onCommit }: {
   return <canvas ref={ref} className="studio-synth-filter-view" onPointerDown={onPointerDown} title={editable ? 'Drag: left/right = cutoff, up/down = resonance' : undefined} />;
 }
 
-function EnvView({ a, d, s, r, color }: { a: number; d: number; s: number; r: number; color: string }) {
+export function EnvView({ a, d, s, r, color }: { a: number; d: number; s: number; r: number; color: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
@@ -191,7 +191,7 @@ function LfoView({ shape, color }: { shape: string; color: string }) {
   return <canvas ref={ref} className="studio-synth-env-view" />;
 }
 
-function Scope({ engine, trackId, color }: { engine: StudioEngine | null; trackId: string; color: string }) {
+export function Scope({ engine, trackId, color }: { engine: StudioEngine | null; trackId: string; color: string }) {
   const ref = useCanvasLoop((ctx, w, h) => {
     const data = engine?.getInstrumentAnalyser(trackId)?.getValue() as Float32Array | undefined;
     ctx.strokeStyle = 'rgba(255,255,255,0.1)';

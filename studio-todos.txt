@@ -1,0 +1,34 @@
+[x] abyss crashed while the project was playing, when it came back it was still playing but the controls said it was paused. no way to stop it.
+[x] delay plugin should work like ableton where you can control the numbers on each side, sync them, unsync etc
+[x] add client side volume, just to turn it down if you dont want to participate
+[x] piano roll needs to be gone over more finely. Better user experience there, first class like ableton. Also add quantizing 
+[x] when not focused on "the studio" you should "leave" and the audio wont play
+[x] audio input so you can record from mic or line in
+[x] on desktop, bottom scroll bar on track effects window is very dim and not visible
+[x] set scale of project, piano roll will highlight notes in that scale. Abiility to show only notes in that scale
+[x] when draging a note up or down it "spams" the note where it is being held rather than just playing the note once
+[x] better instrument controls (synths other than the wavetable are ugly)
+[x] better drum, per channel effects and controls like ableton's drum machine
+[x] import midi tracks
+[x] need retro like tape effects
+[x] git like versioning, so you can see what edits others have made, revert them, etc
+
+
+--- Round 2 (gap list, 2026-11-28) ---
+[x] sends / return tracks / buses (track output routing)
+[x] master effects chain (limiter, glue comp) on the master output
+[x] sidechain compression (compressor keyed from another track)
+[x] group / folder tracks (collapse, group fader)
+[x] tempo + time-signature changes (tempo map)
+[x] audio warping / time-stretch to tempo, clip pitch shift, reverse
+[x] arrangement markers (Verse/Chorus labels)
+[x] count-in before recording; take comping (take lanes)
+[x] stem export, freeze / bounce in place
+[x] automation for classic synth params
+[x] MIDI export
+[x] instrument/effect presets library
+[x] presence: who's editing what, follow someone's playhead
+[x] soft locking of clips being edited
+[x] asset cleanup (unused uploads; warn on missing assets in restored versions)
+[x] automated tests for op whitelist / history (server) + studioOps (client)
+[x] mobile / touch support for the studio

@@ -1,8 +1,7 @@
 import { memo, useEffect, useMemo, useRef } from 'react';
 import type { StudioClip as Clip } from '@abyss/shared';
-import { beatsToSeconds } from '@abyss/shared';
 import { getPeaks } from './engine/assetCache';
-import { TRACK_HEIGHT } from './studioUtils';
+import { TRACK_HEIGHT, isDoubleTap } from './studioUtils';
 
 export type ClipDragMode = 'move' | 'trim-start' | 'trim-end';
 
@@ -10,8 +9,18 @@ interface Props {
   id: string;
   clip: Clip;
   pxPerBeat: number;
-  bpm: number;
+  /** Source seconds the clip covers (audio) */
+  srcSec: number;
   color: string;
+  /** Take view: vertical placement inside the lane */
+  top?: number;
+  height?: number;
+  /** Someone else is editing this clip (name + colour) */
+  lockedBy?: { name: string; color: string } | null;
+  /** Audio file is gone (deleted after this version was saved) */
+  missing?: boolean;
+  /** Take view: make this take the active one */
+  onComp?: (id: string) => void;
   selected: boolean;
   /** Colors of collaborators who have this clip selected */
   remoteColors: string[];
@@ -27,7 +36,7 @@ interface Props {
 const EDGE_PX = 6;
 const MAX_CANVAS_PX = 8192;
 
-function Waveform({ clip, width, height, bpm, peaksVersion }: { clip: Clip; width: number; height: number; bpm: number; peaksVersion: number }) {
+function Waveform({ clip, width, height, srcSec, peaksVersion }: { clip: Clip; width: number; height: number; srcSec: number; peaksVersion: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -49,16 +58,18 @@ function Waveform({ clip, width, height, bpm, peaksVersion }: { clip: Clip; widt
     const bucketsPerSec = peaks.sampleRate / peaks.samplesPerBucket;
     const startBucket = (clip.offset ?? 0) * bucketsPerSec;
     const totalBuckets = peaks.data.length / 2;
-    const clipBuckets = beatsToSeconds(clip.length, bpm) * bucketsPerSec;
+    const clipBuckets = srcSec * bucketsPerSec;
     const bucketsPerPx = clipBuckets / cssW;
+    const rev = !!clip.reverse;
     const mid = height / 2;
     const gain = Math.pow(10, (clip.gain ?? 0) / 20);
 
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     for (let x = 0; x < cssW; x++) {
-      const b0 = Math.floor(startBucket + x * bucketsPerPx);
-      const b1 = Math.max(b0 + 1, Math.floor(startBucket + (x + 1) * bucketsPerPx));
-      if (b0 >= totalBuckets) break;
+      const px = rev ? cssW - 1 - x : x;
+      const b0 = Math.floor(startBucket + px * bucketsPerPx);
+      const b1 = Math.max(b0 + 1, Math.floor(startBucket + (px + 1) * bucketsPerPx));
+      if (b0 >= totalBuckets) continue;
       let min = 1, max = -1;
       for (let b = b0; b < Math.min(b1, totalBuckets); b++) {
         const lo = peaks.data[b * 2], hi = peaks.data[b * 2 + 1];
@@ -69,7 +80,7 @@ function Waveform({ clip, width, height, bpm, peaksVersion }: { clip: Clip; widt
       const y1 = mid - Math.max(-1, min * gain) * mid;
       ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
     }
-  }, [clip.assetId, clip.offset, clip.length, clip.gain, width, height, bpm, peaksVersion]);
+  }, [clip.assetId, clip.offset, clip.length, clip.gain, clip.reverse, width, height, srcSec, peaksVersion]);
 
   return <canvas ref={canvasRef} className="studio-clip-wave" />;
 }
@@ -98,20 +109,25 @@ function MidiPreview({ clip, width, height }: { clip: Clip; width: number; heigh
   );
 }
 
-function StudioClipView({ id, clip, pxPerBeat, bpm, color, selected, remoteColors, ghost, ghostColor, peaksVersion, editable, onPointerDown, onDoubleClick }: Props) {
+function StudioClipView({ id, clip, pxPerBeat, srcSec, color, selected, remoteColors, ghost, ghostColor, peaksVersion, editable, onPointerDown, onDoubleClick, top, height: h, lockedBy, missing, onComp }: Props) {
   const width = Math.max(4, clip.length * pxPerBeat);
-  const height = TRACK_HEIGHT - 8;
-  const bodyH = height - 16;
+  const height = h ?? TRACK_HEIGHT - 8;
+  const bodyH = Math.max(4, height - 16);
+  const locked = !!lockedBy;
 
   const handleDown = (e: React.PointerEvent) => {
     if (!onPointerDown || e.button !== 0) return;
     e.stopPropagation();
+    // Touch: the whole clip moves (edges are too small to hit reliably).
+    const touch = e.pointerType === 'touch';
+    if (isDoubleTap(e, `clip:${id}`)) { onDoubleClick?.(id); return; }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const x = e.clientX - rect.left;
     let mode: ClipDragMode = 'move';
-    if (editable && width > EDGE_PX * 3) {
-      if (x <= EDGE_PX) mode = 'trim-start';
-      else if (x >= rect.width - EDGE_PX) mode = 'trim-end';
+    const edge = touch ? 14 : EDGE_PX;
+    if (editable && !locked && width > edge * 3) {
+      if (x <= edge) mode = 'trim-start';
+      else if (x >= rect.width - edge) mode = 'trim-end';
     }
     onPointerDown(e, id, mode);
   };
@@ -119,24 +135,40 @@ function StudioClipView({ id, clip, pxPerBeat, bpm, color, selected, remoteColor
   const outline = remoteColors[0];
   return (
     <div
-      className={`studio-clip ${clip.kind}${selected ? ' selected' : ''}${ghost ? ' ghost' : ''}`}
+      className={`studio-clip ${clip.kind}${selected ? ' selected' : ''}${ghost ? ' ghost' : ''}${clip.mute ? ' muted' : ''}${locked ? ' locked' : ''}${missing ? ' missing' : ''}`}
       style={{
         left: clip.start * pxPerBeat,
         width,
+        ...(top !== undefined ? { top, height, bottom: 'auto' } : {}),
         ['--clip-color' as string]: color,
         ...(ghost && ghostColor ? { borderColor: ghostColor } : {}),
-        ...(!ghost && outline ? { boxShadow: `0 0 0 2px ${outline}` } : {}),
+        ...(!ghost && (lockedBy?.color ?? outline) ? { boxShadow: `0 0 0 2px ${lockedBy?.color ?? outline}` } : {}),
       }}
       onPointerDown={ghost ? undefined : handleDown}
       onDoubleClick={ghost ? undefined : (e) => { e.stopPropagation(); onDoubleClick?.(id); }}
     >
-      <div className="studio-clip-label">{clip.name || (clip.kind === 'midi' ? 'MIDI' : 'Audio')}</div>
+      <div className="studio-clip-label">
+        {locked && <span className="studio-clip-badge lock" title={`${lockedBy!.name} is editing this clip`}>🔒</span>}
+        {clip.warp && <span className="studio-clip-badge" title={`Warped from ${clip.srcBpm} BPM`}>⇔</span>}
+        {clip.reverse && <span className="studio-clip-badge" title="Reversed">⇆</span>}
+        {!!clip.pitch && <span className="studio-clip-badge" title="Transposed">{clip.pitch > 0 ? '+' : ''}{clip.pitch}st</span>}
+        {missing && <span className="studio-clip-badge warn" title="This audio file was deleted">missing</span>}
+        <span className="studio-clip-name">{clip.name || (clip.kind === 'midi' ? 'MIDI' : 'Audio')}</span>
+        {onComp && clip.mute && !ghost && (
+          <button
+            className="studio-clip-comp"
+            title="Use this take here (mutes what it covers)"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onComp(id); }}
+          >★</button>
+        )}
+      </div>
       <div className="studio-clip-body">
         {clip.kind === 'audio'
-          ? <Waveform clip={clip} width={width} height={bodyH} bpm={bpm} peaksVersion={peaksVersion} />
+          ? <Waveform clip={clip} width={width} height={bodyH} srcSec={srcSec} peaksVersion={peaksVersion} />
           : <MidiPreview clip={clip} width={width} height={bodyH} />}
       </div>
-      {editable && !ghost && (
+      {editable && !ghost && !locked && (
         <>
           <div className="studio-clip-edge left" />
           <div className="studio-clip-edge right" />

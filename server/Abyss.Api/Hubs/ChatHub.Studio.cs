@@ -70,7 +70,7 @@ public partial class ChatHub
         await session.BroadcastGate.WaitAsync();
         try
         {
-            var applied = _studio.ApplyBatch(id, ops);
+            var applied = _studio.ApplyBatch(id, ops, UserId);
             if (applied == null) return new { version = session.Version, accepted = 0 };
 
             var (version, accepted) = applied.Value;

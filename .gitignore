@@ -60,3 +60,6 @@ server/Abyss.Api/wwwroot/uploads/*
 !server/Abyss.Api/wwwroot/uploads/.gitkeep
 server/Abyss.Api/uploads/*
 data/
+
+server/Abyss.Api.Tests/bin/
+server/Abyss.Api.Tests/obj/
